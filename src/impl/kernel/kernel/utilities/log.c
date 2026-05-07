@@ -4,7 +4,7 @@ static int log_type_from_u8(uint8_t value, enum log_type *out) {
     switch (value) {
         case KERNEL:
         case SYSTEM:
-        case FILE:
+        case FILESYS:
         case USER:
             *out = (enum log_type)value;
             return 1;
@@ -33,7 +33,7 @@ static const char *log_type_name(enum log_type type) {
     switch (type) {
         case KERNEL: return "KERNEL";
         case SYSTEM: return "SYSTEM";
-        case FILE:   return "FILE-SYSTEM";
+        case FILESYS:   return "FILESYS";
         case USER:   return "USER";
         default:     return "UNKNOWN";
     }

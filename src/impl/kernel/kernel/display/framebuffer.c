@@ -11,7 +11,12 @@ static uint32_t *fb       = 0;
 static uint32_t  fb_w     = 0;
 static uint32_t  fb_h     = 0;
 static uint32_t  fb_pitch = 0;       // bytes per row
+static uint64_t fb_phys = 0;
 
+uint64_t framebuffer_phys(void)  { return fb_phys; }
+uint32_t framebuffer_pitch(void) { return fb_pitch; }
+
+// in framebuffer_init: fb_phys = t->addr;
 int framebuffer_init(uint64_t mb2_addr) {
     struct MB2_TAG_FRAMEBUFFER *t =
         (struct MB2_TAG_FRAMEBUFFER*)mb2_find_tag(mb2_addr, MULTIBOOT_TAG_FRAMEBUFFER);
@@ -36,6 +41,7 @@ int framebuffer_init(uint64_t mb2_addr) {
     fb_w     = t->width;
     fb_h     = t->height;
     fb_pitch = t->pitch;
+    fb_phys  = t->addr;
 
     // map physical framebuffer into virtual space
     uint64_t fb_bytes = (uint64_t)t->pitch * t->height;

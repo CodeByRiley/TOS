@@ -1,5 +1,5 @@
 #include "interrupts/pic.h"
-#include "arch/io.h"
+#include "devices/io.h"
 
 #define PIC1_CMD  0x20
 #define PIC1_DATA 0x21

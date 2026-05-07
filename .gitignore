@@ -2,6 +2,7 @@
 /build/
 /dist/
 *.o
+*.elf
 
 # Generated boot media and ISO staging files
 /disk.img
@@ -13,6 +14,8 @@
 # Local game/resource payloads
 /games/**/*.wad
 /games/**/*.WAD
+/disk_root/**/*.wad*
+/disk_root/**/*.WAD*
 
 # Local editor, language-server, and build-tool state
 .cache/
@@ -38,3 +41,4 @@ compile_commands.json
 Thumbs.db
 ehthumbs.db
 Desktop.ini
+userspace/games/doom/doomgeneric/

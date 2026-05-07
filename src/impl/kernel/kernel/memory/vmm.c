@@ -8,7 +8,7 @@
 #define ENTRIES_PER_TABLE 512
 #define ADDR_MASK 0x000FFFFFFFFFF000ULL    // bits 12-51 = frame addr
 
-static uint64_t *kernel_pml4 = 0;
+uint64_t *kernel_pml4 = 0;
 
 static uint64_t *table_at_entry(uint64_t entry, uint64_t flags) {
     if (entry & VMM_PRESENT) {
@@ -31,6 +31,10 @@ static int walk_or_create(uint64_t virt, uint64_t flags, uint64_t **pte_out) {
     uint64_t *pml4 = kernel_pml4;
     uint64_t *pdpt;
     if (pml4[pml4_idx] & VMM_PRESENT) {
+        // propagate USER bit into existing intermediate entry if needed
+        if ((flags & VMM_USER) && !(pml4[pml4_idx] & VMM_USER)) {
+            pml4[pml4_idx] |= VMM_USER;
+        }
         pdpt = (uint64_t*)(pml4[pml4_idx] & ADDR_MASK);
     } else {
         uint64_t phys = pmm_alloc_frame();
@@ -43,6 +47,9 @@ static int walk_or_create(uint64_t virt, uint64_t flags, uint64_t **pte_out) {
     uint64_t *pd;
     if (pdpt[pdpt_idx] & VMM_PRESENT) {
         if (pdpt[pdpt_idx] & (1ULL << 7)) return -1;  // 1GiB huge, can't sub-divide
+        if ((flags & VMM_USER) && !(pdpt[pdpt_idx] & VMM_USER)) {
+            pdpt[pdpt_idx] |= VMM_USER;
+        }
         pd = (uint64_t*)(pdpt[pdpt_idx] & ADDR_MASK);
     } else {
         uint64_t phys = pmm_alloc_frame();
@@ -55,6 +62,9 @@ static int walk_or_create(uint64_t virt, uint64_t flags, uint64_t **pte_out) {
     uint64_t *pt;
     if (pd[pd_idx] & VMM_PRESENT) {
         if (pd[pd_idx] & (1ULL << 7)) return -1;      // 2MiB huge — boot uses these
+        if ((flags & VMM_USER) && !(pd[pd_idx] & VMM_USER)) {
+            pd[pd_idx] |= VMM_USER;
+        }
         pt = (uint64_t*)(pd[pd_idx] & ADDR_MASK);
     } else {
         uint64_t phys = pmm_alloc_frame();

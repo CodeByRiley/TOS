@@ -48,13 +48,7 @@ long strtol(const char *s, char **endp, int base) {
 int  abs(int x)   { return x < 0 ? -x : x; }
 long labs(long x) { return x < 0 ? -x : x; }
 
-char *strdup(const char *s) {
-    size_t len = strlen(s) + 1;
-    char *p = (char*)kmalloc(len);
-    if (!p) return 0;
-    memcpy(p, s, len);
-    return p;
-}
+/* strdup moved to string.c */
 
 // insertion sort: O(n²), correct, no extra memory. Fine until DOOM profiles bad.
 void qsort(void *base, size_t nmemb, size_t size,

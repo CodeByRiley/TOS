@@ -6,6 +6,7 @@ x86_64_asm_source_files := $(shell find src/impl/x86_64 -name *.asm)
 x86_64_asm_object_files := $(patsubst src/impl/x86_64/%.asm, build/x86_64/%.o, $(x86_64_asm_source_files))
 x86_64_object_files := $(x86_64_c_object_files) $(x86_64_asm_object_files)
 kernel_c_flags := -I src/intf -ffreestanding -mno-red-zone
+rootfs_payload_files := disk_root/readme.txt disk_root/games/doom/doom.wad
 
 $(kernel_object_files): build/kernel/%.o : src/impl/kernel/%.c
 	mkdir -p $(dir $@) && \
@@ -19,8 +20,16 @@ $(x86_64_asm_object_files): build/x86_64/%.o : src/impl/x86_64/%.asm
 	mkdir -p $(dir $@) && \
 	nasm -f elf64 $(patsubst build/x86_64/%.o, src/impl/x86_64/%.asm, $@) -o $@
 
+.PHONY: userspace
+userspace:
+	$(MAKE) -C userspace clean
+	$(MAKE) -C userspace all
+
+disk.img: userspace create_disk.sh $(rootfs_payload_files)
+	bash create_disk.sh
+
 .PHONY: build-x86_64
-build-x86_64: $(kernel_object_files) $(x86_64_object_files)
+build-x86_64: $(kernel_object_files) $(x86_64_object_files) disk.img
 	mkdir -p dist/x86_64 && \
 	mkdir -p targets/x86_64/iso/boot/grub && \
 	x86_64-elf-ld -n -o dist/x86_64/kernel.bin -T targets/x86_64/linker.ld $(kernel_object_files) $(x86_64_object_files) && \
@@ -44,3 +53,7 @@ build-x86_64: $(kernel_object_files) $(x86_64_object_files)
 			-o dist/x86_64/kernel.iso \
 			targets/x86_64/iso \
 	"
+
+clean:
+	rd /s /q build
+	rd /s /q dist

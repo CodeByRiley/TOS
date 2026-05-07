@@ -9,5 +9,7 @@ void     framebuffer_putpixel(uint32_t x, uint32_t y, uint32_t color);
 uint32_t framebuffer_width(void);
 uint32_t framebuffer_height(void);
 uint32_t *framebuffer_buffer(void);         // for DOOM/games to write directly
+uint64_t framebuffer_phys(void);
+uint32_t framebuffer_pitch(void);
 
 #endif

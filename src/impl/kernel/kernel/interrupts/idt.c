@@ -4,7 +4,10 @@
 #include "interrupts/pic.h"
 #include <stdint.h>
 
-static struct idt_entry idt[256];
+#define MAX_IDT_ENTRIES 512
+#define MAX_IRQ_HANDLERS 256
+
+static struct idt_entry idt[MAX_IDT_ENTRIES];
 static struct idt_ptr idtr;
 
 extern uint64_t isr_stub_table[48];
@@ -29,7 +32,7 @@ void idt_init(void) {
 }
 
 typedef void (*irq_fn)(void);
-static irq_fn irq_handlers[16] = { 0 };
+static irq_fn irq_handlers[MAX_IRQ_HANDLERS] = { 0 };
 
 void irq_install(uint8_t irq, irq_fn fn) {
     irq_handlers[irq] = fn;
@@ -126,6 +129,12 @@ void isr_handler(struct registers *r) {
       r->rip = exception_recovery.resume_rip;
       r->rax = 1;
       return;
+    }
+
+    if (r->int_num == 14) {
+        uint64_t cr2;
+        __asm__ volatile ("mov %%cr2, %0" : "=r"(cr2));
+        log_write_hex("  cr2 (fault addr) =", cr2, KERNEL, LOG_INFO);
     }
 
     log_write("kernel panic: unhandled exception", KERNEL, LOG_FATAL);

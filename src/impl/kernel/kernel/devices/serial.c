@@ -1,6 +1,6 @@
 #include "devices/serial.h"
 #include "display/print.h"
-#include "arch/io.h"
+#include "devices/io.h"
 
 #define COM1 0x3F8
 

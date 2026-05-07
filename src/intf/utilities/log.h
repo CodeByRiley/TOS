@@ -17,7 +17,7 @@ enum log_type {
 	KERNEL = 0,
 	SYSTEM = 1,
 	USER = 2,
-	FILE = 3,
+	FILESYS = 3,
 };
 
 struct log_entry {

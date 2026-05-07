@@ -4,5 +4,7 @@ CompileFlags:
 
 Diagnostics:
   Suppress:
-  - unused-includes
-  - unused-variable
+  - Wunused-includes
+  - Wunused-variable
+  - Wpointer-to-int-cast
+  - Wint-to-void-pointer-cast

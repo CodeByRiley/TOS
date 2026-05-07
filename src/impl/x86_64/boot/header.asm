@@ -11,8 +11,8 @@ fb_tag_start:
 	dw 5                              ; type = framebuffer request
 	dw 0                              ; flags (0 = required)
 	dd fb_tag_end - fb_tag_start      ; size
-	dd 1024                           ; width (0 = bootloader chooses)
-	dd 768                            ; height
+	dd 1920                        		; width (0 = bootloader chooses)
+	dd 1080                          	; height
 	dd 32                             ; bpp
 fb_tag_end:
 

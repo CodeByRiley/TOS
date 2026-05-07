@@ -1,6 +1,6 @@
 
 #include "devices/pit.h"
-#include "arch/io.h"
+#include "devices/io.h"
 #include "interrupts/idt.h"
 #include "devices/serial.h"
 
@@ -12,11 +12,6 @@ static volatile uint64_t ticks = 0;
 
 static void pit_handler(void) {
     ticks++;
-    // if (ticks % 100 == 0) {
-    //     serial_write_str("tick ");
-    //     serial_write_hex(ticks);
-    //     serial_write_str("\n");
-    // }
 }
 
 void pit_init(uint32_t freq_hz) {
