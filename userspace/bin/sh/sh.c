@@ -272,16 +272,16 @@ int main(int argc, char **argv) {
         if (ac == 0) continue;
         char *cmd = targs[0];
 
-        if (strcmp(cmd, "ls")    == 0) 					{ printf("running command ls"); 				builtin_ls(); 			 					}
-        else if (strcmp(cmd, "help")  == 0) 		{ printf("running command help"); 			builtin_help();								}
-        else if (strcmp(cmd, "clear") == 0) 		{ printf("running command clear"); 			builtin_clear();							}
-        else if (strcmp(cmd, "rm")    == 0) 		{ printf("running command rm"); 				builtin_rm(ac, targs);				}
-        else if (strcmp(cmd, "run")   == 0) 		{ printf("running command run"); 				builtin_run(ac, targs);				}
-        else if (strcmp(cmd, "cat")   == 0) 		{ printf("running command cat"); 				builtin_cat(ac, targs); 			}
-        else if (strcmp(cmd, "echo")  == 0) 		{ printf("running command echo"); 			builtin_echo(ac, targs);			}
-        else if (strcmp(cmd, "write") == 0) 		{ printf("running command write"); 			builtin_write(ac, targs);			}
-        else if (strcmp(cmd, "reboot") == 0) 		{ printf("running command reboot"); 		builtin_reboot(ac, targs);		}
-        else if (strcmp(cmd, "shutdown") == 0) 	{ printf("running command shutdown"); 	builtin_shutdown(ac, targs);	}
+        if (strcmp(cmd, "ls")    == 0) 					{ printf("running command ls\n"); 				builtin_ls(); 			 					}
+        else if (strcmp(cmd, "help")  == 0) 		{ printf("running command help\n"); 			builtin_help();								}
+        else if (strcmp(cmd, "clear") == 0) 		{ printf("running command clear\n"); 			builtin_clear();							}
+        else if (strcmp(cmd, "rm")    == 0) 		{ printf("running command rm\n"); 				builtin_rm(ac, targs);				}
+        else if (strcmp(cmd, "run")   == 0) 		{ printf("running command run\n"); 				builtin_run(ac, targs);				}
+        else if (strcmp(cmd, "cat")   == 0) 		{ printf("running command cat\n"); 				builtin_cat(ac, targs); 			}
+        else if (strcmp(cmd, "echo")  == 0) 		{ printf("running command echo\n"); 			builtin_echo(ac, targs);			}
+        else if (strcmp(cmd, "write") == 0) 		{ printf("running command write\n"); 			builtin_write(ac, targs);			}
+        else if (strcmp(cmd, "reboot") == 0) 		{ printf("running command reboot\n"); 		builtin_reboot(ac, targs);		}
+        else if (strcmp(cmd, "shutdown") == 0) 	{ printf("running command shutdown\n"); 	builtin_shutdown(ac, targs);	}
         else if (strcmp(cmd, "exit")  == 0) 		{	printf("exitting SHELF"); return 0;																	}
         else 		printf("%s: unknown command, type help\n", cmd);
         // Shutdown, reboot and, exit cause a pagefault
