@@ -1,0 +1,8 @@
+CompileFlags:
+  Add:
+    - "-IE:/Projects/Weird/TOS/src/intf"
+
+Diagnostics:
+  Suppress:
+  - unused-includes
+  - unused-variable
