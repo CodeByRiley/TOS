@@ -1,3 +1,14 @@
+; SYSCALL entry stub. Builds a 15-register frame on the kernel stack in the
+; exact order `struct syscall_frame` expects, calls into C, unwinds, sysrets.
+;
+; The push order below is load-bearing: each `push` is mapped to a struct
+; field by position, so reorder one and the C dispatcher will silently read
+; the wrong register from the wrong syscall arg. If you "clean this up" you
+; will also be cleaning up production. Don't.
+;
+; kernel_rsp_top and user_rsp_save are re-staged on every context switch
+; (see sched.c::stage_for / capture_from) so per-task syscall stacks Just Work.
+
 global syscall_entry
 global user_rsp_save
 global kernel_rsp_top

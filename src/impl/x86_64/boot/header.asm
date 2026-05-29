@@ -1,4 +1,13 @@
+; Multiboot2 header. This is the first thing GRUB looks at when it decides
+; whether the file you just handed it is a kernel or a sandwich. Magic +
+; checksum + a single optional tag asking GRUB to give us a 1920x1080x32bpp
+; framebuffer. The framebuffer "request" is technically advisory — GRUB will
+; happily give you something else if it doesn't like the size — but on every
+; sane firmware we've tested, this gets honoured. Insane firmware can write
+; in.
+
 section .multiboot_header
+align 8
 header_start:
 	dd 0xe85250d6                     ; magic
 	dd 0                              ; arch (i386 protected mode)

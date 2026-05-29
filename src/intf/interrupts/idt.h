@@ -19,6 +19,7 @@ struct idt_ptr {
 } __attribute__((packed));
 
 void idt_init(void);
+void idt_load_this_cpu(void);   /* AP entry: load the (shared) IDTR */
 void irq_install(uint8_t irq, void (*fn)(void));
 int exception_recovery_try(void);
 void exception_recovery_clear(void);

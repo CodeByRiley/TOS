@@ -13,6 +13,9 @@ payloads=(
 	"userspace/bin/sh/sh.elf::SH.ELF"
 	"userspace/bin/shutdown/shutdown.elf::SHUTDOWN.ELF"
 	"userspace/bin/reboot/reboot.elf::REBOOT.ELF"
+	"userspace/bin/mtest/mtest.elf::MTEST.ELF"
+	"userspace/bin/winman/winman.elf::WINMAN.ELF"
+	"userspace/bin/btop/btop.elf::BTOP.ELF"
 )
 
 if [[ -z "${DISK_SIZE_MIB:-}" ]]; then

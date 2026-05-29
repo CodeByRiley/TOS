@@ -7,6 +7,8 @@
 #define MULTIBOOT_TAG_MODULE  3
 #define MULTIBOOT_TAG_MMAP    6
 #define MULTIBOOT_TAG_FRAMEBUFFER 8
+#define MULTIBOOT_TAG_ACPI_OLD 14   /* RSDP v1 (ACPI 1.0) — 20-byte header */
+#define MULTIBOOT_TAG_ACPI_NEW 15   /* XSDP v2+ — 36-byte header           */
 
 #define FB_TYPE_INDEXED 0
 #define FB_TYPE_RGB     1
@@ -56,6 +58,16 @@ struct MB2_TAG_FRAMEBUFFER {
     uint8_t  green_size;
     uint8_t  blue_pos;
     uint8_t  blue_size;
+} __attribute__((packed));
+
+
+/* ACPI tag: bootloader copies the RSDP into payload[]. ACPI_OLD = 20-byte
+ * v1 RSDP; ACPI_NEW = 36-byte v2 XSDP. Either may appear depending on the
+ * firmware — try ACPI_NEW first, fall back to ACPI_OLD. */
+struct MB2_TAG_ACPI {
+    uint32_t type;
+    uint32_t size;
+    uint8_t  rsdp[];
 } __attribute__((packed));
 
 struct MB2_TAG *mb2_find_tag(uint64_t mb2_addr, uint32_t type);

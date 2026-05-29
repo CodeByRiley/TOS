@@ -36,6 +36,12 @@ struct __attribute__((packed)) Elf64_Phdr {
     uint64_t p_align;
 };
 
-uint64_t elf_load(const char *path);
+/* Load an ELF into the given PML4 and return entry point.
+ *
+ * Caller must arrange that the kernel can write to the user vaddrs in the
+ * target PML4 — easiest is to switch CR3 to `pml4` before calling, since the
+ * kernel-low identity map is shared into every process PML4. Returns 0 on
+ * any failure. */
+uint64_t elf_load(const char *path, uint64_t *pml4);
 
 #endif
