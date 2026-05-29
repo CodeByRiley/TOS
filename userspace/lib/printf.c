@@ -25,7 +25,8 @@ static void pad_ctx(struct fmt_ctx *c, char ch, int n) {
     while (n-- > 0) putc_ctx(c, ch);
 }
 
-static void uint_ctx(struct fmt_ctx *c, uint64_t v, int base, int upper, int width, char pad, int precision) {
+static void uint_ctx(struct fmt_ctx *c, uint64_t v, int base, int upper,
+                     int width, char pad, int precision, int left) {
     char tmp[32];
     int  len = 0;
     const char *digits = upper ? "0123456789ABCDEF" : "0123456789abcdef";
@@ -33,14 +34,16 @@ static void uint_ctx(struct fmt_ctx *c, uint64_t v, int base, int upper, int wid
     while (v) { tmp[len++] = digits[v % base]; v /= base; }
     int zeroes = precision > len ? precision - len : 0;
     int total = len + zeroes;
-    pad_ctx(c, pad, width - total);
+    if (!left) pad_ctx(c, pad, width - total);
     pad_ctx(c, '0', zeroes);
     while (len--) putc_ctx(c, tmp[len]);
+    if (left) pad_ctx(c, ' ', width - total);
 }
 
-static void int_ctx(struct fmt_ctx *c, int64_t v, int width, char pad, int precision) {
+static void int_ctx(struct fmt_ctx *c, int64_t v, int width, char pad,
+                    int precision, int left) {
     if (v < 0) { putc_ctx(c, '-'); v = -v; if (width > 0) width--; }
-    uint_ctx(c, (uint64_t)v, 10, 0, width, pad, precision);
+    uint_ctx(c, (uint64_t)v, 10, 0, width, pad, precision, left);
 }
 
 int vsnprintf(char *buf, size_t size, const char *fmt, va_list ap) {
@@ -48,8 +51,11 @@ int vsnprintf(char *buf, size_t size, const char *fmt, va_list ap) {
     while (*fmt) {
         if (*fmt != '%') { putc_ctx(&c, *fmt++); continue; }
         fmt++;
+        int left = 0;
         char pad = ' ';
+        if (*fmt == '-') { left = 1; fmt++; }
         if (*fmt == '0') { pad = '0'; fmt++; }
+        if (left) pad = ' ';
         int width = 0;
         while (*fmt >= '0' && *fmt <= '9') { width = width*10 + (*fmt - '0'); fmt++; }
         int precision = -1;
@@ -62,18 +68,19 @@ int vsnprintf(char *buf, size_t size, const char *fmt, va_list ap) {
         int longflag = 0;
         while (*fmt == 'l') { longflag++; fmt++; }
         switch (*fmt) {
-            case 'd': case 'i': int_ctx(&c, longflag ? va_arg(ap, long) : va_arg(ap, int), width, pad, precision); break;
-            case 'u': uint_ctx(&c, longflag ? va_arg(ap, unsigned long) : va_arg(ap, unsigned int), 10, 0, width, pad, precision); break;
-            case 'o': uint_ctx(&c, longflag ? va_arg(ap, unsigned long) : va_arg(ap, unsigned int), 8, 0, width, pad, precision); break;
-            case 'x': case 'X': uint_ctx(&c, longflag ? va_arg(ap, unsigned long) : va_arg(ap, unsigned int), 16, *fmt=='X', width, pad, precision); break;
-            case 'p': puts_ctx(&c, "0x"); uint_ctx(&c, (uint64_t)va_arg(ap, void*), 16, 0, 16, '0', -1); break;
+            case 'd': case 'i': int_ctx(&c, longflag ? va_arg(ap, long) : va_arg(ap, int), width, pad, precision, left); break;
+            case 'u': uint_ctx(&c, longflag ? va_arg(ap, unsigned long) : va_arg(ap, unsigned int), 10, 0, width, pad, precision, left); break;
+            case 'o': uint_ctx(&c, longflag ? va_arg(ap, unsigned long) : va_arg(ap, unsigned int), 8, 0, width, pad, precision, left); break;
+            case 'x': case 'X': uint_ctx(&c, longflag ? va_arg(ap, unsigned long) : va_arg(ap, unsigned int), 16, *fmt=='X', width, pad, precision, left); break;
+            case 'p': puts_ctx(&c, "0x"); uint_ctx(&c, (uint64_t)va_arg(ap, void*), 16, 0, 16, '0', -1, 0); break;
             case 's': {
                 const char *s = va_arg(ap, const char*);
                 int len = 0;
                 s = s ? s : "(null)";
                 while (s[len] && (precision < 0 || len < precision)) len++;
-                pad_ctx(&c, ' ', width - len);
+                if (!left) pad_ctx(&c, ' ', width - len);
                 putn_ctx(&c, s, len);
+                if (left) pad_ctx(&c, ' ', width - len);
                 break;
             }
             case 'c': putc_ctx(&c, (char)va_arg(ap, int)); break;

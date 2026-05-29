@@ -1,3 +1,14 @@
+; 64-bit landing pad. Got here from main.asm via a far jump through the 64-bit
+; GDT. Zeros segment registers (long mode treats them as decorative but the CPU
+; still cares enough to fault if they're wrong), prints a few breadcrumbs over
+; serial so post-mortems have something to read, then jumps to kernel_main.
+;
+; serial_putc/puts/putln are copy-pasted from main.asm with 32-bit registers
+; swapped for 64-bit. Yes that's duplication. No it's not getting deduped —
+; the 32-bit copy literally cannot link against the 64-bit one. The cost of
+; the bytes is six lines of `mov`; the cost of the workaround would be a
+; weekend with a linker script.
+
 global long_mode_start
 extern kernel_main
 section .text

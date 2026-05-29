@@ -1,3 +1,10 @@
+; IDT entry stubs + common dispatcher. 48 vectors (0..31 = CPU exceptions,
+; 32..47 = PIC-remapped IRQs), each entered via its own tiny stub so we know
+; which vector fired and so error-code-pushing exceptions look the same as
+; non-pushing ones to the C handler. The dummy-zero push for no-err vectors
+; exists because x86 couldn't agree with itself in 1985 about whether the
+; CPU should push an error code, and we are still apologising for that decision.
+
 extern isr_handler
 
 %macro ISR_NOERR 1
@@ -64,6 +71,9 @@ ISR_NOERR 45
 ISR_NOERR 46
 ISR_NOERR 47
 
+; Save every general-purpose register. Interrupts are asynchronous — there is
+; no calling convention to lean on, no caller-saved/callee-saved distinction
+; we get to honour. Skipping any of these is a bug, full stop.
 isr_common:
     push rax
     push rcx

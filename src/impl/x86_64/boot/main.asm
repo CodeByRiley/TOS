@@ -1,7 +1,20 @@
+; 32-bit boot stub. Job description: convince a CPU that's currently
+; pretending it's 1986 to act like it's at least 2003. We check that the
+; bootloader handed us valid magic, that cpuid exists, that long mode exists,
+; that SSE exists — basically every capability we already know is there but
+; refuse to assume because someone, somewhere, is booting this on something
+; weird. Then build a 1 GiB identity-mapped pagetable with 2 MiB huge pages
+; (one PML4 entry pointing at one PDPT pointing at one PD with 512 entries),
+; flip CR0.PG, far-jump to 64-bit. Total runtime: roughly one blink.
+
 global start
 extern long_mode_start
 section .text
 bits 32
+
+mb2_magic equ 0x36D76289
+; 0x36D76289
+; 0xE85250D6
 
 ; entry point from GRUB
 ; eax: multiboot2 magic
@@ -52,7 +65,7 @@ start:
 ; verify multiboot2 magic in eax
 ; eax: magic value from GRUB
 check_multiboot:
-	cmp eax, 0x36d76289        ; multiboot2 bootloader magic
+	cmp eax, mb2_magic        ; multiboot2 bootloader magic
 	jne .no_multiboot
 	ret
 .no_multiboot:
@@ -114,12 +127,15 @@ setup_page_tables:
 	or eax, 0b11               ; present, writable
 	mov [page_table_l3], eax   ; PDPT[0] -> PD
 
-	mov ecx, 0                 ; loop counter
+	; Walk PD entries with a running running-add instead of a mul per iter.
+	; 512 iterations isn't a perf cliff, but mul-in-a-tight-loop is the kind
+	; of thing you grep for during a "why does boot take 200ms" investigation
+	; six months from now. eax = next PTE value, advances by 2 MiB each step.
+	mov eax, 0b10000011        ; PTE flags: present + writable + PS (huge)
+	xor ecx, ecx               ; index 0..511
 .loop:
-	mov eax, 0x200000          ; 2 MiB page size
-	mul ecx                    ; eax = 2MiB * ecx (physical address)
-	or eax, 0b10000011         ; present, writable, huge page
 	mov [page_table_l2 + ecx * 8], eax
+	add eax, 0x200000          ; advance physical addr by 2 MiB
 	inc ecx
 	cmp ecx, 512               ; full PD = 512 entries = 1 GiB
 	jne .loop

@@ -27,6 +27,8 @@ struct log_entry {
     enum log_type type;
     uint8_t has_hex;
     uint64_t hex_value;
+    uint8_t has_string;
+    char* string_value;
 };
 
 
@@ -34,4 +36,5 @@ void log_write(const char* message, uint8_t raw_type, uint8_t raw_level);
 void log_write_entry(struct log_entry* entry);
 void log_write_exception(uint64_t int_num, const char *name, uint64_t err_code, uint64_t rip);
 void log_write_hex(const char* message, uint64_t value, uint8_t raw_type, uint8_t raw_level);
+void log_write_string(const char* message, const char* val, uint8_t raw_type, uint8_t raw_level);
 #endif

@@ -30,7 +30,6 @@ int main(void) {
     }
 
     long t = get_ticks(); // Get current ticks to animate colors
-    printf("current ticks %d\n", (int)t);
     // Draw the entire framebuffer
     for (unsigned int y = 0; y < info.height; y++) {
       unsigned int *row = (unsigned int *)((char *)fb + y * info.pitch);
