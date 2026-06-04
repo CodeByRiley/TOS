@@ -359,8 +359,12 @@ static void builtin_shutdown(int argc, char **argv) {
  * found" instead of the kernel's generic exit-code-on-failure path.
  *
  * Used by both `run` (which strips its own argv[0]) and the dispatcher's
- * fallthrough so the user can type `btop` instead of `run btop`. */
-static int exec_argv(int argc, char **argv) {
+ * fallthrough so the user can type `btop` instead of `run btop`.
+ *
+ * When `bg != 0` the child is launched via spawn() (fire-and-forget) and
+ * the shell returns immediately, so windowed apps don't block the prompt.
+ * `&` as the trailing argv token sets bg upstream. */
+static int exec_argv(int argc, char **argv, int bg) {
     if (argc < 1 || !argv[0] || !argv[0][0]) return -1;
     const char *raw = argv[0];
 
@@ -415,6 +419,15 @@ static int exec_argv(int argc, char **argv) {
     }
     child_argv[n] = 0;
 
+    if (bg) {
+        long pid = spawn(fixed, child_argv);
+        if (pid < 0) {
+            printf("%s: spawn failed\n", fixed);
+            return -1;
+        }
+        printf("[%s pid=%d &]\n", fixed, (int)pid);
+        return 0;
+    }
     long code = exec(fixed, child_argv);
     console_clear();
     printf("[%s exited %d]\n", fixed, (int)code);
@@ -422,8 +435,14 @@ static int exec_argv(int argc, char **argv) {
 }
 
 static void builtin_run(int argc, char **argv) {
-    if (argc < 2) { printf("usage: run PATH[.ELF] [ARG...]\n"); return; }
-    exec_argv(argc - 1, argv + 1);
+    if (argc < 2) { printf("usage: run PATH[.ELF] [ARG...] [&]\n"); return; }
+    /* Strip trailing `&` from the run arglist and forward as bg=1. */
+    int bg = 0;
+    if (argc >= 2 && argv[argc - 1] && strcmp(argv[argc - 1], "&") == 0) {
+        bg = 1;
+        argc--;
+    }
+    exec_argv(argc - 1, argv + 1, bg);
 }
 
 // #endregion EXEC
@@ -461,8 +480,16 @@ int main(int argc, char **argv) {
         else if (strcmp(cmd, "exit")  == 0) 		{	printf("exitting SHELF"); return 0;																	}
         else {
             /* Fall through to filesystem lookup: `btop` runs BTOP.ELF,
-             * `dir/app.elf` runs APP.ELF (basename only — flat FS). */
-            if (exec_argv(ac, targs) != 0) {
+             * `dir/app.elf` runs APP.ELF (basename only — flat FS). A
+             * trailing `&` token means launch backgrounded (spawn). */
+            int bg = 0;
+            int eff_ac = ac;
+            if (eff_ac >= 1 && targs[eff_ac - 1] &&
+                strcmp(targs[eff_ac - 1], "&") == 0) {
+                bg = 1;
+                eff_ac--;
+            }
+            if (exec_argv(eff_ac, targs, bg) != 0) {
                 printf("%s: command not found\n", cmd);
             }
         }

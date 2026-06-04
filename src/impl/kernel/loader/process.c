@@ -46,6 +46,12 @@ static void free_pdpt_subtree(uint64_t pdpt_phys, int start_idx) {
             for (int k = 0; k < 512; k++) {
                 uint64_t pte = pt[k];
                 if (!(pte & VMM_PRESENT)) continue;
+                /* Skip shmem-borrowed frames: owner still holds them and
+                 * will recycle via its own free()/munmap. Double-freeing
+                 * here lets the next pmm_alloc_frame hand them back out
+                 * while the owner still writes to them, leading to a
+                 * page-fault about two seconds and one panic later. */
+                if (pte & VMM_SHARED) continue;
                 pmm_free_frame(pte & ADDR_MASK);
             }
             pmm_free_frame(pt_phys);

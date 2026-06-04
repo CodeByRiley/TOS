@@ -79,6 +79,11 @@ long exec(const char *path, char *const argv[]) {
     return syscall2(SYS_EXEC, (long)(uintptr_t)path, (long)(uintptr_t)argv);
 }
 
+long spawn(const char *path, char *const argv[]) {
+    /* fire-and-forget; returns child pid (or -1) without waiting */
+    return syscall2(SYS_SPAWN, (long)(uintptr_t)path, (long)(uintptr_t)argv);
+}
+
 long sys_shutdown(int time, const char *reason) {
     return syscall2(SYS_SHUTDOWN, time, (long)(uintptr_t)reason);
 }
@@ -140,90 +145,5 @@ long mem_stats(struct mem_stats *out) {
     return syscall1(SYS_MEM_STATS, (long)(uintptr_t)out);
 }
 
-/* --- winman client wrappers ---------------------------------------- */
-
-extern size_t strlen(const char *);
-extern void  *memset(void *, int, size_t);
-extern void  *memcpy(void *, const void *, size_t);
-
-/* Spin until we get an ipc_msg of the requested type. Other messages
- * are dropped — clients aren't expected to receive unrelated traffic
- * mid-handshake. Bounded so we don't hang forever if winman dies. */
-static int wait_for(uint32_t type, struct ipc_msg *out) {
-    for (int spin = 0; spin < 100000; spin++) {
-        if (ipc_recv(out)) {
-            if (out->type == type) return 0;
-            /* ignore unrelated messages during handshake */
-        } else {
-            sleep_ticks(1);
-        }
-    }
-    return -1;
-}
-
-int winman_create(int w, int h, const char *title,
-                  struct winman_window *out) {
-    if (!out) return -1;
-    long wpid = wm_pid();
-    if (wpid <= 0) return -1;
-
-    struct ipc_msg req;
-    memset(&req, 0, sizeof(req));
-    req.type = IPC_WM_CREATE_REQ;
-    req.a = w;
-    req.b = h;
-    if (title) {
-        size_t n = strlen(title);
-        if (n > sizeof(req.str) - 1) n = sizeof(req.str) - 1;
-        memcpy(req.str, title, n);
-        req.str[n] = 0;
-    }
-    if (ipc_send((int)wpid, &req) != 0) return -1;
-
-    struct ipc_msg resp;
-    if (wait_for(IPC_WM_CREATE_RESP, &resp) != 0) return -1;
-    if (resp.a < 0) return -1;
-
-    out->handle     = resp.a;
-    out->surface_va = resp.va;
-    out->pitch      = resp.pitch;
-    out->w          = w;
-    out->h          = h;
-    return 0;
-}
-
-int winman_destroy(int handle) {
-    long wpid = wm_pid();
-    if (wpid <= 0) return -1;
-    struct ipc_msg req;
-    memset(&req, 0, sizeof(req));
-    req.type = IPC_WM_DESTROY_REQ;
-    req.a = handle;
-    return (int)ipc_send((int)wpid, &req);
-}
-
-int winman_invalidate(int handle) {
-    long wpid = wm_pid();
-    if (wpid <= 0) return -1;
-    struct ipc_msg req;
-    memset(&req, 0, sizeof(req));
-    req.type = IPC_WM_INVALIDATE_REQ;
-    req.a = handle;
-    return (int)ipc_send((int)wpid, &req);
-}
-
-int winman_set_title(int handle, const char *title) {
-    long wpid = wm_pid();
-    if (wpid <= 0) return -1;
-    struct ipc_msg req;
-    memset(&req, 0, sizeof(req));
-    req.type = IPC_WM_SET_TITLE_REQ;
-    req.a = handle;
-    if (title) {
-        size_t n = strlen(title);
-        if (n > sizeof(req.str) - 1) n = sizeof(req.str) - 1;
-        memcpy(req.str, title, n);
-        req.str[n] = 0;
-    }
-    return (int)ipc_send((int)wpid, &req);
-}
+/* winman client wrappers moved to lib/wm.c — they wrap the IPC protocol,
+ * not raw syscalls, and live alongside the wm.h surface that apps include. */

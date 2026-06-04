@@ -38,6 +38,7 @@
 #define SYS_MEM_STATS   141
 #define SYS_CON_PUSH    142
 #define SYS_CON_POP     143
+#define SYS_SPAWN       144
 
 /* Mirror of kernel struct proc_info_user — byte-for-byte. */
 #define PROC_NAME_MAX 16
@@ -88,15 +89,10 @@ struct msg {
     uint32_t when;
 };
 
-/* Cross-process control message — must match kernel src/intf/msg/msg.h */
-
-#define IPC_WM_CREATE_REQ      0x100
-#define IPC_WM_CREATE_RESP     0x101
-#define IPC_WM_DESTROY_REQ     0x102
-#define IPC_WM_INVALIDATE_REQ  0x103
-#define IPC_WM_SET_TITLE_REQ   0x104
-#define IPC_WM_INPUT           0x110
-#define IPC_WM_RESIZE_NOTIFY   0x111
+/* Cross-process control message — must match kernel src/intf/msg/msg.h.
+ *
+ * The WM-specific IPC_WM_* type codes live in lib/wm.h alongside the
+ * winman client API. Generic / non-WM codes stay here. */
 #define IPC_PEER_EXITED        0x180
 #define IPC_USER_FIRST         0x200
 
@@ -144,6 +140,10 @@ long  fb_damage(uint32_t x, uint32_t y, uint32_t w, uint32_t h);
 long  kbd_poll(int *pressed, uint16_t *key);
 long  get_ticks(void);
 long  exec(const char *path, char *const argv[]);
+
+/* Fire-and-forget spawn: returns the child's pid (>0) immediately without
+ * waiting for it to exit. Use for windowed apps so the shell stays free. */
+long  spawn(const char *path, char *const argv[]);
 long  sys_shutdown(int time, const char *reason);
 long  sys_reboot(int time);
 
@@ -175,18 +175,7 @@ long  proc_list(struct proc_info *out, long max);
 /* Fill `out` with physical-memory accounting. Returns 0 on success. */
 long  mem_stats(struct mem_stats *out);
 
-/* High-level winman client API. Synchronous wrappers around the IPC
- * protocol: send request, spin-recv reply with matching type. */
-struct winman_window {
-    int      handle;
-    uint64_t surface_va;
-    uint32_t pitch;
-    int      w, h;
-};
-
-int  winman_create(int w, int h, const char *title, struct winman_window *out);
-int  winman_destroy(int handle);
-int  winman_invalidate(int handle);
-int  winman_set_title(int handle, const char *title);
+/* High-level winman client API lives in lib/wm.h — include that header
+ * instead of declaring winman entry points here. */
 
 #endif

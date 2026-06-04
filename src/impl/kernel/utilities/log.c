@@ -1,4 +1,5 @@
 #include "utilities/log.h"
+#include "display/print.h"
 
 static int log_type_from_u8(uint8_t value, enum log_type *out) {
     switch (value) {
@@ -59,6 +60,8 @@ static void log_init_entry(struct log_entry *entry, const char *message,
     entry->level = LOG_INFO;
     entry->type = SYSTEM;
     entry->has_hex = 0;
+    entry->has_int = 0;
+    entry->int_value = 0;
     entry->hex_value = 0;
     entry->has_string = 0;
     entry->string_value = 0;
@@ -87,6 +90,12 @@ void log_write_entry(struct log_entry *entry) {
         serial_write_str(" ");
         serial_write_str(entry->string_value);
     }
+    if (entry->has_int) {
+    		char buf[32];
+        snprintf(buf, sizeof(buf), "%ld", (long)entry->int_value);
+        serial_write_str(" ");
+        serial_write_str(buf);
+    }
     serial_write_str("\n");
 
     print_write_str("[");
@@ -100,6 +109,12 @@ void log_write_entry(struct log_entry *entry) {
     if (entry->has_string) {
         print_write_str(" ");
         print_write_str(entry->string_value);
+    }
+    if (entry->has_int) {
+    		char buf[32];
+        snprintf(buf, sizeof(buf), "%ld", (long)entry->int_value);
+        print_write_str(" ");
+        print_write_str(buf);
     }
     print_write_str("\n");
 }
@@ -115,6 +130,14 @@ void log_write_hex(const char* message, uint64_t value, uint8_t raw_type, uint8_
     log_init_entry(&entry, message, raw_type, raw_level);
     entry.has_hex = 1;
     entry.hex_value = value;
+	log_write_entry(&entry);
+}
+
+void log_write_int(const char* message, int64_t value, uint8_t raw_type, uint8_t raw_level) {
+	struct log_entry entry;
+    log_init_entry(&entry, message, raw_type, raw_level);
+    entry.has_int = 1;
+    entry.int_value = value;
 	log_write_entry(&entry);
 }
 
