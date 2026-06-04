@@ -46,6 +46,9 @@
 #define SYS_CON_PUSH       142
 #define SYS_CON_POP        143
 
+/* Fire-and-forget spawn: returns child pid, never waits for exit. */
+#define SYS_SPAWN          144
+
 #define SYS_UNLINK     87
 
 

@@ -8,6 +8,11 @@
 #define VMM_USER     (1ULL << 2)
 #define VMM_PWT      (1ULL << 3)   /* page write-through (cache hint)   */
 #define VMM_PCD      (1ULL << 4)   /* page cache disable (MMIO regions) */
+/* Bits 9-11 are reserved by the architecture for OS use. We use bit 9 to
+ * mark PTEs whose phys frame is borrowed from another task via shmem_share:
+ * the receiving task must NOT pmm_free_frame these on exit, because the
+ * owner (e.g. winman) still has them mapped and on its malloc free list. */
+#define VMM_SHARED   (1ULL << 9)
 #define VMM_NX       (1ULL << 63)
 
 void     vmm_init(void);

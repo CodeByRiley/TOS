@@ -211,10 +211,19 @@ static long sys_write(long fd, const void *buf, long n) {
 // #region PROCESS HANDLERS
 
 extern long process_exec(const char *path, char *const argv[]);
+extern long process_spawn_async(const char *path, char *const argv[]);
 
 static long sys_exec(const char *path, char *const argv[]) {
     if (!path) return -1;
     return process_exec(path, argv);
+}
+
+/* Fire-and-forget: returns child pid without blocking on its exit code.
+ * Used by the shell to launch windowed apps that should keep running while
+ * the user types more commands. */
+static long sys_spawn(const char *path, char *const argv[]) {
+    if (!path) return -1;
+    return process_spawn_async(path, argv);
 }
 
 static long sys_exit(long code) {
@@ -317,7 +326,9 @@ static long sys_shmem_share(long target_pid, uint64_t my_va, long npages,
       target->shmem_next_va = 0x0000000080000000ULL;     /* defensive */
 
   uint64_t target_va = target->shmem_next_va;
-  uint64_t flags = VMM_PRESENT | VMM_WRITE | VMM_USER;
+  /* VMM_SHARED marks the PTE so the target's exit cleanup (free_user_pml4)
+   * skips pmm_free_frame on these phys frames — the caller still owns them. */
+  uint64_t flags = VMM_PRESENT | VMM_WRITE | VMM_USER | VMM_SHARED;
 
   for (long i = 0; i < npages; i++) {
     uint64_t phys = vmm_translate_in(me->user_pml4, my_va + (uint64_t)i * 4096);
@@ -529,7 +540,7 @@ static long sys_proc_list(struct proc_info_user *out, long max) {
 
 static long sys_mem_stats(struct mem_stats_user *out) {
   if (!out) return -1;
-  out->total_frames = pmm_total_frames();
+  out->total_frames = pmm_usable_frames();
   out->used_frames  = pmm_used_frames();
   out->frame_size   = 4096;
   return 0;
@@ -644,6 +655,9 @@ long syscall_dispatch(struct syscall_frame *f) {
     break;
   case SYS_EXEC:
     ret = sys_exec((const char *)(uintptr_t)a1, (char *const *)(uintptr_t)a2);
+    break;
+  case SYS_SPAWN:
+    ret = sys_spawn((const char *)(uintptr_t)a1, (char *const *)(uintptr_t)a2);
     break;
   case SYS_SHUTDOWN:
     ret = sys_shutdown((uintptr_t)a1, (const char *)(uintptr_t)a2);

@@ -4,6 +4,8 @@
 #include <stdint.h>
 #include "devices/serial.h"
 #include "display/print.h"
+#include "printf.h"
+#include "utilities/types.h"
 
 enum log_level {
 	LOG_DEBUG = 0,
@@ -25,10 +27,12 @@ struct log_entry {
     uint64_t timestamp;
     enum log_level level;
     enum log_type type;
-    uint8_t has_hex;
-    uint64_t hex_value;
     uint8_t has_string;
+    uint8_t has_hex;
+    uint8_t has_int;
+    uint64_t hex_value;
     char* string_value;
+    int64 int_value;
 };
 
 
@@ -36,5 +40,6 @@ void log_write(const char* message, uint8_t raw_type, uint8_t raw_level);
 void log_write_entry(struct log_entry* entry);
 void log_write_exception(uint64_t int_num, const char *name, uint64_t err_code, uint64_t rip);
 void log_write_hex(const char* message, uint64_t value, uint8_t raw_type, uint8_t raw_level);
+void log_write_int(const char* message, int64_t value, uint8_t raw_type, uint8_t raw_level);
 void log_write_string(const char* message, const char* val, uint8_t raw_type, uint8_t raw_level);
 #endif

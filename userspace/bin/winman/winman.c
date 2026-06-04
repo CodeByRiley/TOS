@@ -12,6 +12,7 @@
 // #region INCLUDES
 
 #include "../../lib/syscall.h"
+#include "../../lib/wm.h"
 #include "display/font8x8.h"
 #include "utilities/types.h"
 #include <stdint.h>
@@ -40,7 +41,14 @@ extern int   printf(const char *, ...);
 
 /* Forward decls — defined in HELPERS region below, used by GEOMETRY + DRAG
  * helpers that have to come before HELPERS for declaration-order reasons. */
+struct window;
 static void *aligned_page_alloc(size_t npages, void **out_raw);
+static int   window_count(void);
+static int   is_minimized(int handle);
+static struct window *find_handle(int handle);
+static void  titlebar_btn_rect(int win_x, int win_y, int outer_w,
+                               int idx_from_right,
+                               int *bx, int *by, int *bw, int *bh);
 
 // #endregion EXTERNS
 
@@ -83,6 +91,19 @@ static const uint8_t cursor_mask[CURSOR_H][CURSOR_W] = {
 #define BORDER_PX     1
 #define TITLEBAR_PX   16
 
+/* Taskbar: always-on-top strip pinned to the bottom of the desktop.
+ * Buttons list the console + every client window; clicking a button focuses
+ * (and would raise, if winman had explicit z-order) that handle. */
+#define TASKBAR_PX            24
+#define TASKBAR_BG            0x00808080u
+#define TASKBAR_BTN_BG        0x00C0C0C0u
+#define TASKBAR_BTN_BG_FOCUS  0x000000A0u
+#define TASKBAR_BTN_TEXT      0x00000000u
+#define TASKBAR_BTN_TEXT_FOC  0x00FFFFFFu
+#define TASKBAR_BTN_W         120
+#define TASKBAR_BTN_GAP       2
+#define TASKBAR_PAD_Y         2
+
 /* Drag affordances. RESIZE_GRIP = size of the bottom-right square that acts
  * as the resize handle. MIN_CLIENT_* = floor below which we refuse to shrink
  * (smaller and the chrome geometry would invert). */
@@ -91,13 +112,77 @@ static const uint8_t cursor_mask[CURSOR_H][CURSOR_W] = {
 #define MIN_CLIENT_H  40
 
 /* Hit-test region codes returned by hit_test_at. */
-#define HIT_NONE      0
-#define HIT_TITLEBAR  1
-#define HIT_GRIP      2
-#define HIT_CLIENT    3
+#define HIT_NONE       0
+#define HIT_TITLEBAR   1
+#define HIT_GRIP       2
+#define HIT_CLIENT     3
+#define HIT_BTN_CLOSE  4
+#define HIT_BTN_MAX    5
+#define HIT_BTN_MIN    6
+
+/* Titlebar buttons: small square icons right-anchored in the titlebar.
+ * Today only the close (X) button exists; min/max can slot in by bumping
+ * `idx_from_right` in titlebar_btn_rect. Buttons render as bitmap masks
+ * (same scheme as the cursor) so future icon swaps don't need new helpers. */
+#define TB_BTN_SIZE        12
+#define TB_BTN_GAP         2
+#define TB_BTN_PAD_R       2
+#define TB_BTN_BG          0x00C0C0C0u
+#define TB_BTN_BG_HOVER    0x00FF6060u
+#define TB_BTN_FG          0x00000000u
+
+/* title-bar button glyphs. 0 = background (titlebar btn bg), 1 = foreground.
+ * Drawn through draw_button_mask which fills the rect with `bg` first then
+ * stamps `fg` only where the mask is 1. */
+static const uint8_t btn_close_mask[TB_BTN_SIZE][TB_BTN_SIZE] = {
+    {0,0,0,0,0,0,0,0,0,0,0,0},
+    {0,0,0,0,0,0,0,0,0,0,0,0},
+    {0,0,1,1,0,0,0,0,1,1,0,0},
+    {0,0,1,1,1,0,0,1,1,1,0,0},
+    {0,0,0,1,1,1,1,1,1,0,0,0},
+    {0,0,0,0,1,1,1,1,0,0,0,0},
+    {0,0,0,0,1,1,1,1,0,0,0,0},
+    {0,0,0,1,1,1,1,1,1,0,0,0},
+    {0,0,1,1,1,0,0,1,1,1,0,0},
+    {0,0,1,1,0,0,0,0,1,1,0,0},
+    {0,0,0,0,0,0,0,0,0,0,0,0},
+    {0,0,0,0,0,0,0,0,0,0,0,0},
+};
+
+static const uint8_t btn_maximise_mask[TB_BTN_SIZE][TB_BTN_SIZE] = {
+    {0,0,0,0,0,0,0,0,0,0,0,0},
+    {0,0,0,0,0,0,0,0,0,0,0,0},
+    {0,0,1,1,1,1,1,1,1,1,0,0},
+    {0,0,1,1,1,1,1,1,1,1,0,0},
+    {0,0,0,1,0,0,0,0,1,1,0,0},
+    {0,0,1,1,0,0,0,0,1,1,0,0},
+    {0,0,1,1,0,0,0,0,1,1,0,0},
+    {0,0,1,1,0,0,0,0,1,1,0,0},
+    {0,0,1,1,1,1,1,1,1,1,0,0},
+    {0,0,1,1,1,1,1,1,1,1,0,0},
+    {0,0,0,0,0,0,0,0,0,0,0,0},
+    {0,0,0,0,0,0,0,0,0,0,0,0},
+};
+
+static const uint8_t btn_hide_mask[TB_BTN_SIZE][TB_BTN_SIZE] = {
+    {0,0,0,0,0,0,0,0,0,0,0,0},
+    {0,0,0,0,0,0,0,0,0,0,0,0},
+    {0,0,0,0,0,0,0,0,0,0,0,0},
+    {0,0,0,0,0,0,0,0,0,0,0,0},
+    {0,0,0,0,0,0,0,0,0,0,0,0},
+    {0,0,1,1,1,1,1,1,1,1,0,0},
+    {0,0,1,1,1,1,1,1,1,1,0,0},
+    {0,0,0,0,0,0,0,0,0,0,0,0},
+    {0,0,0,0,0,0,0,0,0,0,0,0},
+    {0,0,0,0,0,0,0,0,0,0,0,0},
+    {0,0,0,0,0,0,0,0,0,0,0,0},
+    {0,0,0,0,0,0,0,0,0,0,0,0},
+};
 
 /* Special handle reserved for the built-in console. Real client window
- * handles start at 1 (next_handle is initialised to 1 in main). */
+ * handles are derived from their slot index: handle = (slot_index + 1),
+ * so they always live in 1..MAX_WINDOWS and get reused as soon as the
+ * slot is freed. No monotonically-growing counter. */
 #define HANDLE_CONSOLE 0
 
 // #endregion PALETTE
@@ -128,6 +213,15 @@ struct window {
     void     *surface_raw;       /* original malloc ptr for free()         */
     int       n_pages;
     uint64_t  client_va;         /* va in owner_pml4 (0 if not shared)     */
+
+    /* Title-bar button state. minimized: skip compose + hit-test, but stay
+     * on taskbar; clicking the taskbar button restores. maximized: window
+     * fills the desktop (above taskbar); pre-max geometry is saved here so
+     * a second click restores. */
+    int       minimized;
+    int       maximized;
+    int       saved_x, saved_y;
+    int       saved_cw, saved_ch;
 };
 
 struct drag_state {
@@ -148,8 +242,32 @@ struct drag_state {
 static struct drag_state drag;
 
 static struct window windows[MAX_WINDOWS];
-static int next_handle = 1;
 static int focused_handle = 0;
+
+/* Z-order: handles ordered front-to-back. z_order[0] is topmost (drawn
+ * last, hit-tested first). Console takes a slot too — it can be raised
+ * over client windows just like any other surface. Re-bound on every
+ * create / focus / destroy so the array always reflects current stacking. */
+#define MAX_Z (1 + MAX_WINDOWS)
+static int z_order[MAX_Z];
+static int z_count = 0;
+
+static void z_remove(int handle) {
+    int j = 0;
+    for (int i = 0; i < z_count; i++) {
+        if (z_order[i] == handle) continue;
+        z_order[j++] = z_order[i];
+    }
+    z_count = j;
+}
+
+static void z_bring_to_front(int handle) {
+    z_remove(handle);
+    if (z_count >= MAX_Z) return;
+    for (int i = z_count; i > 0; i--) z_order[i] = z_order[i - 1];
+    z_order[0]  = handle;
+    z_count++;
+}
 
 // #endregion WINDOWS
 
@@ -241,32 +359,38 @@ static void win_set_pos(int handle, int x, int y) {
 static int outer_w_dims(int cw) { return cw + 2 * BORDER_PX; }
 static int outer_h_dims(int ch) { return ch + TITLEBAR_PX + BORDER_PX; }
 
-/* Classify a screen-space hit by walking topmost-first. Real windows are
- * drawn after the console, so they sit above it in z-order; we iterate the
- * window array in reverse-drawing order and fall through to the console. */
+/* True iff (mx,my) lies inside titlebar button `idx_from_right` for a window
+ * whose outer rect is (win_x, win_y, outer_w, _). Used by hit_test_at to
+ * carve close/min/max regions out of HIT_TITLEBAR before returning. */
+static int in_titlebar_btn(int win_x, int win_y, int outer_w,
+                           int idx_from_right, int mx, int my) {
+    int bx, by, bw, bh;
+    titlebar_btn_rect(win_x, win_y, outer_w, idx_from_right, &bx, &by, &bw, &bh);
+    return mx >= bx && mx < bx + bw && my >= by && my < by + bh;
+}
+
+/* Classify a screen-space hit by walking the z-order topmost-first. The
+ * console is just another z-stack entry now; whichever handle is at
+ * z_order[0] wins ties at the same pixel. */
 static int hit_test_at(int mx, int my, int *out_handle) {
-    for (int i = MAX_WINDOWS - 1; i >= 0; i--) {
-        if (!windows[i].in_use) continue;
-        int x  = windows[i].x, y = windows[i].y;
-        int ow = outer_w_dims(windows[i].client_w);
-        int oh = outer_h_dims(windows[i].client_h);
+    for (int i = 0; i < z_count; i++) {
+        int h = z_order[i];
+        if (is_minimized(h)) continue;
+        int x, y, cw, ch;
+        if (!win_get_rect(h, &x, &y, &cw, &ch)) continue;
+        int ow = outer_w_dims(cw);
+        int oh = outer_h_dims(ch);
         if (mx < x || mx >= x + ow || my < y || my >= y + oh) continue;
-        *out_handle = windows[i].handle;
+        *out_handle = h;
         /* Grip beats titlebar when they overlap at the seam. */
         if (mx >= x + ow - RESIZE_GRIP && my >= y + oh - RESIZE_GRIP) return HIT_GRIP;
-        if (my < y + TITLEBAR_PX) return HIT_TITLEBAR;
-        return HIT_CLIENT;
-    }
-    if (con.enabled) {
-        int x = con.x, y = con.y;
-        int ow = outer_w_dims(con.client_w);
-        int oh = outer_h_dims(con.client_h);
-        if (mx >= x && mx < x + ow && my >= y && my < y + oh) {
-            *out_handle = HANDLE_CONSOLE;
-            if (mx >= x + ow - RESIZE_GRIP && my >= y + oh - RESIZE_GRIP) return HIT_GRIP;
-            if (my < y + TITLEBAR_PX) return HIT_TITLEBAR;
-            return HIT_CLIENT;
+        if (my < y + TITLEBAR_PX) {
+            if (in_titlebar_btn(x, y, ow, 0, mx, my)) return HIT_BTN_CLOSE;
+            if (in_titlebar_btn(x, y, ow, 1, mx, my)) return HIT_BTN_MAX;
+            if (in_titlebar_btn(x, y, ow, 2, mx, my)) return HIT_BTN_MIN;
+            return HIT_TITLEBAR;
         }
+        return HIT_CLIENT;
     }
     return HIT_NONE;
 }
@@ -274,11 +398,12 @@ static int hit_test_at(int mx, int my, int *out_handle) {
 static void clamp_to_desktop(int *x, int *y, int cw, int ch) {
     int ow = outer_w_dims(cw);
     (void)ch;
-    /* Keep at least the title bar reachable for re-drag. */
-    if (*x + ow < TITLEBAR_PX)   *x = TITLEBAR_PX - ow;
-    if (*y < 0)                  *y = 0;
-    if (*x > fb_w - TITLEBAR_PX) *x = fb_w - TITLEBAR_PX;
-    if (*y > fb_h - TITLEBAR_PX) *y = fb_h - TITLEBAR_PX;
+    /* Keep at least the title bar reachable for re-drag. Bottom limit also
+     * subtracts the taskbar so windows can't hide their title strip behind it. */
+    if (*x + ow < TITLEBAR_PX)                 *x = TITLEBAR_PX - ow;
+    if (*y < 0)                                *y = 0;
+    if (*x > fb_w - TITLEBAR_PX)               *x = fb_w - TITLEBAR_PX;
+    if (*y > fb_h - TITLEBAR_PX - TASKBAR_PX)  *y = fb_h - TITLEBAR_PX - TASKBAR_PX;
 }
 
 /* Console resize: reallocate surface + backing buffer at new dims and copy
@@ -472,6 +597,37 @@ static void draw_text_fb(int x, int y, const char *s, int max_w,
 static int outer_w(const struct window *w) { return w->client_w + 2 * BORDER_PX; }
 static int outer_h(const struct window *w) { return w->client_h + TITLEBAR_PX + BORDER_PX; }
 
+/* Compute screen-space rect of titlebar button `idx_from_right` (0 = closest
+ * to the corner). Used by both draw_chrome and the input pump's hit_test
+ * so click rects exactly match what was rendered. */
+static void titlebar_btn_rect(int win_x, int win_y, int outer_w,
+                              int idx_from_right,
+                              int *bx, int *by, int *bw, int *bh) {
+    *bw = TB_BTN_SIZE;
+    *bh = TB_BTN_SIZE;
+    *bx = win_x + outer_w - BORDER_PX - TB_BTN_PAD_R
+        - (idx_from_right + 1) * TB_BTN_SIZE
+        - idx_from_right * TB_BTN_GAP;
+    *by = win_y + (TITLEBAR_PX - TB_BTN_SIZE) / 2;
+}
+
+/* Stamp a TB_BTN_SIZE square button at (x,y). bg fills the rect; fg appears
+ * only where the mask is 1. Mirrors the cursor's mask-overlay rendering. */
+static void draw_button_mask(int x, int y,
+                             const uint8_t mask[TB_BTN_SIZE][TB_BTN_SIZE],
+                             uint32_t fg, uint32_t bg) {
+    fb_fill_rect(x, y, TB_BTN_SIZE, TB_BTN_SIZE, bg);
+    for (int r = 0; r < TB_BTN_SIZE; r++) {
+        for (int c = 0; c < TB_BTN_SIZE; c++) {
+            if (!mask[r][c]) continue;
+            int px = x + c;
+            int py = y + r;
+            if (px < 0 || px >= fb_w || py < 0 || py >= fb_h) continue;
+            *fb_pix(px, py) = fg;
+        }
+    }
+}
+
 static void draw_chrome(const struct window *w, int focused) {
     int ow = outer_w(w);
     int oh = outer_h(w);
@@ -482,12 +638,29 @@ static void draw_chrome(const struct window *w, int focused) {
     int tb_h  = TITLEBAR_PX - BORDER_PX;
     uint32_t bg = focused ? TITLEBAR_FG : TITLEBAR_BG;
     fb_fill_rect(tb_x, tb_y, tb_w, tb_h, bg);
+
+    /* Reserve space at the right for close + max + min buttons. Title text
+     * gets clamped so it never overlaps the buttons. Order from right to
+     * left: close (idx 0), max (1), min (2). */
+    const int n_btns = 3;
+    int btn_strip_w = n_btns * TB_BTN_SIZE
+                    + (n_btns - 1) * TB_BTN_GAP
+                    + TB_BTN_PAD_R;
+
     int text_x = tb_x + 4;
     int text_y = tb_y + (tb_h - FONT_GLYPH_H) / 2;
-    int avail  = tb_w - 8;
+    int avail  = tb_w - 8 - btn_strip_w;
     if (avail > 0) {
         draw_text_fb(text_x, text_y, w->title, avail, CHROME_TEXT, bg);
     }
+
+    int bx, by, bw_, bh_;
+    titlebar_btn_rect(w->x, w->y, ow, 0, &bx, &by, &bw_, &bh_);
+    draw_button_mask(bx, by, btn_close_mask,     TB_BTN_FG, TB_BTN_BG);
+    titlebar_btn_rect(w->x, w->y, ow, 1, &bx, &by, &bw_, &bh_);
+    draw_button_mask(bx, by, btn_maximise_mask,  TB_BTN_FG, TB_BTN_BG);
+    titlebar_btn_rect(w->x, w->y, ow, 2, &bx, &by, &bw_, &bh_);
+    draw_button_mask(bx, by, btn_hide_mask,      TB_BTN_FG, TB_BTN_BG);
 }
 
 static void blit_surface(const struct window *w) {
@@ -514,6 +687,83 @@ static void blit_surface(const struct window *w) {
 }
 
 // #endregion HELPERS
+
+// #region TASKBAR
+
+/* Enumerate the windows that should appear on the taskbar in stable order:
+ * the console first (handle 0), then in-use client windows in their array
+ * slot order. Order matches z-order today since neither has explicit raising. */
+struct tb_entry { int handle; const char *title; };
+
+static int build_taskbar_entries(struct tb_entry *out, int max) {
+    int n = 0;
+    if (con.enabled && n < max) {
+        out[n].handle = HANDLE_CONSOLE;
+        out[n].title  = con.title;
+        n++;
+    }
+    for (int i = 0; i < MAX_WINDOWS && n < max; i++) {
+        if (!windows[i].in_use) continue;
+        out[n].handle = windows[i].handle;
+        out[n].title  = windows[i].title;
+        n++;
+    }
+    return n;
+}
+
+static int taskbar_y(void) { return fb_h - TASKBAR_PX; }
+
+static void draw_taskbar(void) {
+    int y = taskbar_y();
+    if (y < 0) return;
+    fb_fill_rect(0, y, fb_w, TASKBAR_PX, TASKBAR_BG);
+
+    struct tb_entry ents[1 + MAX_WINDOWS];
+    int n = build_taskbar_entries(ents, (int)(sizeof(ents) / sizeof(ents[0])));
+
+    int bx = TASKBAR_BTN_GAP;
+    int by = y + TASKBAR_PAD_Y;
+    int bh = TASKBAR_PX - 2 * TASKBAR_PAD_Y;
+    for (int i = 0; i < n; i++) {
+        if (bx + TASKBAR_BTN_W > fb_w) break;
+        int focused  = ents[i].handle == focused_handle;
+        uint32_t bg  = focused ? TASKBAR_BTN_BG_FOCUS : TASKBAR_BTN_BG;
+        uint32_t fg  = focused ? TASKBAR_BTN_TEXT_FOC : TASKBAR_BTN_TEXT;
+        fb_fill_rect(bx, by, TASKBAR_BTN_W, bh, bg);
+        int tx = bx + 4;
+        int ty = by + (bh - FONT_GLYPH_H) / 2;
+        draw_text_fb(tx, ty, ents[i].title, TASKBAR_BTN_W - 8, fg, bg);
+        bx += TASKBAR_BTN_W + TASKBAR_BTN_GAP;
+    }
+}
+
+/* Returns 1 + writes *out_handle when the click landed on a taskbar button,
+ * 0 otherwise (including clicks on the taskbar strip background). Caller
+ * should still treat strip clicks as "ate the input" — the strip is opaque
+ * and never belongs to a client. */
+static int hit_taskbar(int mx, int my, int *out_handle) {
+    int y = taskbar_y();
+    if (my < y || my >= y + TASKBAR_PX) return 0;
+
+    struct tb_entry ents[1 + MAX_WINDOWS];
+    int n = build_taskbar_entries(ents, (int)(sizeof(ents) / sizeof(ents[0])));
+
+    int bx = TASKBAR_BTN_GAP;
+    int by = y + TASKBAR_PAD_Y;
+    int bh = TASKBAR_PX - 2 * TASKBAR_PAD_Y;
+    for (int i = 0; i < n; i++) {
+        if (bx + TASKBAR_BTN_W > fb_w) break;
+        if (mx >= bx && mx < bx + TASKBAR_BTN_W &&
+            my >= by && my <  by + bh) {
+            *out_handle = ents[i].handle;
+            return 1;
+        }
+        bx += TASKBAR_BTN_W + TASKBAR_BTN_GAP;
+    }
+    return 0;
+}
+
+// #endregion TASKBAR
 
 // #region CONSOLE (TTY DRAIN)
 
@@ -610,7 +860,7 @@ static void con_putc(char c) {
 static void con_alloc(void) {
     int margin = 16;
     int cw = fb_w - 2 * margin - 2 * BORDER_PX;
-    int ch = fb_h - 2 * margin - TITLEBAR_PX - BORDER_PX;
+    int ch = fb_h - 2 * margin - TITLEBAR_PX - BORDER_PX - TASKBAR_PX;
     if (cw < 64 || ch < 64) return;
     cw = (cw / FONT_GLYPH_W) * FONT_GLYPH_W;
     ch = (ch / FONT_GLYPH_H) * FONT_GLYPH_H;
@@ -639,6 +889,7 @@ static void con_alloc(void) {
     while (t[tn] && tn < sizeof(con.title) - 1) { con.title[tn] = t[tn]; tn++; }
     con.title[tn] = 0;
     con.enabled = 1;
+    z_bring_to_front(HANDLE_CONSOLE);
 }
 
 static void drain_tty_into_console(void) {
@@ -654,25 +905,42 @@ static void drain_tty_into_console(void) {
 
 // #region COMPOSITOR
 
-static void compose(void) {
-    fb_fill_rect(0, 0, fb_w, fb_h, DESKTOP_BG);
-
-    if (con.enabled) {
+/* Render one entry in the stack (real window or console). Factored out so
+ * compose() can iterate z_order without caring which kind it's drawing.
+ * Minimized windows are skipped entirely — they keep their slot + taskbar
+ * entry but contribute no pixels until restored. */
+static void compose_handle(int handle) {
+    if (is_minimized(handle)) return;
+    if (handle == HANDLE_CONSOLE) {
+        if (!con.enabled) return;
         struct window cw = {0};
         cw.x = con.x; cw.y = con.y;
         cw.client_w = con.client_w; cw.client_h = con.client_h;
         cw.surface = con.surface;
         memcpy(cw.title, con.title, sizeof(cw.title) - 1);
-        draw_chrome(&cw, focused_handle == 0);
+        draw_chrome(&cw, focused_handle == HANDLE_CONSOLE);
         blit_surface(&cw);
+        return;
+    }
+    struct window *w = find_handle(handle);
+    if (!w) return;
+    draw_chrome(w, w->handle == focused_handle);
+    blit_surface(w);
+}
+
+static void compose(void) {
+    fb_fill_rect(0, 0, fb_w, fb_h, DESKTOP_BG);
+
+    /* Back-to-front so topmost overdraws everything beneath. z_order[0] is
+     * the topmost handle; iterate from the tail. */
+    for (int i = z_count - 1; i >= 0; i--) {
+        compose_handle(z_order[i]);
     }
 
-    for (int i = 0; i < MAX_WINDOWS; i++) {
-        if (!windows[i].in_use) continue;
-        int focused = windows[i].handle == focused_handle;
-        draw_chrome(&windows[i], focused);
-        blit_surface(&windows[i]);
-    }
+    /* Taskbar is always-on-top: drawn last so any window that overlaps the
+     * bottom strip gets covered. clamp_to_desktop already prevents the title
+     * bar from being lost behind it, but client areas may still overlap. */
+    draw_taskbar();
 }
 
 static int cursor_scale(void) {
@@ -844,7 +1112,9 @@ static int handle_create(int client_pid, int w, int h, const char *title,
     }
 
     win->in_use   = 1;
-    win->handle   = next_handle++;
+    /* Handle = slot index + 1. Stable for the slot's lifetime; reused when
+     * the slot is freed (find_slot reclaims it). */
+    win->handle   = (int)(win - windows) + 1;
     win->owner_pid = client_pid;
     /* Cascade placement: stagger new windows down-right so they don't
      * all stack at (0,0). */
@@ -872,21 +1142,137 @@ static int handle_create(int client_pid, int w, int h, const char *title,
     }
 
     focused_handle = win->handle;
+    z_bring_to_front(win->handle);
     desktop_dirty = 1;
 
     *out_client_va = client_va;
     *out_pitch     = (uint32_t)(w * 4);
     *out_handle    = win->handle;
+    printf("winman: create handle=%d owner=%d %dx%d pages=%d client_va=%lx active=%d\n",
+           win->handle, client_pid, w, h, (int)pages,
+           (unsigned long)client_va, window_count());
     return 0;
 }
 
-static void handle_destroy(int client_pid, int handle) {
+/* Count of slots currently in_use. Used by the taskbar enumeration and
+ * for debug logging on create/destroy/reap. */
+static int window_count(void) {
+    int n = 0;
+    for (int i = 0; i < MAX_WINDOWS; i++) if (windows[i].in_use) n++;
+    return n;
+}
+
+/* Tear down a window. Owner-check by client_pid is skipped when
+ * client_pid == 0 — used by the reaper for dead-client cleanup, since the
+ * dead owner can no longer issue the destroy itself. */
+static void handle_destroy_internal(int handle, int client_pid_check) {
     struct window *w = find_handle(handle);
-    if (!w || w->owner_pid != client_pid) return;
+    if (!w) return;
+    if (client_pid_check && w->owner_pid != client_pid_check) return;
     if (w->surface_raw) free(w->surface_raw);
     memset(w, 0, sizeof(*w));
-    if (focused_handle == handle) focused_handle = 0;
+    z_remove(handle);
+    /* Refocus to the new topmost (which may be the console or another
+     * window). If nothing left, fall back to 0 == console / no-focus. */
+    if (focused_handle == handle) {
+        focused_handle = z_count > 0 ? z_order[0] : 0;
+    }
     desktop_dirty = 1;
+}
+
+static void handle_destroy(int client_pid, int handle) {
+    handle_destroy_internal(handle, client_pid);
+}
+
+/* True if window is currently minimized (and therefore must skip compose +
+ * hit-test). Console can't be minimized. */
+static int is_minimized(int handle) {
+    if (handle == HANDLE_CONSOLE) return 0;
+    struct window *w = find_handle(handle);
+    return w && w->minimized;
+}
+
+/* Toggle min/restore. While minimized the window stays on the taskbar and
+ * keeps its z-order slot, but compose + hit-test skip it; the taskbar
+ * button is the only way to bring it back. */
+static void toggle_minimize(int handle) {
+    if (handle == HANDLE_CONSOLE) return;
+    struct window *w = find_handle(handle);
+    if (!w) return;
+    w->minimized = !w->minimized;
+    if (w->minimized && focused_handle == handle) {
+        /* Refocus to next visible handle in z-order, preferring real
+         * windows; falls back to console if nothing else qualifies. */
+        focused_handle = 0;
+        for (int i = 0; i < z_count; i++) {
+            int h = z_order[i];
+            if (h == handle) continue;
+            if (is_minimized(h)) continue;
+            focused_handle = h;
+            break;
+        }
+    }
+    desktop_dirty = 1;
+}
+
+/* Toggle maximize/restore. Saves pre-max geometry in window struct so the
+ * second click restores. Uses client_window_resize so the client gets a
+ * WM_RESIZE_NOTIFY with the new shared surface. */
+static void client_window_resize(int handle, int new_cw, int new_ch);
+static void win_set_pos(int handle, int x, int y);
+
+static void toggle_maximize(int handle) {
+    if (handle == HANDLE_CONSOLE) return;
+    struct window *w = find_handle(handle);
+    if (!w) return;
+    if (w->maximized) {
+        client_window_resize(handle, w->saved_cw, w->saved_ch);
+        win_set_pos(handle, w->saved_x, w->saved_y);
+        w->maximized = 0;
+    } else {
+        w->saved_x  = w->x;        w->saved_y  = w->y;
+        w->saved_cw = w->client_w; w->saved_ch = w->client_h;
+        int max_cw = fb_w - 2 * BORDER_PX;
+        int max_ch = fb_h - TASKBAR_PX - TITLEBAR_PX - BORDER_PX;
+        win_set_pos(handle, 0, 0);
+        client_window_resize(handle, max_cw, max_ch);
+        w->maximized = 1;
+    }
+    desktop_dirty = 1;
+}
+
+/* Walk the kernel proc table and reap any window whose owner pid no longer
+ * has a live task (or is in a terminal state). Called periodically from the
+ * main loop so a client that crashed without sending IPC_WM_DESTROY_REQ
+ * doesn't leak its slot, handle, and shared-surface bookkeeping forever.
+ *
+ * Note: this does NOT unmap the shared pages from the (already-gone) owner's
+ * address space. The kernel reclaims that pml4 when the task struct is
+ * freed; the phys frames go back to PMM with it. */
+static void reap_dead_windows(void) {
+    /* MAX_WINDOWS is small but proc_list may report many tasks. Snapshot a
+     * fixed-size table; if there are more procs than fit we just skip the
+     * tail (worst case: late reap, not corruption). */
+    struct proc_info procs[32];
+    long n = proc_list(procs, (long)(sizeof(procs) / sizeof(procs[0])));
+    if (n < 0) return;
+
+    for (int i = 0; i < MAX_WINDOWS; i++) {
+        if (!windows[i].in_use) continue;
+        int owner = windows[i].owner_pid;
+        int alive = 0;
+        for (long j = 0; j < n; j++) {
+            if (procs[j].pid != owner) continue;
+            int s = procs[j].state;
+            if (s != PROC_STATE_ZOMBIE && s != PROC_STATE_DEAD) alive = 1;
+            break;
+        }
+        if (!alive) {
+            int h = windows[i].handle;
+            printf("winman: reap window %d owner_pid=%d (dead)\n", h, owner);
+            handle_destroy_internal(h, 0);
+        }
+    }
 }
 
 static void handle_set_title(int handle, const char *title) {
@@ -954,15 +1340,29 @@ static void pump_ipc(void) {
 
 // #region INPUT PUMP
 
-static void forward_input(int target_pid, const struct msg *m) {
+/* Translate input event from screen coords to the focused window's
+ * client-area coords before forwarding. Clients draw into a surface that
+ * starts at (0,0) so they shouldn't have to know their own position on
+ * the desktop — winman is the only thing that does. */
+static void forward_input(int target_pid, int win_handle, const struct msg *m) {
     if (target_pid <= 0) return;
+
+    int wx = 0, wy = 0, wcw = 0, wch = 0;
+    int local_x = m->x;
+    int local_y = m->y;
+    if (win_get_rect(win_handle, &wx, &wy, &wcw, &wch)) {
+        /* Client area starts at (wx + BORDER_PX, wy + TITLEBAR_PX). */
+        local_x = m->x - (wx + BORDER_PX);
+        local_y = m->y - (wy + TITLEBAR_PX);
+    }
+
     struct ipc_msg out;
     memset(&out, 0, sizeof(out));
     out.type = IPC_WM_INPUT;
     out.a    = m->type;
     out.b    = m->param;
-    out.c    = m->x;
-    out.d    = m->y;
+    out.c    = local_x;
+    out.d    = local_y;
     ipc_send(target_pid, &out);
 }
 
@@ -1004,12 +1404,48 @@ static void pump_input(void) {
                 forward = 0;
             }
         } else if (m.type == MSG_MOUSE_DOWN) {
+            /* Taskbar wins over any window underneath: it's drawn always-on-top
+             * and its strip is opaque, so a click in the strip never belongs to
+             * a client even if a window's client area overlaps it. */
+            if (m.y >= taskbar_y()) {
+                int tb_handle = 0;
+                if (hit_taskbar(m.x, m.y, &tb_handle)) {
+                    /* Taskbar click on a minimized window restores it. */
+                    struct window *wt = (tb_handle != HANDLE_CONSOLE)
+                                        ? find_handle(tb_handle) : 0;
+                    if (wt && wt->minimized) wt->minimized = 0;
+                    focused_handle = tb_handle;
+                    z_bring_to_front(tb_handle);
+                    desktop_dirty  = 1;
+                }
+                /* Strip background also eats the click — don't forward. */
+                continue;
+            }
             int hit_handle = 0;
             int kind = hit_test_at(m.x, m.y, &hit_handle);
+            if (kind == HIT_BTN_CLOSE) {
+                /* User-initiated close. Skip owner-check (UI is privileged).
+                 * Console is built-in: refuse to destroy it. */
+                if (hit_handle != HANDLE_CONSOLE) {
+                    printf("winman: close button -> destroy handle=%d\n",
+                           hit_handle);
+                    handle_destroy_internal(hit_handle, 0);
+                }
+                continue;
+            }
+            if (kind == HIT_BTN_MAX) {
+                toggle_maximize(hit_handle);
+                continue;
+            }
+            if (kind == HIT_BTN_MIN) {
+                toggle_minimize(hit_handle);
+                continue;
+            }
             if (kind == HIT_TITLEBAR || kind == HIT_GRIP) {
                 int x, y, cw, ch;
                 if (win_get_rect(hit_handle, &x, &y, &cw, &ch)) {
                     focused_handle = hit_handle;
+                    z_bring_to_front(hit_handle);
                     drag.active    = 1;
                     drag.kind      = kind;
                     drag.handle    = hit_handle;
@@ -1022,6 +1458,7 @@ static void pump_input(void) {
                 forward = 0;
             } else if (kind == HIT_CLIENT) {
                 focused_handle = hit_handle;
+                z_bring_to_front(hit_handle);
                 desktop_dirty = 1;
                 /* Console clicks don't get forwarded — no client owns it. */
                 if (hit_handle == HANDLE_CONSOLE) forward = 0;
@@ -1035,7 +1472,7 @@ static void pump_input(void) {
         if (!forward) continue;
         if (focused_handle == HANDLE_CONSOLE) continue;
         struct window *focus = focused_handle ? find_handle(focused_handle) : 0;
-        if (focus) forward_input(focus->owner_pid, &m);
+        if (focus) forward_input(focus->owner_pid, focus->handle, &m);
     }
 }
 
@@ -1071,7 +1508,6 @@ int main(int argc, char **argv) {
     printf("winman: back buffer @%p pages=%d\n", (void*)fb, (int)back_pages);
 
     memset(windows, 0, sizeof(windows));
-    next_handle = 1;
     focused_handle = 0;
     con_alloc();
     printf("winman: con.enabled=%d surface=%p w=%d h=%d\n",
@@ -1122,6 +1558,11 @@ int main(int argc, char **argv) {
         pump_ipc();
         pump_input();
         drain_tty_into_console();
+
+        /* Reap windows whose owners have died without sending DESTROY_REQ.
+         * Hot path runs the syscall (proc_list) ~every 64 ticks so the
+         * common case stays cheap. */
+        if ((tick & 63) == 0) reap_dead_windows();
 
         int32_t mx, my;
         uint8_t btns;

@@ -6,7 +6,7 @@ USER_CFLAGS  := -ffreestanding -nostdlib -fno-pie -mno-red-zone -static \
                 -I lib -I ../src/intf -O2 -Wall -Wextra
 USER_LDFLAGS := -nostdlib -static -T lib/user.ld
 
-LIB_OBJS := lib/crt0.o lib/syscall_asm.o lib/syscall.o \
+LIB_OBJS := lib/crt0.o lib/syscall_asm.o lib/syscall.o lib/wm.o \
             lib/printf.o lib/malloc.o lib/stdio.o lib/string.o lib/keymap.o lib/console.o \
             lib/stdlib_extra.o
 
