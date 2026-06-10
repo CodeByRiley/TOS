@@ -1,3 +1,15 @@
+/* src/impl/kernel/virtio/virtio_gpu.c — virtio-gpu (2D scanout) driver.
+ *
+ * Owns the host-side resource id + scanout. framebuffer.c owns the
+ * kernel-side pixel buffer; they cooperate via set_scanout_2d (attach
+ * backing) and flush_rect (push pixels).
+ *
+ * Single global instance — the kernel only ever drives one GPU. Submits
+ * commands on the controlq, polls for responses synchronously (no
+ * interrupt path yet), and exposes display-resize events through
+ * virtio_gpu_poll_display_event() so the kernel TTY can rebind on host
+ * window resize.
+ */
 #include "virtio/virtio_gpu.h"
 #include "virtio/virtio.h"
 #include "pci/pci.h"
@@ -8,7 +20,7 @@
 #include "utilities/string.h"
 #include <stdint.h>
 
-/* Single global instance. The kernel only ever talks to one GPU. */
+/* Single global instance. */
 static struct virtio_dev vdev;
 static struct virtq      controlq;
 static struct virtio_gpu gpu_state;

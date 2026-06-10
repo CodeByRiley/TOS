@@ -1,3 +1,13 @@
+/* src/impl/kernel/input/mouse.c — PS/2 mouse driver.
+ *
+ * IRQ12 handler reads 3-byte (or 4-byte if intelliMouse) packets from
+ * the AUX channel, converts them into relative motion + button mask,
+ * updates the driver-tracked absolute cursor (clamped by
+ * mouse_set_bounds), and posts MSG_MOUSE_* events to the input owner.
+ *
+ * Packet framing recovers from desync by looking for the "always 1" bit
+ * in the first byte; we drop bytes until alignment looks plausible.
+ */
 #include "input/mouse.h"
 #include "interrupts/idt.h"
 #include "devices/io.h"

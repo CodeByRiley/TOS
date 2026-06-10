@@ -1,3 +1,9 @@
+/* src/intf/utilities/stdlib.h — kernel-side stdlib subset.
+ *
+ * Number parsers + abs + strdup + qsort. Implementations live in
+ * src/impl/kernel/utilities/stdlib.c. Memory-allocation helpers (kmalloc/
+ * kfree) live in memory/heap.h, not here.
+ */
 #ifndef STDLIB_H
 #define STDLIB_H
 

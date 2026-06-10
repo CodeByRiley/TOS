@@ -1,3 +1,11 @@
+/* src/intf/fs/stdio.h — kernel-internal stdio over FAT.
+ *
+ * FILE wraps a fat_file and an in-use bit. Used by the kernel logger and
+ * any code that wants buffered file access; userspace gets its own
+ * implementation via syscalls.
+ *
+ * Implementation: src/impl/kernel/fs/stdio.c.
+ */
 #ifndef STDIO_H
 #define STDIO_H
 
@@ -10,7 +18,7 @@
 
 typedef struct {
     struct fat_file f;
-    int valid;
+    int             valid;
 } FILE;
 
 FILE  *fopen(const char *name, const char *mode);

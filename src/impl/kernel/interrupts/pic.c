@@ -1,3 +1,10 @@
+/* src/impl/kernel/interrupts/pic.c — 8259A PIC driver.
+ *
+ * Remaps legacy IRQs 0..15 to CPU vectors 0x20..0x2F so they don't
+ * collide with the architectural exception range (0..31). Once the
+ * LAPIC takes over for routing we keep the PICs around just for
+ * spurious-IRQ EOI bookkeeping.
+ */
 #include "interrupts/pic.h"
 #include "devices/io.h"
 

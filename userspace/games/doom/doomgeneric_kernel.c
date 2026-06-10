@@ -1,3 +1,15 @@
+/* userspace/games/doom/doomgeneric_kernel.c — DOOM platform glue for TOS.
+ *
+ * Implements the doomgeneric "platform" entry points (DG_Init,
+ * DG_DrawFrame, DG_GetTicksMs, DG_SleepMs, DG_GetKey, DG_SetWindowTitle)
+ * against our framebuffer + tick + keyboard syscalls. Replaces the SDL /
+ * Win32 / X11 backends shipped in the upstream doomgeneric tree.
+ *
+ * Run model: maps the framebuffer once at init, centers the 320x200 DOOM
+ * canvas inside whatever physical resolution we got, and blits each frame
+ * straight to fb_map() pixels. No double-buffering, no WM — DOOM owns the
+ * screen exclusively while running.
+ */
 #include <stdint.h>
 #include "doomgeneric/doomgeneric.h"
 #include "../../lib/syscall.h"
@@ -9,9 +21,9 @@ extern int  printf(const char *fmt, ...);
 
 static struct fb_info fbi;
 static uint32_t      *fb;
-static uint32_t       ox, oy;
+static uint32_t       ox, oy;     /* centring offset within the host fb */
 
-/* DOOM key codes (from doomkeys.h) */
+/* DOOM single-byte key codes — values mirror doomgeneric/doomkeys.h. */
 #define DOOM_KEY_RIGHTARROW  0xae
 #define DOOM_KEY_LEFTARROW   0xac
 #define DOOM_KEY_UPARROW     0xad
@@ -26,7 +38,8 @@ static uint32_t       ox, oy;
 #define DOOM_KEY_ALT         (0x80 + 0x38)
 #define DOOM_KEY_F(n)        (0x80 + 0x3a + (n))   /* F1=0x3b, F2=0x3c, ... */
 
-/* Map Linux KEY_* -> DOOM single-byte key. Returns 0 for unmapped. */
+/* Map a Linux KEY_* scancode to a DOOM single-byte key code. Returns 0
+ * for any unmapped key so the caller can ignore it. */
 static unsigned char linux_to_doom(uint16_t k) {
     switch (k) {
         case KEY_ESC:        return DOOM_KEY_ESCAPE;
@@ -57,7 +70,6 @@ static unsigned char linux_to_doom(uint16_t k) {
         case KEY_F9:         return DOOM_KEY_F(9);
         case KEY_F10:        return DOOM_KEY_F(10);
 
-        /* number row */
         case KEY_1:          return '1';
         case KEY_2:          return '2';
         case KEY_3:          return '3';
@@ -71,7 +83,6 @@ static unsigned char linux_to_doom(uint16_t k) {
         case KEY_MINUS:      return '-';
         case KEY_EQUAL:      return '=';
 
-        /* letters: KEY_A..KEY_Z aren't contiguous in Linux layout */
         case KEY_A: return 'a'; case KEY_B: return 'b'; case KEY_C: return 'c';
         case KEY_D: return 'd'; case KEY_E: return 'e'; case KEY_F: return 'f';
         case KEY_G: return 'g'; case KEY_H: return 'h'; case KEY_I: return 'i';
@@ -96,6 +107,8 @@ static unsigned char linux_to_doom(uint16_t k) {
     }
 }
 
+/* Snapshot the framebuffer geometry and compute the (ox, oy) origin that
+ * centres the 320x200 DOOM canvas inside it. */
 void DG_Init(void) {
     fb_info(&fbi);
     fb = (uint32_t*)fb_map();
@@ -105,6 +118,7 @@ void DG_Init(void) {
            (int)fbi.width, (int)fbi.height, (int)ox, (int)oy);
 }
 
+/* Blit DG_ScreenBuffer (320x200 BGRA) to the framebuffer at (ox, oy). */
 void DG_DrawFrame(void) {
     for (uint32_t y = 0; y < DOOMGENERIC_RESY; y++) {
         uint32_t *src = &DG_ScreenBuffer[y * DOOMGENERIC_RESX];
@@ -113,15 +127,20 @@ void DG_DrawFrame(void) {
     }
 }
 
+/* Busy-wait `ms` milliseconds against the tick counter. */
 void DG_SleepMs(uint32_t ms) {
     long target = get_ticks() + (long)ms;
     while (get_ticks() < target) { }
 }
 
+/* Wall-clock-ish millisecond counter (actually uptime). */
 uint32_t DG_GetTicksMs(void) {
     return (uint32_t)get_ticks();
 }
 
+/* Drain the keyboard ring into DOOM key events. Returns 1 if a key was
+ * delivered, 0 if no more events are pending. Unmapped scancodes are
+ * logged and skipped. */
 int DG_GetKey(int *pressed, unsigned char *doomKey) {
     uint16_t k;
     while (kbd_poll(pressed, &k)) {
@@ -130,17 +149,20 @@ int DG_GetKey(int *pressed, unsigned char *doomKey) {
             *doomKey = dk;
             return 1;
         } else {
-        	printf("unmapped key: %d\n", (int)k);
-        	continue;
+            printf("unmapped key: %d\n", (int)k);
+            continue;
         }
     }
     return 0;
 }
 
+/* DOOM expects a window title call; we have no chrome to update. */
 void DG_SetWindowTitle(const char *title) {
     (void)title;
 }
 
+/* Entry point. Hard-codes the DOOM1.WAD path because there's no argv
+ * propagation from the shell into ELF children yet. */
 int main(int argc, char **argv) {
     (void)argc; (void)argv;
     char *fake_argv[] = { (char*)"doom", (char*)"-iwad", (char*)"DOOM1.WAD", 0 };

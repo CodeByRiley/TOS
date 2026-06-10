@@ -1,8 +1,10 @@
-; AP startup trampoline. Copied verbatim to physical address 0x8000 by the
-; BSP before sending SIPI. The AP wakes in 16-bit real mode at CS=0x0800,
-; IP=0x0000 (linear 0x8000) and trampolines itself up to 64-bit long mode,
-; then jumps to a C entry point whose pointer is patched in at well-known
-; offsets near the end of this blob.
+; src/impl/x86_64/boot/ap_trampoline.asm — AP startup trampoline.
+;
+; Copied verbatim to physical address 0x8000 by the BSP before sending
+; SIPI. The AP wakes in 16-bit real mode at CS=0x0800, IP=0x0000 (linear
+; 0x8000) and trampolines itself up to 64-bit long mode, then jumps to a
+; C entry point whose pointer is patched in at well-known offsets near
+; the end of this blob.
 ;
 ; Page tables: we use the *existing* kernel PML4 (its physical address is
 ; patched in below) because boot identity-maps the low 1 GiB, which covers

@@ -1,3 +1,13 @@
+/* src/impl/kernel/sched/smp.c — SMP boot orchestration.
+ *
+ * The BSP walks the ACPI cpu list, prepares per-CPU state (kstack, TSS
+ * descriptor, percpu slot), copies the AP real-mode trampoline to
+ * physical 0x8000, and drives INIT-SIPI-SIPI for each AP. Each AP runs
+ * the trampoline (real → protected → long mode), reaches ap_main, and
+ * spins until it gets queued onto the per-CPU idle task.
+ *
+ * The trampoline source lives in src/impl/x86_64/boot/ap_trampoline.asm.
+ */
 #include "sched/smp.h"
 #include "acpi/acpi.h"
 #include "arch/gdt.h"

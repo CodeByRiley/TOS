@@ -1,3 +1,13 @@
+/* src/impl/kernel/pci/pci.c — PCI enumeration + config-space access.
+ *
+ * Config-space access via the legacy 0xCF8/0xCFC IO ports. pci_init does
+ * one brute-force scan (256 busses x 32 devs x 8 fns) on first call and
+ * caches results in pci_table. BAR decode runs at scan time so callers
+ * can lookup decoded `base` + `size` directly.
+ *
+ * Capability list walk lets vendor-specific drivers (virtio) find their
+ * caps without re-walking the config header.
+ */
 #include "pci/pci.h"
 #include "devices/io.h"
 #include "utilities/log.h"

@@ -1,10 +1,22 @@
+/* src/impl/kernel/interrupts/idt.c — IDT install + dispatch.
+ *
+ * Builds the IDT, points each vector at one of the asm stubs in
+ * src/impl/x86_64/isr.asm (which save GPRs + a vector number then call
+ * the C dispatcher), and routes IRQs 0x20-0x2F to dynamically registered
+ * handlers via irq_install. Spurious IRQ7 / IRQ15 are masked and just
+ * acked.
+ *
+ * exception_recovery_try / clear is a tiny setjmp-style trap so code
+ * that may touch a faulting page can recover gracefully (used by the
+ * framebuffer probe path).
+ */
 #include "interrupts/idt.h"
 #include "utilities/log.h"
 #include "devices/serial.h"
 #include "interrupts/pic.h"
 #include <stdint.h>
 
-#define MAX_IDT_ENTRIES 512
+#define MAX_IDT_ENTRIES 256
 #define MAX_IRQ_HANDLERS 256
 
 static struct idt_entry idt[MAX_IDT_ENTRIES];

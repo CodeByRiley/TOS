@@ -1,3 +1,15 @@
+/* src/intf/pci/pci.h — PCI bus enumeration + config-space access.
+ *
+ * Brute-force scan on init (256 busses x 32 devs x 8 fns). Devices land
+ * in an internal table; lookup helpers find by vendor/device or class/
+ * subclass. BAR layout is decoded eagerly so MMIO mappings just need a
+ * `bar[n].base` + `.size` lookup.
+ *
+ * Capability list walk lets drivers find vendor-specific caps (e.g.,
+ * virtio's capability chain).
+ *
+ * Implementation: src/impl/kernel/pci/pci.c.
+ */
 #ifndef PCI_H
 #define PCI_H
 
@@ -34,7 +46,6 @@
 #define PCI_CMD_BUS_MASTER      (1u << 2)
 #define PCI_CMD_INT_DISABLE     (1u << 10)
 
-/* PCI status register bits. */
 #define PCI_STATUS_CAP_LIST     (1u << 4)
 
 /* BAR layout bits. */
@@ -50,9 +61,10 @@ struct pci_addr {
     uint8_t fn;
 };
 
+/* Decoded BAR. `base` and `size` are post-decode (mask bits stripped). */
 struct pci_bar {
-    uint64_t base;      /* phys base, mask bits stripped */
-    uint64_t size;      /* region size in bytes */
+    uint64_t base;
+    uint64_t size;
     uint8_t  is_io;     /* 1 = I/O port BAR, 0 = MMIO */
     uint8_t  is_64;     /* 1 = 64-bit MMIO BAR (consumes two slots) */
     uint8_t  prefetch;
@@ -61,19 +73,19 @@ struct pci_bar {
 
 struct pci_device {
     struct pci_addr addr;
-    uint16_t vendor;
-    uint16_t device;
-    uint16_t subsys_vendor;
-    uint16_t subsys_id;
-    uint8_t  class_code;
-    uint8_t  subclass;
-    uint8_t  prog_if;
-    uint8_t  revision;
-    uint8_t  header_type;
-    uint8_t  int_line;
-    uint8_t  int_pin;
-    uint8_t  cap_ptr;       /* offset of first capability, 0 if none */
-    struct pci_bar bar[6];
+    uint16_t        vendor;
+    uint16_t        device;
+    uint16_t        subsys_vendor;
+    uint16_t        subsys_id;
+    uint8_t         class_code;
+    uint8_t         subclass;
+    uint8_t         prog_if;
+    uint8_t         revision;
+    uint8_t         header_type;
+    uint8_t         int_line;
+    uint8_t         int_pin;
+    uint8_t         cap_ptr;       /* offset of first capability, 0 if none */
+    struct pci_bar  bar[6];
 };
 
 /* Raw config-space accessors. */
@@ -84,22 +96,23 @@ void     pci_cfg_write32(struct pci_addr a, uint8_t off, uint32_t val);
 void     pci_cfg_write16(struct pci_addr a, uint8_t off, uint16_t val);
 void     pci_cfg_write8 (struct pci_addr a, uint8_t off, uint8_t  val);
 
-/* Brute-force scan all 256 busses * 32 devs * 8 fns. Populates internal table.
- * Idempotent: subsequent calls are no-ops. */
+/* Brute-force scan all 256 busses * 32 devs * 8 fns. Populates the
+ * internal device table. Idempotent: re-entry is a no-op. */
 void     pci_init(void);
 
 /* Lookup helpers. Return non-zero on success and fill *out. */
 int      pci_find_by_id   (uint16_t vendor, uint16_t device, struct pci_device *out);
 int      pci_find_by_class(uint8_t class_code, uint8_t subclass, struct pci_device *out);
 
-/* Number of devices found by the scan + indexed accessor. */
+/* Indexed accessor over the scan results. */
 uint32_t pci_device_count(void);
 int      pci_device_at(uint32_t idx, struct pci_device *out);
 
-/* Capability list walk. Returns offset of cap with id `cap_id`, or 0 if absent. */
+/* Walk the device's capability list looking for `cap_id`. Returns offset
+ * or 0 if absent. */
 uint8_t  pci_find_capability(struct pci_addr a, uint8_t cap_id);
 
-/* Enable bus mastering + MMIO/IO on a device (sets PCI_CMD bits). */
+/* Set the PCI_CMD bits for bus mastering + MMIO/IO on a device. */
 void     pci_enable(struct pci_device *d);
 
 #endif

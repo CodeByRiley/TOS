@@ -1,7 +1,23 @@
+/* src/impl/kernel/arch/gdt.c — long-mode GDT + per-CPU TSS.
+ *
+ * GDT layout:
+ *   0x00: null
+ *   0x08: kernel code  (8 bytes)
+ *   0x10: kernel data  (8 bytes)
+ *   0x18: user data    (8 bytes)
+ *   0x20: user code    (8 bytes)
+ *   0x28..0x28+16*N-1: per-CPU TSS descriptors (16 bytes each, N=MAX_CPUS)
+ *
+ * Total = 5*8 + 16*MAX_CPUS bytes (168 bytes at MAX_CPUS=8). Each CPU's
+ * TSS lives in tss_table[cpu_id]; the matching GDT descriptor is
+ * installed by gdt_install_tss() and loaded into TR by
+ * gdt_load_tss_this_cpu().
+ */
 #include "arch/gdt.h"
 #include "arch/percpu.h"
 #include "utilities/log.h"
 #include "utilities/string.h"
+#include <stddef.h>
 #include <stdint.h>
 
 struct __attribute__((packed)) gdt_entry {
@@ -41,6 +57,19 @@ struct __attribute__((packed)) tss {
     uint16_t iomap_base;
 };
 
+_Static_assert(sizeof(struct gdt_entry) == 8,
+               "GDT descriptor must be 8 bytes");
+_Static_assert(sizeof(struct tss_desc) == 16,
+               "64-bit TSS descriptor must be 16 bytes");
+_Static_assert(sizeof(struct gdtr) == 10,
+               "GDTR operand must be 10 bytes in long mode");
+_Static_assert(sizeof(struct tss) == 104,
+               "64-bit TSS body must use the architectural 104-byte layout");
+_Static_assert(offsetof(struct tss, rsp0) == 4,
+               "TSS.rsp0 offset is architectural");
+_Static_assert(offsetof(struct tss, iomap_base) == 102,
+               "TSS.iomap_base offset is architectural");
+
 /* GDT layout:
  *   0x00: null
  *   0x08: kernel code  (8 bytes)
@@ -57,7 +86,7 @@ struct __attribute__((packed)) tss {
 #define GDT_TOTAL_BYTES   (GDT_FIXED_BYTES + 16 * MAX_CPUS)
 
 static uint8_t  gdt_table[GDT_TOTAL_BYTES] __attribute__((aligned(8)));
-static struct tss tss_table[MAX_CPUS] __attribute__((aligned(8)));
+static struct tss tss_table[MAX_CPUS] __attribute__((aligned(16)));
 static struct gdtr gdtr;
 static uint8_t  bsp_kernel_stack[16384] __attribute__((aligned(16)));
 

@@ -1,3 +1,11 @@
+/* src/intf/loader/elf.h — ELF64 loader.
+ *
+ * Loads a single statically-linked ELF64 PT_LOAD chain into a target
+ * PML4 and returns the entry-point virtual address. Used by process
+ * exec/spawn.
+ *
+ * Implementation: src/impl/kernel/loader/elf.c.
+ */
 #ifndef ELF_H
 #define ELF_H
 
@@ -36,12 +44,11 @@ struct __attribute__((packed)) Elf64_Phdr {
     uint64_t p_align;
 };
 
-/* Load an ELF into the given PML4 and return entry point.
+/* Load an ELF into `pml4` and return entry-point va, or 0 on failure.
  *
- * Caller must arrange that the kernel can write to the user vaddrs in the
- * target PML4 — easiest is to switch CR3 to `pml4` before calling, since the
- * kernel-low identity map is shared into every process PML4. Returns 0 on
- * any failure. */
+ * Caller must arrange that the kernel can write to the user vaddrs in
+ * the target PML4 — easiest is to switch CR3 to `pml4` before calling,
+ * since the kernel-low identity map is shared into every process PML4. */
 uint64_t elf_load(const char *path, uint64_t *pml4);
 
 #endif

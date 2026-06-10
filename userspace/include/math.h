@@ -1,3 +1,9 @@
+/* userspace/include/math.h — minimal libm header.
+ *
+ * Only the entry points actually called by ported code (DOOM). All bodies
+ * live in lib/math_stub.c. sqrt/fabs/floor/ceil work; the trig + pow are
+ * stubs that return safe defaults. Replace with real libm when needed.
+ */
 #ifndef MATH_H
 #define MATH_H
 

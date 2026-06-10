@@ -1,3 +1,9 @@
+/* src/intf/utilities/string.h — kernel mem... / str... surface.
+ *
+ * Implementations live in src/impl/kernel/utilities/string.c. Mirrors the
+ * userspace string.h API so code (e.g., the formatter) can be shared
+ * cleanly across kernel + userspace.
+ */
 #ifndef STRING_H
 #define STRING_H
 

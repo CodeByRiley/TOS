@@ -1,12 +1,19 @@
+/* src/impl/kernel/msg/msg.c — per-task input + IPC ring backends.
+ *
+ * Rings themselves live on the task struct (allocated in sched.c). This
+ * module is the API that pushes/pops on them. Single-producer-single-
+ * consumer per ring (IRQs post, syscalls pop), so we get away without
+ * locks on UP. SMP path would need atomic head/tail.
+ *
+ * Input ownership: msg_post and msg_post_to route input events. A single
+ * "input owner" pid receives all input via msg_post; per-task delivery
+ * via msg_post_to bypasses the owner registry (used by the WM forwarding
+ * events to focused client windows).
+ */
 #include "msg/msg.h"
 #include "sched/sched.h"
 #include "utilities/string.h"
 #include <stdint.h>
-
-/* Per-task message rings live on the task struct (allocated in sched.c).
- * The kernel-side msg API just looks up the current/target task and
- * pushes/pops on its rings. Single-producer-single-consumer per ring
- * (IRQs post, syscalls pop) so we still get away without locks on UP. */
 
 #define INPUT_RING_SIZE 64
 #define INPUT_RING_MASK (INPUT_RING_SIZE - 1)

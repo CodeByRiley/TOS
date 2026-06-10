@@ -1,14 +1,18 @@
-/*
- * PC keyboard key codes (subset of Linux input-event-codes.h).
- * Values match Linux UAPI so future portability is free.
- * Standard 104-key PC keyboard only — no media/gamepad/multimedia/etc.
+/* src/intf/input/key_codes.h — PC keyboard scancodes.
+ *
+ * Subset of Linux's input-event-codes.h, used by the kernel keyboard
+ * driver and forwarded to userspace. Values match Linux UAPI so ported
+ * code works unmodified. Must stay in lockstep with the userspace mirror
+ * at userspace/include/key_codes.h.
+ *
+ * Standard 104-key PC keyboard only — no media / gamepad / multimedia.
  */
 #ifndef KEY_CODES_H
 #define KEY_CODES_H
 
 #define KEY_RESERVED    0
 
-/* Top row */
+/* --- Top row + backspace ---------------------------------------------- */
 #define KEY_ESC         1
 #define KEY_1           2
 #define KEY_2           3
@@ -24,7 +28,7 @@
 #define KEY_EQUAL       13
 #define KEY_BACKSPACE   14
 
-/* QWERTY row */
+/* --- QWERTY row ------------------------------------------------------- */
 #define KEY_TAB         15
 #define KEY_Q           16
 #define KEY_W           17
@@ -40,7 +44,7 @@
 #define KEY_RIGHTBRACE  27
 #define KEY_ENTER       28
 
-/* Home row */
+/* --- ASDF row --------------------------------------------------------- */
 #define KEY_LEFTCTRL    29
 #define KEY_A           30
 #define KEY_S           31
@@ -55,7 +59,7 @@
 #define KEY_APOSTROPHE  40
 #define KEY_GRAVE       41
 
-/* Bottom row */
+/* --- ZXCV row + right shift ------------------------------------------ */
 #define KEY_LEFTSHIFT   42
 #define KEY_BACKSLASH   43
 #define KEY_Z           44
@@ -70,13 +74,13 @@
 #define KEY_SLASH       53
 #define KEY_RIGHTSHIFT  54
 
-/* Numpad / modifiers / space */
+/* --- Bottom + caps lock ---------------------------------------------- */
 #define KEY_KPASTERISK  55
 #define KEY_LEFTALT     56
 #define KEY_SPACE       57
 #define KEY_CAPSLOCK    58
 
-/* Function row */
+/* --- Function row ---------------------------------------------------- */
 #define KEY_F1          59
 #define KEY_F2          60
 #define KEY_F3          61
@@ -88,7 +92,7 @@
 #define KEY_F9          67
 #define KEY_F10         68
 
-/* Numpad */
+/* --- Numpad ---------------------------------------------------------- */
 #define KEY_NUMLOCK     69
 #define KEY_SCROLLLOCK  70
 #define KEY_KP7         71
@@ -105,11 +109,10 @@
 #define KEY_KP0         82
 #define KEY_KPDOT       83
 
-/* Late additions */
 #define KEY_F11         87
 #define KEY_F12         88
 
-/* Extended scancodes (after 0xE0 prefix) */
+/* --- Extended set: navigation + media -------------------------------- */
 #define KEY_KPENTER     96
 #define KEY_RIGHTCTRL   97
 #define KEY_KPSLASH     98
@@ -126,7 +129,6 @@
 #define KEY_INSERT      110
 #define KEY_DELETE      111
 
-/* Special */
 #define KEY_PAUSE       119
 #define KEY_LEFTMETA    125
 #define KEY_RIGHTMETA   126

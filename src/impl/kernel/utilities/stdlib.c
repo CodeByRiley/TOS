@@ -1,8 +1,14 @@
+/* src/impl/kernel/utilities/stdlib.c — kernel stdlib subset.
+ *
+ * atoi / strtol number parsers, abs / labs, and a Shellsort-grade qsort.
+ * strdup lives in string.c so it sits next to the rest of the str* code.
+ */
 #include "utilities/stdlib.h"
 #include "utilities/string.h"
 #include "memory/heap.h"
 #include <stdint.h>
 
+/* atoi(3): leading whitespace + optional sign + decimal digits. */
 int atoi(const char *s) {
     while (*s == ' ' || *s == '\t') s++;
     int sign = 1;
@@ -16,6 +22,9 @@ int atoi(const char *s) {
     return v * sign;
 }
 
+/* strtol(3): base 0 auto-detects 0x / 0 prefixes; base 16 accepts an
+ * optional 0x prefix. Stops at the first non-digit and writes the rest
+ * to *endp if non-NULL. */
 long strtol(const char *s, char **endp, int base) {
     while (*s == ' ' || *s == '\t') s++;
     long sign = 1;
@@ -48,9 +57,9 @@ long strtol(const char *s, char **endp, int base) {
 int  abs(int x)   { return x < 0 ? -x : x; }
 long labs(long x) { return x < 0 ? -x : x; }
 
-/* strdup moved to string.c */
-
-// insertion sort: O(n²), correct, no extra memory. Fine until DOOM profiles bad.
+/* qsort(3) implemented as insertion sort. O(n^2), correct, no extra
+ * memory. DOOM only sorts small arrays so it's fine until profiling
+ * says otherwise. */
 void qsort(void *base, size_t nmemb, size_t size,
            int (*cmp)(const void *, const void *)) {
     uint8_t *arr = (uint8_t*)base;

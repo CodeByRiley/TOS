@@ -1,6 +1,15 @@
+/* userspace/include/errno.h — POSIX-style error codes.
+ *
+ * Numeric values follow the Linux ABI so code ported from Linux compiles
+ * unmodified. Most of these aren't actually returned by anything yet;
+ * they exist so DOOM and other ported code links. Storage for `errno`
+ * lives in lib/errno.c.
+ */
 #ifndef ERRNO_H
 #define ERRNO_H
+
 extern int errno;
+
 #define EPERM           1
 #define ENOENT          2
 #define ESRCH           3
@@ -36,4 +45,5 @@ extern int errno;
 #define ENOLCK          39
 #define ENOSYS          40
 #define ENOTEMPTY       41
+
 #endif

@@ -1,3 +1,23 @@
+/* src/impl/kernel/sched/sched.c — task table + scheduler.
+ *
+ * Single ready queue with PIT-driven preemption. Tasks have explicit
+ * states (RUNNING/READY/BLOCKED/SLEEPING/ZOMBIE/DEAD); sleeping tasks
+ * sit off the ready queue and get re-queued by sched_wake_sleepers when
+ * their wake_tick hits.
+ *
+ * Task lifecycle:
+ *   - task_spawn         — kernel thread, runs `entry` until task_exit
+ *   - task_spawn_user    — user task on top of a prepared PML4 + stack
+ *   - task_exit          — sets ZOMBIE; waiter or reaper frees the slot
+ *   - task_reap          — releases kstack, owned PML4, slot
+ *
+ * Per-task input + IPC rings, shmem bump allocator, and the FPU state
+ * (fxsave area) all hang off struct task; the actual ring backends live
+ * in msg/msg.c.
+ *
+ * Context switch: assembly in src/impl/x86_64/sched/switch.asm. Saves
+ * callee-saved + rsp, swaps to the new task's saved_rsp.
+ */
 // #region INCLUDES
 
 #include "sched/sched.h"
@@ -481,6 +501,15 @@ void task_exit(long code) {
     } else {
       msg_input_owner_clear(current->pid);
     }
+  }
+
+  int wm_pid = msg_input_owner();
+  if (wm_pid > 0 && wm_pid != current->pid) {
+    struct ipc_msg note;
+    memset(&note, 0, sizeof(note));
+    note.type = IPC_PEER_EXITED;
+    note.a = current->pid;
+    ipc_send(wm_pid, &note, 0);
   }
 
   current->state = TASK_ZOMBIE;

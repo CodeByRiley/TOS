@@ -1,7 +1,24 @@
+/* src/intf/sched/sched.h — task table + scheduler surface.
+ *
+ * Holds:
+ *   - struct task        — per-process kernel control block
+ *   - enum task_state    — scheduler states
+ *   - struct task_snap   — userspace-facing snapshot row (must match
+ *                          userspace struct proc_info byte-for-byte;
+ *                          static_asserts enforce the ABI)
+ *   - task spawn / yield / block / exit / sleep helpers
+ *
+ * The scheduler is a single ready queue with PIT-driven preemption;
+ * sleeping tasks live off-queue until sched_wake_sleepers re-queues
+ * them.
+ *
+ * Implementation: src/impl/kernel/sched/sched.c.
+ */
 #ifndef SCHED_H
 #define SCHED_H
 
 #include "msg/msg.h"
+#include <stddef.h>
 #include <stdint.h>
 
 enum task_state {
@@ -63,12 +80,21 @@ struct task {
 /* Snapshot row returned by sched_snapshot. Mirrors the userspace
  * struct proc_info in userspace/lib/syscall.h — keep both in sync. */
 struct task_snap {
+  uint64_t ticks_run;
   int      pid;
   int      parent_pid;
   int      state;          /* enum task_state, projected to int */
-  uint64_t ticks_run;
   char     name[16];
 };
+
+_Static_assert(sizeof(struct task_snap) == 40,
+               "task_snap must match userspace proc_info size");
+_Static_assert(offsetof(struct task_snap, ticks_run) == 0,
+               "task_snap.ticks_run offset is userspace ABI");
+_Static_assert(offsetof(struct task_snap, pid) == 8,
+               "task_snap.pid offset is userspace ABI");
+_Static_assert(offsetof(struct task_snap, name) == 20,
+               "task_snap.name offset is userspace ABI");
 
 /* Copy up to `max` live task rows into `out`. Returns number filled. Safe
  * to call from any context: walks the static task table, no allocations. */

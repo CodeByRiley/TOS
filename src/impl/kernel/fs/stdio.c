@@ -1,9 +1,16 @@
+/* src/impl/kernel/fs/stdio.c — kernel-internal FILE* over FAT.
+ *
+ * Thin wrapper that maps fopen/fread/etc. onto the FAT driver. Used by
+ * kernel callers (logger, ELF loader); userspace gets its own
+ * implementation via syscalls. Mode strings are accepted but ignored —
+ * the kernel-side handle is effectively read-only.
+ */
 #include "fs/stdio.h"
 #include "fs/fat.h"
 #include "memory/heap.h"
 
 FILE *fopen(const char *name, const char *mode) {
-    (void)mode;                       // read-only for now
+    (void)mode;                       /* mode ignored — read-only path */
     FILE *fp = (FILE*)kmalloc(sizeof(FILE));
     if (!fp) return 0;
     if (fat_open(name, &fp->f) != 0) {

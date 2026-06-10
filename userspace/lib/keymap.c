@@ -1,16 +1,16 @@
+/* userspace/lib/keymap.c — US-QWERTY KEY_* → ASCII map.
+ *
+ * Only printable keys + a few control characters (Tab, Enter, Backspace)
+ * are mapped. Function keys, arrows, and modifiers return 0 — callers that
+ * care about them inspect the raw KEY_* code themselves.
+ */
 #include "../include/key_codes.h"
 #include "syscall.h"
 #include <stdint.h>
 
-/* Convert a Linux KEY_* code to ASCII, considering shift state.
- * Returns 0 for non-printable / unmapped keys.
- */
+/* Translate Linux KEY_* code → ASCII. `shift` selects upper-case / symbol
+ * row. Returns 0 for any unmapped key. */
 char keymap_to_ascii(uint16_t key, int shift) {
-    /* letters */
-    if (key >= KEY_A && key <= KEY_M) {
-        char base[] = { 'a','s','d','f','g','h','j','k','l',0,0,0,0,'z','x','c','v','b','n','m' };
-        /* Linux KEY_A..KEY_L = 30..38, KEY_Z..KEY_M not contiguous; use switch instead */
-    }
     switch (key) {
         case KEY_A: return shift ? 'A' : 'a';
         case KEY_B: return shift ? 'B' : 'b';

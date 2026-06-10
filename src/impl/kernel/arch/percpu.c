@@ -1,12 +1,19 @@
+/* src/impl/kernel/arch/percpu.c — per-CPU data.
+ *
+ * One struct cpu_local per logical CPU. GS_BASE on each core points at
+ * its own slot. BSP populates its slot during early kernel_main; each
+ * AP populates its slot from inside ap_main() BEFORE touching anything
+ * that uses gs-relative addressing.
+ *
+ * GS_BASE + KERNEL_GS_BASE both get the same pointer. We don't actually
+ * use SWAPGS (userspace doesn't touch GS) but keeping both MSRs in sync
+ * means a stray SWAPGS — including one added later — won't leave GS
+ * pointing at oblivion.
+ */
 #include "arch/percpu.h"
 #include "utilities/log.h"
 #include "utilities/string.h"
 #include <stdint.h>
-
-/* Per-CPU data implementation. One struct per logical CPU, GS_BASE on
- * each core points at its own slot. The BSP populates its slot during
- * early kernel_main; each AP populates its slot from inside ap_entry()
- * before it touches anything else that uses gs-relative addressing. */
 
 #define MSR_GS_BASE         0xC0000101u
 #define MSR_KERNEL_GS_BASE  0xC0000102u
