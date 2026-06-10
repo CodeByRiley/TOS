@@ -1,3 +1,12 @@
+/* userspace/bin/ls/ls.c — list filesystem entries.
+ *
+ * Walks the kernel's SYS_READDIR enumerator. Only the root directory is
+ * supported today since the FAT layer doesn't expose subdirs to userspace
+ * yet; any other path prints an explanatory error.
+ *
+ * The readdir buffer holds a packed sequence of NUL-terminated names; the
+ * inner loop walks past each name with strlen() to find the next.
+ */
 #include "../../lib/syscall.h"
 #include "../../include/string.h"
 
@@ -7,6 +16,7 @@ extern size_t strlen(const char *);
 
 #define BUF_SIZE 256
 
+/* Print every entry under `path`. Returns silently if path is unsupported. */
 void list_directory(const char *path) {
     if (strcmp(path, ".") != 0 && strcmp(path, "/") != 0) {
         printf("ls: only the root directory is supported: %s\n", path);
@@ -19,9 +29,9 @@ void list_directory(const char *path) {
 
     while ((bytes_read = readdir(&index, buf, sizeof(buf))) > 0) {
         for (long i = 0; i < bytes_read; i++) {
-            if (buf[i] == '\0') continue;  // Ignore empty entries
-            printf("%s\n", &buf[i]);     // Print the entry name
-            i += strlen(&buf[i]);         // Skip to the end of the current entry
+            if (buf[i] == '\0') continue;
+            printf("%s\n", &buf[i]);
+            i += strlen(&buf[i]);
         }
     }
 }

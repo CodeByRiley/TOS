@@ -1,12 +1,27 @@
+/* src/intf/msg/msg.h — per-task message rings (input + IPC).
+ *
+ * Two ring layers share this header:
+ *   - struct msg     : Win3-style input event ring. IRQ handlers + timers
+ *                       post; the foreground process pops via SYS_MSG_GET.
+ *                       The kernel routes input to a single "input owner"
+ *                       (typically userspace winman) so other processes
+ *                       don't race on a global queue.
+ *   - struct ipc_msg : Larger cross-process control messages. Used for
+ *                       the winman <-> client protocol and for kernel-
+ *                       originated notifications (peer-exited, etc.).
+ *
+ * Both struct sizes + key offsets are pinned with static_asserts because
+ * they are part of the userspace ABI (mirror: userspace/lib/syscall.h).
+ *
+ * Implementation: src/impl/kernel/msg/msg.c.
+ */
 #ifndef MSG_H
 #define MSG_H
 
+#include <stddef.h>
 #include <stdint.h>
 
-/* Win3-style event message. Producers (IRQ handlers, timers) post; consumers
- * (the foreground process via SYS_MSG_GET) pop. Each task owns its own ring
- * so that the kernel can route input to a single "input owner" (typically
- * the userspace winman) without other processes racing on a global queue. */
+/* --- Input event ring -------------------------------------------------- */
 
 #define MSG_NONE        0
 #define MSG_KEY_DOWN    1
@@ -25,6 +40,11 @@ struct msg {
     int16_t  y;        /* mouse abs cursor Y                             */
     uint32_t when;     /* PIT ticks at post time                         */
 };
+
+_Static_assert(sizeof(struct msg) == 12,
+               "msg userspace ABI must stay 12 bytes");
+_Static_assert(offsetof(struct msg, when) == 8,
+               "msg.when offset is userspace ABI");
 
 /* Larger inter-process control message. Used for winman <-> client
  * protocol, kernel notifications, etc. Sender and recipient identified
@@ -49,6 +69,13 @@ struct ipc_msg {
     uint32_t flags;
     char     str[48];    /* title / name / arbitrary short string      */
 };
+
+_Static_assert(sizeof(struct ipc_msg) == 88,
+               "ipc_msg userspace ABI must stay 88 bytes");
+_Static_assert(offsetof(struct ipc_msg, va) == 24,
+               "ipc_msg.va offset is userspace ABI");
+_Static_assert(offsetof(struct ipc_msg, str) == 40,
+               "ipc_msg.str offset is userspace ABI");
 
 void msg_init(void);
 

@@ -1,23 +1,33 @@
+/* userspace/include/sys/stat.h — file-metadata structs + mode bits.
+ *
+ * stat()/fstat()/mkdir() are currently stubbed in lib/stat_stub.c (return
+ * -1). The struct still has to exist because DOOM and friends declare
+ * variables of type `struct stat`. Mode bits follow the standard Unix
+ * octal encoding so ported code works unchanged.
+ */
 #ifndef SYS_STAT_H
 #define SYS_STAT_H
 
-#include <sys/types.h>
+#include "types.h"
 #include <stdint.h>
 
 struct stat {
     uint64_t st_dev;
     uint64_t st_ino;
-    mode_t   st_mode;
     uint64_t st_nlink;
-    uid_t    st_uid;
-    gid_t    st_gid;
     uint64_t st_rdev;
+
     off_t    st_size;
     time_t   st_atime;
     time_t   st_mtime;
     time_t   st_ctime;
+
+    mode_t   st_mode;
+    uid_t    st_uid;
+    gid_t    st_gid;
 };
 
+/* File-type bits in st_mode. */
 #define S_IFMT   0170000
 #define S_IFREG  0100000
 #define S_IFDIR  0040000
@@ -29,6 +39,7 @@ struct stat {
 #define S_ISREG(m) (((m) & S_IFMT) == S_IFREG)
 #define S_ISDIR(m) (((m) & S_IFMT) == S_IFDIR)
 
+/* Permission bits. */
 #define S_IRUSR  0400
 #define S_IWUSR  0200
 #define S_IXUSR  0100

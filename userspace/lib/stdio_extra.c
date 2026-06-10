@@ -1,3 +1,10 @@
+/* userspace/lib/stdio_extra.c — the rest of stdio: putc/puts/printf wrappers,
+ * standard streams, the FILE* glue for the formatted writers, and a tiny
+ * sscanf used by DOOM's config parser.
+ *
+ * Buffering: none. fputc / fputs go straight through write(). fflush is a
+ * no-op. Stream FILE structs are static so fileno-equivalent code works.
+ */
 #include "syscall.h"
 #include "../include/stdio.h"
 #include "../include/string.h"
@@ -10,19 +17,26 @@ FILE *stdout = &_stdout;
 FILE *stderr = &_stderr;
 FILE *stdin  = &_stdin;
 
+/* Write one character to a stream. Returns the char on success, EOF on
+ * short write. */
 int fputc(int c, FILE *fp) {
     char ch = (char)c;
     return write(fp->fd, &ch, 1) == 1 ? c : EOF;
 }
 
+/* Write a NUL-terminated string to a stream (no trailing newline). */
 int fputs(const char *s, FILE *fp) {
     long n = (long)strlen(s);
     return write(fp->fd, s, n) == n ? 0 : EOF;
 }
 
+/* putc-equivalent on stdout. */
 int putchar(int c) { return fputc(c, stdout); }
+
+/* Write `s` + '\n' to stdout. */
 int puts(const char *s) { fputs(s, stdout); return fputc('\n', stdout); }
 
+/* Read one byte. Sets EOF and returns EOF on read error. */
 int fgetc(FILE *fp) {
     if (!fp || fp->eof) return EOF;
     unsigned char c;
@@ -30,6 +44,8 @@ int fgetc(FILE *fp) {
     return c;
 }
 
+/* fgets(3): read up to n-1 bytes or until newline. Returns NULL only if
+ * zero bytes were read. */
 char *fgets(char *s, int n, FILE *fp) {
     int i;
     for (i = 0; i < n - 1; i++) {
@@ -43,8 +59,7 @@ char *fgets(char *s, int n, FILE *fp) {
     return s;
 }
 
-/* fwrite defined in stdio.c */
-
+/* sprintf(3): unbounded snprintf with a huge (effectively infinite) size. */
 int sprintf(char *buf, const char *fmt, ...) {
     va_list ap; va_start(ap, fmt);
     int r = vsnprintf(buf, 0x7FFFFFFF, fmt, ap);
@@ -52,10 +67,13 @@ int sprintf(char *buf, const char *fmt, ...) {
     return r;
 }
 
+/* vsprintf(3) — same as sprintf with a va_list already in hand. */
 int vsprintf(char *buf, const char *fmt, va_list ap) {
     return vsnprintf(buf, 0x7FFFFFFF, fmt, ap);
 }
 
+/* fprintf(3): format into a 1 KiB scratch buffer then write to stream.
+ * Anything beyond that is silently truncated. */
 int fprintf(FILE *fp, const char *fmt, ...) {
     char buf[1024];
     va_list ap; va_start(ap, fmt);
@@ -65,6 +83,7 @@ int fprintf(FILE *fp, const char *fmt, ...) {
     return r;
 }
 
+/* vprintf to stdout. */
 int vprintf(const char *fmt, va_list ap) {
     char buf[1024];
     int r = vsnprintf(buf, sizeof(buf), fmt, ap);
@@ -72,6 +91,7 @@ int vprintf(const char *fmt, va_list ap) {
     return r;
 }
 
+/* vfprintf to a specific stream. */
 int vfprintf(FILE *fp, const char *fmt, va_list ap) {
     char buf[1024];
     int r = vsnprintf(buf, sizeof(buf), fmt, ap);
@@ -79,13 +99,18 @@ int vfprintf(FILE *fp, const char *fmt, va_list ap) {
     return r;
 }
 
+/* Filesystem ops not supported yet. */
 int remove(const char *p) { (void)p; return -1; }
 int rename(const char *a, const char *b) { (void)a; (void)b; return -1; }
+
+/* perror(3) without errno strings — caller's `s`, then literal " error". */
 void perror(const char *s) { fprintf(stderr, "%s: error\n", s); }
 
-int fflush(FILE *fp) { (void)fp; return 0; }   /* no buffering, no-op */
+/* No buffering, so nothing to flush. */
+int fflush(FILE *fp) { (void)fp; return 0; }
 
-/* minimal sscanf: supports %d, %x/%X, %s, %u — enough for DOOM config parsing */
+/* Tiny sscanf supporting %d, %i, %u, %x/%X, %s (with optional `l` length
+ * modifier). Enough for DOOM's CFG parser; not general-purpose. */
 int sscanf(const char *s, const char *fmt, ...) {
     va_list ap; va_start(ap, fmt);
     int matched = 0;

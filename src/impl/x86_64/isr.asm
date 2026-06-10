@@ -1,9 +1,11 @@
-; IDT entry stubs + common dispatcher. 48 vectors (0..31 = CPU exceptions,
-; 32..47 = PIC-remapped IRQs), each entered via its own tiny stub so we know
-; which vector fired and so error-code-pushing exceptions look the same as
-; non-pushing ones to the C handler. The dummy-zero push for no-err vectors
-; exists because x86 couldn't agree with itself in 1985 about whether the
-; CPU should push an error code, and we are still apologising for that decision.
+; src/impl/x86_64/isr.asm — IDT entry stubs + common dispatcher.
+;
+; 48 vectors (0..31 = CPU exceptions, 32..47 = PIC-remapped IRQs), each
+; entered via its own tiny stub so we know which vector fired and so
+; error-code-pushing exceptions look the same as non-pushing ones to the
+; C handler. The dummy-zero push for no-err vectors exists because x86
+; couldn't agree with itself in 1985 about whether the CPU should push
+; an error code, and we are still apologising for that decision.
 
 extern isr_handler
 

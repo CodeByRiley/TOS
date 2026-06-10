@@ -1,3 +1,23 @@
+/* src/impl/kernel/arch/syscall.c — SYSCALL entry + dispatcher.
+ *
+ * syscall_init programs LSTAR / STAR / SFMASK and enables SCE so the
+ * SYSCALL instruction lands at the asm entry trampoline in
+ * src/impl/x86_64/cpu/syscall.asm. The trampoline saves all GPRs into a
+ * syscall_frame, swaps to the per-CPU kernel stack via gs:CPU_LOCAL_*,
+ * and calls syscall_dispatch with a pointer to the frame.
+ *
+ * Dispatch is one giant switch over the SYS_* number in rax. Each arm
+ * reads typed args from the frame's caller-saved register slots,
+ * validates pointers against the caller's PML4 if needed, performs the
+ * action, and returns a long that the asm path writes back into the
+ * frame's rax slot (and thus userspace's rax on SYSRET).
+ *
+ * Pointer validation is best-effort: anything taken from userspace is
+ * range-checked against [0, USER_LOW_LIMIT) and walked via
+ * vmm_translate_in to confirm it's actually mapped USER+writable. The
+ * trade-off is "trusted enough to not crash the kernel"; a real OS would
+ * do per-page copy-in/copy-out into kernel buffers.
+ */
 // #region INCLUDES
 
 #include "arch/syscall.h"
@@ -16,6 +36,7 @@
 #include "sched/sched.h"
 #include "utilities/log.h"
 #include "utilities/string.h"
+#include <stddef.h>
 #include <stdint.h>
 
 // #endregion INCLUDES
@@ -506,11 +527,10 @@ static long sys_readdir(uint32_t *index, char *buf, size_t n) {
 /* Userspace-visible proc_info layout. MUST match struct proc_info in
  * userspace/lib/syscall.h byte-for-byte. */
 struct proc_info_user {
+  uint64_t ticks_run;
   int      pid;
   int      parent_pid;
   int      state;
-  int      _pad;
-  uint64_t ticks_run;
   char     name[16];
 };
 
@@ -520,17 +540,29 @@ struct mem_stats_user {
   uint64_t frame_size;
 };
 
+_Static_assert(sizeof(struct fb_info) == 32,
+               "fb_info userspace ABI must be four u64 fields");
+_Static_assert(sizeof(struct proc_info_user) == 40,
+               "proc_info_user userspace ABI must stay compact");
+_Static_assert(offsetof(struct proc_info_user, ticks_run) == 0,
+               "proc_info_user.ticks_run offset is userspace ABI");
+_Static_assert(offsetof(struct proc_info_user, pid) == 8,
+               "proc_info_user.pid offset is userspace ABI");
+_Static_assert(offsetof(struct proc_info_user, name) == 20,
+               "proc_info_user.name offset is userspace ABI");
+_Static_assert(sizeof(struct mem_stats_user) == 24,
+               "mem_stats_user userspace ABI must be three u64 fields");
+
 static long sys_proc_list(struct proc_info_user *out, long max) {
   if (!out || max <= 0) return -1;
   if (max > 64) max = 64;     /* hard cap to bound stack snap below */
   struct task_snap snap[64];
   int n = sched_snapshot(snap, (int)max);
   for (int i = 0; i < n; i++) {
+    out[i].ticks_run  = snap[i].ticks_run;
     out[i].pid        = snap[i].pid;
     out[i].parent_pid = snap[i].parent_pid;
     out[i].state      = snap[i].state;
-    out[i]._pad       = 0;
-    out[i].ticks_run  = snap[i].ticks_run;
     for (size_t k = 0; k < sizeof(out[i].name); k++) {
       out[i].name[k] = snap[i].name[k];
     }

@@ -1,25 +1,25 @@
+/* userspace/lib/wm.h — libwm: userspace window-manager client API.
+ *
+ * Apps include this header to talk to winman over IPC without knowing
+ * the wire protocol. The functions wrap a synchronous request/reply
+ * handshake built on ipc_send + ipc_recv (declared in syscall.h, which
+ * this header pulls in).
+ *
+ * The server lives in userspace/bin/winman/winman.c and includes this
+ * same header so wire types and `struct ipc_msg` field layout stay
+ * single-sourced. The kernel msg dispatcher (src/intf/msg/msg.h) only
+ * routes opaque ipc_msg payloads — IPC_WM_* codes are user-defined.
+ */
 #ifndef USER_WM_H
 #define USER_WM_H
 
-/*
- * libwm — userspace client API for the window manager (winman).
- *
- * Apps include this header to talk to winman over IPC without knowing the
- * wire protocol. The functions wrap a synchronous request/reply handshake
- * built on ipc_send + ipc_recv (declared in syscall.h, which this header
- * includes).
- *
- * Server-side counterparts live in userspace/bin/winman/winman.c, which
- * also includes this header so the IPC_WM_* type codes and `struct ipc_msg`
- * layout stay in one place.
- */
-
+#include "../include/stdio.h"
 #include "syscall.h"
 #include <stdint.h>
 
-/* ===== Wire protocol =================================================== */
-/* IPC message type codes. Must stay in sync with winman.c's switch in
- * pump_ipc() and the kernel msg dispatcher (src/intf/msg/msg.h). */
+/* ---------------- Wire protocol ---------------------------------------- */
+/* IPC message type codes. Must stay in sync with winman.c's pump_ipc()
+ * switch. Values are inside the IPC_USER_FIRST range. */
 #define IPC_WM_CREATE_REQ       0x100
 #define IPC_WM_CREATE_RESP      0x101
 #define IPC_WM_DESTROY_REQ      0x102
@@ -28,26 +28,24 @@
 #define IPC_WM_INPUT            0x110
 #define IPC_WM_RESIZE_NOTIFY    0x111
 
-/* ===== Window handle ==================================================== */
+/* ---------------- Window handle ---------------------------------------- */
 /* Returned by wm_window_create. `surface_va` is the page-aligned base of
- * the shared pixel buffer mapped into the client's address space; the
- * client writes BGRA pixels there directly and then calls wm_window_invalidate
- * to ask winman to recomposite. `pitch` is row stride in bytes (== w*4). */
+ * the shared BGRA pixel buffer mapped into the client's address space —
+ * write pixels there directly, then call wm_window_invalidate so winman
+ * recomposites. `pitch` is the row stride in bytes (== w*4 today). */
 struct wm_window {
-    int      handle;
     uint64_t surface_va;
+    int      handle;
     uint32_t pitch;
     int      w, h;
 };
 
-/* ===== Event API ======================================================== */
+/* ---------------- Event API -------------------------------------------- */
 /* wm_poll_event() drains ipc_recv looking for WM-flavored messages
- * (IPC_WM_INPUT, IPC_WM_RESIZE_NOTIFY). Non-WM messages are pushed back
- * by being dropped — clients that mix WM and non-WM IPC should call
- * ipc_recv directly and dispatch themselves.
- *
- * Event types mirror the MSG_* codes from syscall.h so a focused client
- * sees the same input vocabulary winman sees from the kernel msg ring. */
+ * (IPC_WM_INPUT, IPC_WM_RESIZE_NOTIFY). Non-WM messages get dropped, so
+ * clients that mix WM and custom IPC should call ipc_recv themselves and
+ * dispatch on m.type. Event codes mirror MSG_* from syscall.h so apps see
+ * the same input vocabulary winman receives from the kernel. */
 enum {
     WM_EV_NONE        = 0,
     WM_EV_KEY_DOWN    = 1,
@@ -68,27 +66,26 @@ struct wm_event {
     uint32_t pitch;      /* new row stride on WM_EV_RESIZE                */
 };
 
-/* ===== Client API ======================================================= */
-/* All functions return 0 on success, -1 on failure (winman not present,
- * IPC failure, allocation failure inside winman). */
+/* ---------------- Client API ------------------------------------------- */
+/* All functions return 0 on success and -1 on failure (winman missing,
+ * IPC failure, or server-side allocation failure). */
 
-/* Create a `w` x `h` BGRA window with the given title. Blocks until winman
- * replies. On success, `out` is filled in and the surface is mapped read/
- * write at out->surface_va. */
+/* Create a `w` x `h` BGRA window. Blocks until winman replies. On success
+ * `out` is filled in and the surface is mapped RW at out->surface_va. */
 int  wm_window_create(int w, int h, const char *title, struct wm_window *out);
 
-/* Tear down a window. After this call the surface_va becomes invalid. */
+/* Tear down a window. After this call surface_va becomes invalid. */
 int  wm_window_destroy(int handle);
 
-/* Tell winman the window's surface has new pixels and needs recompositing.
- * Today this is whole-window damage; future work will accept a rect. */
+/* Tell winman the window's pixels changed and need recompositing. Today
+ * this is whole-window damage; future versions will accept a rect. */
 int  wm_window_invalidate(int handle);
 
-/* Update the chrome title text. Truncated to 47 bytes by the IPC msg. */
+/* Replace the chrome title. Truncated to 47 bytes by the IPC message. */
 int  wm_window_set_title(int handle, const char *title);
 
-/* Non-blocking event poll. Returns 1 if an event was filled, 0 otherwise.
- * Should be called every frame in the app's main loop. */
+/* Non-blocking event poll. Returns 1 if `out` was filled, 0 otherwise.
+ * Apps should call this every frame. */
 int  wm_poll_event(struct wm_event *out);
 
 #endif

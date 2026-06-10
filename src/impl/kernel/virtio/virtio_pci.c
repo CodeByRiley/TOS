@@ -1,3 +1,14 @@
+/* src/impl/kernel/virtio/virtio_pci.c — virtio 1.1 transport over PCI.
+ *
+ * Generic device-class-agnostic bringup: cap parse → MMIO mapping →
+ * feature negotiation → virtqueue setup. Device-specific drivers
+ * (virtio_gpu.c, etc.) build on top by submitting descriptors and
+ * harvesting used entries via virtq_submit / virtq_reap.
+ *
+ * BAR mappings get carved out of a fixed kernel VA slab at
+ * VIRTIO_BAR_VBASE, 64 MiB per device. Plenty of room for the ~16 KiB
+ * a virtio device actually needs.
+ */
 #include "virtio/virtio.h"
 #include "pci/pci.h"
 #include "memory/pmm.h"
@@ -6,9 +17,6 @@
 #include "utilities/string.h"
 #include <stdint.h>
 
-/* Kernel virtual base for virtio BAR mappings. Each device gets a 64 MiB slot;
- * we hand out slots in scan order. Plenty of room for the ~16 KiB or so a
- * virtio device actually needs. */
 #define VIRTIO_BAR_VBASE    0xFFFFE00200000000ULL
 #define VIRTIO_BAR_SLOT     (64ULL * 1024 * 1024)
 

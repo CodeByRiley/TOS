@@ -1,13 +1,20 @@
+/* src/impl/kernel/loader/elf.c — ELF64 loader.
+ *
+ * The world's smallest ELF64 loader: opens the file via the FAT-backed
+ * FILE* layer, validates magic + machine type, walks the program header
+ * table, and copies every PT_LOAD segment into the target PML4 with the
+ * requested permissions.
+ *
+ * Caller must arrange for the kernel to be able to write the user vaddrs
+ * in the target PML4 — usually by switching CR3 to `pml4` first, since
+ * the kernel-low identity map is shared into every process PML4.
+ */
 #include "utilities/string.h"
 #include "utilities/log.h"
 #include "memory/pmm.h"
 #include "memory/vmm.h"
 #include "loader/elf.h"
 #include "fs/stdio.h"
-
-/* The world's smallest ELF64 loader. Trusts every byte in the file, validates
- * roughly the same things a paranoid teenager checks before opening a sketchy
- * URL: magic, machine type, and nothing else. Patches welcome (no they aren't). */
 
 uint64_t elf_load(const char *path, uint64_t *pml4) {
     FILE *fp = fopen(path, "rb");

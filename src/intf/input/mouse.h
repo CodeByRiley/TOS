@@ -1,3 +1,11 @@
+/* src/intf/input/mouse.h — PS/2 mouse driver surface.
+ *
+ * Reports relative motion + button mask on each IRQ12 packet. The driver
+ * also maintains an absolute cursor position clamped by mouse_set_bounds
+ * so apps can read mouse_x()/mouse_y() directly.
+ *
+ * Implementation: src/impl/kernel/input/mouse.c.
+ */
 #ifndef MOUSE_H
 #define MOUSE_H
 
@@ -16,15 +24,16 @@ struct mouse_event {
 
 void mouse_init(void);
 
-/* Pop one event into *out. Returns 1 if got an event, 0 if ring empty. */
+/* Pop one event into *out. Returns 1 on success, 0 if ring empty. */
 int  mouse_poll(struct mouse_event *out);
 
-/* Absolute cursor x/y maintained by the driver. Clamped to [0, w-1] /
- * [0, h-1] where w/h come from mouse_set_bounds (default: unbounded). */
+/* Absolute cursor coordinates, clamped to [0, w-1] / [0, h-1] where w/h
+ * come from mouse_set_bounds (default: unbounded). */
 int32_t mouse_x(void);
 int32_t mouse_y(void);
 uint8_t mouse_buttons(void);
 
+/* Set the clamp bounds (called when the framebuffer is resized). */
 void mouse_set_bounds(int32_t w, int32_t h);
 
 #endif

@@ -1,3 +1,26 @@
+/* src/impl/kernel/main.c — kernel entry point.
+ *
+ * kernel_main is the C entry called from the assembly boot trampoline
+ * (src/impl/x86_64/boot/main64.asm) once long mode is up. Brings the
+ * kernel up in dependency order:
+ *
+ *   1. serial + VGA print  — earliest visible output
+ *   2. GDT + percpu (BSP)  — segments + gs-relative state
+ *   3. PIC remap + IDT     — interrupt routing
+ *   4. PIT                 — tick source for sched + sleeps
+ *   5. PMM + VMM + heap    — memory subsystems
+ *   6. ACPI + LAPIC + SMP  — multi-CPU bring-up
+ *   7. PCI scan            — device enumeration
+ *   8. virtio-gpu          — optional; falls back to MB2 fb on failure
+ *   9. FAT (rootfs)        — file access for ELF load
+ *  10. keyboard / mouse    — input
+ *  11. TTY                 — framebuffer-backed kernel console
+ *  12. msg + syscall       — userspace ABI
+ *  13. sched_init + spawn  — launches winman + the userspace shell
+ *
+ * After init, the BSP becomes the scheduler's idle task and lets ring 3
+ * take over.
+ */
 #include "acpi/acpi.h"
 #include "arch/gdt.h"
 #include "arch/percpu.h"

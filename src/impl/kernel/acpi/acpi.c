@@ -1,16 +1,22 @@
+/* src/impl/kernel/acpi/acpi.c — ACPI discovery + MADT parser.
+ *
+ * Two RSDP sources, in order of preference:
+ *   1. Multiboot2 ACPI_NEW (XSDP) or ACPI_OLD (RSDP) tag
+ *   2. Legacy BIOS scan: EBDA pointer + the 0xE0000-0xFFFFF window
+ *
+ * For SMP we only care about the LAPIC MMIO base and the list of enabled
+ * processors. Everything else in MADT is ignored.
+ *
+ * Boot identity-maps only the first 1 GiB (main.asm). Firmware likes to
+ * park ACPI tables near the top of RAM, so acpi_map() lazily pages in
+ * any 4 KiB window outside the boot identity range before we touch it.
+ */
 #include "acpi/acpi.h"
 #include "boot/multiboot2.h"
 #include "memory/vmm.h"
 #include "utilities/log.h"
 #include "utilities/string.h"
 #include <stdint.h>
-
-/* ACPI discovery + MADT parsing. Two RSDP sources, in order of preference:
- *   1. Multiboot2 ACPI_NEW (XSDP) or ACPI_OLD (RSDP) tag
- *   2. Legacy BIOS scan: EBDA pointer + the 0xE0000-0xFFFFF window
- *
- * For SMP we only care about the LAPIC MMIO base and the list of enabled
- * processors. Everything else in MADT is ignored. */
 
 static uint64_t lapic_phys = 0;
 static uint8_t  cpu_ids[ACPI_MAX_CPUS];

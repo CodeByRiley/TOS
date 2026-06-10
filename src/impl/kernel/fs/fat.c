@@ -1,3 +1,12 @@
+/* src/impl/kernel/fs/fat.c — minimal FAT16 driver.
+ *
+ * Operates over an in-memory image (loaded as a GRUB module at boot).
+ * Flat root directory only — no subdirs. Supports open / create / read /
+ * write (overwriting) / seek / unlink + a root-dir enumerator.
+ *
+ * BPB layout follows the FAT spec; cluster chain follows the FAT entry
+ * table. Cluster size is read from the BPB at fat_init time.
+ */
 #include "fs/fat.h"
 #include "utilities/string.h"
 #include "utilities/log.h"

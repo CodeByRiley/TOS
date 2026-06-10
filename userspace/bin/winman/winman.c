@@ -1,15 +1,29 @@
-/*
- * winman — userspace window manager. Pure-userspace successor to the
- * old in-kernel WM. Owns the framebuffer, composites a desktop with
- * client-allocated window surfaces, and serves WM requests via IPC.
+/* userspace/bin/winman/winman.c — userspace window manager.
  *
- * Boots in parallel with the kernel-spawned shell: when winman is up
- * the kernel TTY is suppressed (we drain its ring instead) and the
- * desktop appears; when winman exits, the kernel TTY resumes and the
- * shell falls back to plain text mode.
+ * Pure-userspace successor to the old in-kernel WM. Owns the framebuffer,
+ * composites a desktop with client-allocated window surfaces, and serves
+ * WM requests via the IPC protocol declared in lib/wm.h.
+ *
+ * Lifecycle:
+ *   - Boots in parallel with the kernel-spawned shell.
+ *   - While winman is up, the kernel TTY is suppressed; winman drains the
+ *     TTY ring into its own built-in console window.
+ *   - On exit, the kernel TTY resumes and the shell falls back to plain
+ *     text mode.
+ *
+ * Section roadmap (in order of appearance below):
+ *   - CURSOR SPRITE / PALETTE       — visual constants + bitmap masks
+ *   - FRAMEBUFFER + BACK BUFFER     — display state
+ *   - WINDOWS                       — slot pool, z-order
+ *   - CONSOLE WINDOW                — the built-in TTY window
+ *   - GEOMETRY                      — hit-testing + rect math
+ *   - DRAG                          — move + resize ghost rect state
+ *   - RENDERERS                     — draw_* helpers
+ *   - COMPOSITOR                    — back-buffer recomposition
+ *   - INPUT                         — kernel msg ring → events
+ *   - IPC PUMP                      — wire protocol handler
+ *   - MAIN                          — entry point + main loop
  */
-
-// #region INCLUDES
 
 #include "../../lib/syscall.h"
 #include "../../lib/wm.h"
@@ -18,17 +32,13 @@
 #include <stdint.h>
 #include <stddef.h>
 
-/* In-band TTY control codes — kept in sync with src/intf/display/tty.h.
- * Re-defined here (rather than including the kernel header) because
- * tty.h also declares `tty_drain` with a `size_t` signature that conflicts
- * with the userspace `long` wrapper in lib/syscall.h. */
+/* In-band TTY control codes — must match src/intf/display/tty.h. Defined
+ * inline rather than #include'd because that header also declares
+ * tty_drain() with a `size_t` signature that conflicts with the userspace
+ * `long` wrapper in lib/syscall.h. */
 #define TTY_CTRL_CLEAR  0x0C
 #define TTY_CTRL_PUSH   0x1C
 #define TTY_CTRL_POP    0x1D
-
-// #endregion INCLUDES
-
-// #region EXTERNS
 
 extern void *memcpy(void *, const void *, size_t);
 extern void *memset(void *, int, size_t);
@@ -39,8 +49,8 @@ extern void *malloc(size_t);
 extern void  free(void *);
 extern int   printf(const char *, ...);
 
-/* Forward decls — defined in HELPERS region below, used by GEOMETRY + DRAG
- * helpers that have to come before HELPERS for declaration-order reasons. */
+/* Forward decls — used by helpers that appear before their definitions
+ * because GEOMETRY + DRAG sit ahead of the helper bag. */
 struct window;
 static void *aligned_page_alloc(size_t npages, void **out_raw);
 static int   window_count(void);
@@ -49,8 +59,6 @@ static struct window *find_handle(int handle);
 static void  titlebar_btn_rect(int win_x, int win_y, int outer_w,
                                int idx_from_right,
                                int *bx, int *by, int *bw, int *bh);
-
-// #endregion EXTERNS
 
 
 
@@ -75,6 +83,7 @@ static const uint8_t cursor_mask[CURSOR_H][CURSOR_W] = {
     {0,0,0,0,1,1,1,0,0,0,0,0},
     {0,0,0,0,0,0,0,0,0,0,0,0},
 };
+
 
 // #endregion CURSOR SPRITE
 
@@ -185,6 +194,7 @@ static const uint8_t btn_hide_mask[TB_BTN_SIZE][TB_BTN_SIZE] = {
  * slot is freed. No monotonically-growing counter. */
 #define HANDLE_CONSOLE 0
 
+
 // #endregion PALETTE
 
 // #region FRAMEBUFFER + BACK BUFFER
@@ -196,6 +206,7 @@ static size_t    fb_bytes;
 static int       fb_w, fb_h, fb_stride;
 static int       desktop_dirty = 1;
 
+
 // #endregion FRAMEBUFFER + BACK BUFFER
 
 // #region WINDOWS
@@ -203,16 +214,18 @@ static int       desktop_dirty = 1;
 #define MAX_WINDOWS 8
 
 struct window {
+    uint32_t *surface;       /* page-aligned, owned by winman          */
+    void     *surface_raw;   /* original malloc ptr for free()         */
+    uint64_t  client_va;     /* va in owner_pml4 (0 if not shared)     */
+
     int       in_use;
     int       handle;
     int       owner_pid;
+
     int       x, y;
     int       client_w, client_h;
-    char      title[48];
-    uint32_t *surface;           /* page-aligned, owned by winman          */
-    void     *surface_raw;       /* original malloc ptr for free()         */
+
     int       n_pages;
-    uint64_t  client_va;         /* va in owner_pml4 (0 if not shared)     */
 
     /* Title-bar button state. minimized: skip compose + hit-test, but stay
      * on taskbar; clicking the taskbar button restores. maximized: window
@@ -222,6 +235,8 @@ struct window {
     int       maximized;
     int       saved_x, saved_y;
     int       saved_cw, saved_ch;
+
+    char      title[48];
 };
 
 struct drag_state {
@@ -269,18 +284,21 @@ static void z_bring_to_front(int handle) {
     z_count++;
 }
 
+
 // #endregion WINDOWS
 
 // #region CONSOLE WINDOW
 
 struct console {
+    uint32_t *surface;
+    void     *raw;
+
     int       enabled;
     int       x, y;
     int       client_w, client_h;
     int       cols, rows;
     int       cx, cy;
-    uint32_t *surface;
-    void     *raw;
+
     char      title[48];
 };
 
@@ -323,6 +341,7 @@ static void fill_dwords(uint32_t *dst, size_t n, uint32_t color) {
     }
     while (n--) *dst++ = color;
 }
+
 
 // #endregion CONSOLE WINDOW
 
@@ -530,6 +549,7 @@ static void client_window_resize(int handle, int new_cw, int new_ch) {
     if (old_raw) free(old_raw);
 }
 
+
 // #endregion GEOMETRY + DRAG
 
 // #region HELPERS
@@ -686,6 +706,7 @@ static void blit_surface(const struct window *w) {
     }
 }
 
+
 // #endregion HELPERS
 
 // #region TASKBAR
@@ -762,6 +783,7 @@ static int hit_taskbar(int mx, int my, int *out_handle) {
     }
     return 0;
 }
+
 
 // #endregion TASKBAR
 
@@ -900,6 +922,7 @@ static void drain_tty_into_console(void) {
         if (n < (long)sizeof(buf)) break;
     }
 }
+
 
 // #endregion CONSOLE (TTY DRAIN)
 
@@ -1070,6 +1093,7 @@ static void compute_ghost(int mx, int my, int *gx, int *gy, int *gw, int *gh) {
     }
 }
 
+
 // #endregion COMPOSITOR
 
 // #region WINDOW REGISTRY
@@ -1184,6 +1208,17 @@ static void handle_destroy(int client_pid, int handle) {
     handle_destroy_internal(handle, client_pid);
 }
 
+static void destroy_windows_for_owner(int owner_pid, const char *why) {
+    if (owner_pid <= 0) return;
+    for (int i = 0; i < MAX_WINDOWS; i++) {
+        if (!windows[i].in_use || windows[i].owner_pid != owner_pid) continue;
+        int h = windows[i].handle;
+        printf("winman: reap window %d owner_pid=%d (%s)\n",
+               h, owner_pid, why ? why : "owner-exit");
+        handle_destroy_internal(h, 0);
+    }
+}
+
 /* True if window is currently minimized (and therefore must skip compose +
  * hit-test). Console can't be minimized. */
 static int is_minimized(int handle) {
@@ -1241,10 +1276,10 @@ static void toggle_maximize(int handle) {
     desktop_dirty = 1;
 }
 
-/* Walk the kernel proc table and reap any window whose owner pid no longer
- * has a live task (or is in a terminal state). Called periodically from the
- * main loop so a client that crashed without sending IPC_WM_DESTROY_REQ
- * doesn't leak its slot, handle, and shared-surface bookkeeping forever.
+/* Walk the kernel proc table and reap any window whose owner is explicitly
+ * terminal. Missing owner rows are ignored here: the kernel sends
+ * IPC_PEER_EXITED from task_exit(), so absence in a snapshot is treated as
+ * inconclusive rather than permission to destroy visible client state.
  *
  * Note: this does NOT unmap the shared pages from the (already-gone) owner's
  * address space. The kernel reclaims that pml4 when the task struct is
@@ -1260,14 +1295,14 @@ static void reap_dead_windows(void) {
     for (int i = 0; i < MAX_WINDOWS; i++) {
         if (!windows[i].in_use) continue;
         int owner = windows[i].owner_pid;
-        int alive = 0;
+        int terminal = 0;
         for (long j = 0; j < n; j++) {
             if (procs[j].pid != owner) continue;
             int s = procs[j].state;
-            if (s != PROC_STATE_ZOMBIE && s != PROC_STATE_DEAD) alive = 1;
+            terminal = (s == PROC_STATE_ZOMBIE || s == PROC_STATE_DEAD);
             break;
         }
-        if (!alive) {
+        if (terminal) {
             int h = windows[i].handle;
             printf("winman: reap window %d owner_pid=%d (dead)\n", h, owner);
             handle_destroy_internal(h, 0);
@@ -1286,6 +1321,7 @@ static void handle_set_title(int handle, const char *title) {
     w->title[i] = 0;
     desktop_dirty = 1;
 }
+
 
 // #endregion WINDOW REGISTRY
 
@@ -1330,11 +1366,15 @@ static void pump_ipc(void) {
         case IPC_WM_SET_TITLE_REQ:
             handle_set_title(m.a, m.str);
             break;
+        case IPC_PEER_EXITED:
+            destroy_windows_for_owner(m.a, "peer-exited");
+            break;
         default:
             break;
         }
     }
 }
+
 
 // #endregion IPC PUMP
 
@@ -1475,6 +1515,7 @@ static void pump_input(void) {
         if (focus) forward_input(focus->owner_pid, focus->handle, &m);
     }
 }
+
 
 // #endregion INPUT PUMP
 

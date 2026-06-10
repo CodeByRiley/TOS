@@ -1,3 +1,15 @@
+/* src/impl/kernel/memory/heap.c — kernel heap (kmalloc/kfree).
+ *
+ * Doubly-linked first-fit allocator. The doubly-linked invariant means
+ * kfree can coalesce in both directions in O(1), so the free list never
+ * holds adjacent free blocks. That kills the need for a forward-sweep
+ * pass inside kmalloc and bounds fragmentation tightly. Still a toy —
+ * no buddy, no slab — but a well-behaved one.
+ *
+ * The heap lives at a high-canonical kernel VA (HEAP_BASE) and grows on
+ * demand by paging in fresh frames from the PMM. heap_grow + list_append
+ * keep the no-adjacent-free-blocks invariant intact across grows.
+ */
 #include "memory/heap.h"
 #include "memory/pmm.h"
 #include "memory/vmm.h"
@@ -5,18 +17,15 @@
 #include "utilities/log.h"
 #include <stdint.h>
 
-#define HEAP_BASE   0xFFFF800000000000ULL
-#define HEAP_INITIAL_PAGES 256   // 1 MiB
-#define SPLIT_THRESHOLD    16    // payload bytes below which we won't bother splitting
+#define HEAP_BASE          0xFFFF800000000000ULL
+#define HEAP_INITIAL_PAGES 256   /* 1 MiB */
+#define SPLIT_THRESHOLD    16    /* payload bytes below which we won't split */
 
-/* Doubly-linked first-fit allocator. The doubly-linked invariant means
- * kfree can coalesce in both directions in O(1), so the free list never
- * contains adjacent free blocks. That kills the need for a forward-sweep
- * pass inside kmalloc and bounds fragmentation tightly. It's still a kernel
- * toy — no buddy, no slab — but at least it's a well-behaved toy now. */
+/* In-band header on every allocation. Doubly linked so kfree can fold
+ * adjacent neighbours in O(1). */
 struct block {
-    size_t size;            // payload size, excluding header
-    int    free;
+    size_t        size;          /* payload size, excluding header */
+    int           free;
     struct block *next;
     struct block *prev;
 };
@@ -25,6 +34,7 @@ static struct block *head = 0;
 static struct block *tail = 0;
 static uint64_t      heap_end = 0;
 
+/* Map `pages` fresh frames at the top of the heap. */
 static void heap_grow(size_t pages) {
     for (size_t i = 0; i < pages; i++) {
         uint64_t phys = pmm_alloc_frame();
@@ -45,9 +55,9 @@ void heap_init(void) {
     tail = head;
 }
 
-/* Append a freshly-grown region. If the existing tail is free, absorb the
- * new bytes into it instead of creating a new node — keeps the no-adjacent-
- * free-blocks invariant intact across heap_grow. */
+/* Append a freshly-grown region. If the existing tail is free, absorb
+ * the new bytes into it instead of creating a new node — keeps the
+ * no-adjacent-free-blocks invariant across heap_grow. */
 static void list_append(uint64_t region_start, size_t region_bytes) {
     if (tail && tail->free) {
         tail->size += region_bytes;
@@ -64,14 +74,14 @@ static void list_append(uint64_t region_start, size_t region_bytes) {
 }
 
 void *kmalloc(size_t size) {
-    if (size == 0) return 0;                       // zero-byte alloc: politely decline
-    size = (size + 7) & ~7ULL;                     // 8-byte align
+    if (size == 0) return 0;                       /* zero-byte: politely decline */
+    size = (size + 7) & ~7ULL;                     /* 8-byte align */
 
     for (;;) {
         for (struct block *b = head; b; b = b->next) {
             if (!b->free || b->size < size) continue;
 
-            /* Split only when the leftover would actually hold useful data,
+            /* Split only when the leftover would hold useful data,
              * otherwise hand back the whole thing as internal slack. */
             if (b->size >= size + sizeof(struct block) + SPLIT_THRESHOLD) {
                 struct block *split = (struct block*)((uint8_t*)b + sizeof(struct block) + size);
@@ -92,7 +102,7 @@ void *kmalloc(size_t size) {
         size_t needed = (size + sizeof(struct block) + 4095) / 4096;
         uint64_t old_end = heap_end;
         heap_grow(needed);
-        if (heap_end == old_end) return 0;        // pmm_alloc_frame bailed mid-grow
+        if (heap_end == old_end) return 0;        /* pmm bailed mid-grow */
         list_append(old_end, needed * 4096);
     }
 }

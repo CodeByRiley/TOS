@@ -1,3 +1,9 @@
+/* userspace/include/fcntl.h — open() flag constants.
+ *
+ * The open() prototype itself is declared in syscall.h so the same
+ * signature is shared with the syscall wrapper. We only expose flag
+ * bits here. Values match the Linux ABI.
+ */
 #ifndef FCNTL_H
 #define FCNTL_H
 
@@ -9,7 +15,5 @@
 #define O_TRUNC    0x200
 #define O_APPEND   0x400
 #define O_NONBLOCK 0x800
-
-/* open() declared in syscall.h to avoid signature mismatch */
 
 #endif

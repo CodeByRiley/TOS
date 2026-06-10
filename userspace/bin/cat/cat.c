@@ -1,3 +1,9 @@
+/* userspace/bin/cat/cat.c — dump a known file to stdout.
+ *
+ * Hard-coded to README.TXT today because there's no argv-driven open path
+ * exercised in this binary yet. Doubles as an integration smoke test for
+ * fopen/fread/fclose + printf.
+ */
 #include "../../lib/syscall.h"
 #include <stddef.h>
 

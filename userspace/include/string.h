@@ -1,3 +1,8 @@
+/* userspace/include/string.h — mem... / str... prototypes.
+ *
+ * Implementations split across lib/string.c (core) and
+ * lib/string_extra.c (the rest of the str* family + strerror stub).
+ */
 #ifndef STRING_H
 #define STRING_H
 #include <stddef.h>

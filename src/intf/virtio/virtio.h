@@ -1,3 +1,16 @@
+/* src/intf/virtio/virtio.h — virtio 1.1 modern transport.
+ *
+ * Common PCI capability layouts, device-status bits, and virtqueue
+ * structures shared across all virtio device classes. Device-specific
+ * headers (virtio_gpu.h, etc.) build on this surface.
+ *
+ * We refuse to talk to anything that doesn't advertise
+ * VIRTIO_F_VERSION_1 — no transitional / legacy mode.
+ *
+ * Implementations:
+ *   - virtio_pci_init / virtio_negotiate / queue setup: src/impl/kernel/virtio/virtio_pci.c
+ *   - device-specific drivers:                          src/impl/kernel/virtio/virtio_*.c
+ */
 #ifndef VIRTIO_H
 #define VIRTIO_H
 
@@ -20,8 +33,8 @@
 #define VIRTIO_STATUS_NEEDS_RESET     64
 #define VIRTIO_STATUS_FAILED          128
 
-/* Transport feature bit 32 = device understands the modern (v1.0+) layout.
- * We refuse to talk to anything that doesn't set this. */
+/* Transport feature bit 32 — device understands the modern (v1.0+)
+ * layout. We refuse to talk to anything that doesn't set this. */
 #define VIRTIO_F_VERSION_1            (1ULL << 32)
 
 /* Virtqueue descriptor flags. */
@@ -57,8 +70,8 @@ struct virtq_used {
     struct virtq_used_elem ring[];   /* size = qsize; followed by avail_event */
 } __attribute__((packed));
 
-/* virtio 1.1, 4.1.4.3 — common configuration structure. Field offsets and
- * widths are part of the spec; do not reorder. */
+/* virtio 1.1, 4.1.4.3 — common configuration structure. Field offsets
+ * and widths are part of the spec; do not reorder. */
 struct virtio_pci_common_cfg {
     uint32_t device_feature_select;     /* 0x00 RW */
     uint32_t device_feature;             /* 0x04 RO */
@@ -79,11 +92,10 @@ struct virtio_pci_common_cfg {
     uint64_t queue_device;               /* 0x30 RW */
 } __attribute__((packed));
 
+/* Driver-side view of a virtio device after probe + cap parse. */
 struct virtio_dev {
-    /* PCI handle. */
-    void *pci;   /* opaque pci_device* — avoids pulling pci.h into virtio.h */
+    void *pci;                          /* opaque pci_device*              */
 
-    /* Cap pointers (kernel virtual addresses). */
     volatile struct virtio_pci_common_cfg *common;
     volatile uint8_t  *isr;
     volatile uint8_t  *notify_base;
@@ -93,6 +105,7 @@ struct virtio_dev {
     uint16_t num_queues;
 };
 
+/* One virtqueue + its backing pages. */
 struct virtq {
     uint16_t qidx;
     uint16_t qsize;
@@ -109,14 +122,14 @@ struct virtq {
     uint64_t avail_phys;
     uint64_t used_phys;
 
-    /* Backing store handle (single physical page per ring). */
+    /* Backing pages (one phys page per ring). */
     uint64_t desc_page;
     uint64_t avail_page;
     uint64_t used_page;
 };
 
-/* Probe a PCI device, parse its virtio capabilities, map config regions, and
- * fill *out. Returns 0 on success. */
+/* Probe a PCI device, parse virtio caps, map config regions, fill *out.
+ * Returns 0 on success. */
 int  virtio_pci_init(void *pci_device_ptr, struct virtio_dev *out);
 
 /* Reset the device, set ACKNOWLEDGE | DRIVER, negotiate features. */
@@ -125,24 +138,25 @@ int  virtio_negotiate(struct virtio_dev *dev, uint64_t wanted);
 /* Final DRIVER_OK after queues are set up. */
 void virtio_driver_ok(struct virtio_dev *dev);
 
-/* Allocate + register one virtqueue. qsize is the requested size; the device
- * may clamp it down. Caller passes the queue index. */
+/* Allocate + register one virtqueue. qsize is requested; the device may
+ * clamp down. */
 int  virtio_queue_setup(struct virtio_dev *dev, uint16_t qidx, struct virtq *vq);
 
-/* Mark the queue as enabled in the device after virtio_queue_setup. */
+/* Mark the queue enabled in the device after virtio_queue_setup. */
 void virtio_queue_enable(struct virtio_dev *dev, struct virtq *vq);
 
-/* Kick the device: write the queue index to its notify doorbell. */
+/* Kick: write the queue index to its notify doorbell. */
 void virtio_queue_notify(struct virtio_dev *dev, struct virtq *vq);
 
-/* Free-list helpers. virtq_alloc_desc returns desc index, or 0xFFFF if empty. */
+/* Descriptor-pool helpers. virtq_alloc_desc returns desc index, or
+ * 0xFFFF if empty. */
 uint16_t virtq_alloc_desc(struct virtq *vq);
 void     virtq_free_desc (struct virtq *vq, uint16_t idx);
 
 /* Submit a single-buffer (or descriptor-chain head) to the avail ring. */
 void     virtq_submit    (struct virtq *vq, uint16_t head);
 
-/* Try to reap one used entry. Returns 1 if one was harvested into *out_id /
+/* Try to reap one used entry. Returns 1 if harvested into *out_id /
  * *out_len, 0 if the ring was empty. */
 int      virtq_reap      (struct virtq *vq, uint16_t *out_id, uint32_t *out_len);
 

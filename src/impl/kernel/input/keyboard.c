@@ -1,3 +1,16 @@
+/* src/impl/kernel/input/keyboard.c — PS/2 keyboard driver.
+ *
+ * IRQ1 handler reads scancode set 1 bytes from port 0x60, tracks the
+ * 0xE0 extended-prefix state, maps them to Linux KEY_* codes, and posts
+ * (KEY_*, press/release) events to two places:
+ *   - the legacy `kbd_ring` polled by keyboard_poll() (kernel apps)
+ *   - the per-task msg ring of the input owner (userspace winman or
+ *     whoever else grabbed input via msg_input_owner_register)
+ *
+ * Press/release state is explicit so consumers can track modifier
+ * holds; mid-IRQ pressed-state bookkeeping flushes a release event for
+ * keys that go away while an unrelated key is held.
+ */
 #include "input/keyboard.h"
 #include "input/key_codes.h"
 #include "interrupts/idt.h"

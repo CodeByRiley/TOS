@@ -1,16 +1,14 @@
-; ============================================================================
-;  DEAD CODE — kept around in case someone wants to reference the iretq-frame
-;  setup or the context-stack trick. Neither `enter_user` nor `user_exit_jump`
-;  is called from anywhere in src/ as of the scheduler-rewrite landing in
-;  sched.c: user tasks are now spawned via task_spawn_user, and the first-run
-;  trampoline (`user_task_trampoline` in sched.c) builds its own iretq frame
-;  inline. This file used to be the one-shot ring-3 launcher before tasks
-;  existed; it predates having an "exit" that meant something other than
-;  "return to the kernel that called us".
+; src/impl/x86_64/cpu/user_mode.asm — DEAD CODE.
 ;
-;  Safe to delete. Hasn't been because nobody felt bold enough to git rm
-;  hand-written assembly on a Friday.
-; ============================================================================
+; Neither `enter_user` nor `user_exit_jump` is called from anywhere in
+; src/ as of the scheduler-rewrite landing in sched.c. User tasks are
+; spawned via task_spawn_user; the first-run trampoline (sched.c::
+; user_task_trampoline) builds its own iretq frame inline.
+;
+; This file used to be the one-shot ring-3 launcher before tasks existed
+; — it predates having an "exit" that meant something other than "return
+; to the kernel that called us". Kept around as a reference for the
+; iretq-frame setup and the context-stack trick. Safe to delete.
 
 global enter_user
 global user_exit_jump

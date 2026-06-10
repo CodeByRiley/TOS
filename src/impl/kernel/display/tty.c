@@ -1,3 +1,15 @@
+/* src/impl/kernel/display/tty.c — framebuffer-backed text terminal.
+ *
+ * Kernel-side fallback console. Renders an 8x8 bitmap font into the
+ * framebuffer via the font8x8 table. Push/pop give a single-level alt-
+ * screen; the drain ring buffers unconsumed text so userspace winman
+ * can mirror it into its own console window.
+ *
+ * Lifecycle: active by default. Userspace winman calls tty_set_active(0)
+ * once it registers, after which characters still accumulate in the
+ * grid + drain ring but nothing gets blitted. On winman exit, the kernel
+ * flips active back on and the shell-fallback path stays visible.
+ */
 #include "display/tty.h"
 #include "display/framebuffer.h"
 #include "display/font8x8.h"

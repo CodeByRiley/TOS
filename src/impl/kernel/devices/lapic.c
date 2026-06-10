@@ -1,12 +1,15 @@
+/* src/impl/kernel/devices/lapic.c — Local APIC MMIO driver.
+ *
+ * Maps the LAPIC's 4 KiB MMIO window at a fixed kernel VA. The same
+ * physical base is shared by every CPU — each core's LAPIC just appears
+ * at this address when CR3 has the kernel PML4 linked in. Reads/writes
+ * are 32-bit memory-mapped ops; the page is mapped uncacheable so they
+ * don't get reordered or coalesced.
+ */
 #include "devices/lapic.h"
 #include "memory/vmm.h"
 #include "utilities/log.h"
 #include <stdint.h>
-
-/* Map LAPIC MMIO at a fixed kernel VA. The window is 4 KiB and the same
- * physical base is shared by every CPU — each core's LAPIC just appears at
- * this address when CR3 has the kernel PML4 linked in. Reads/writes are
- * memory-mapped 32-bit ops. */
 
 #define LAPIC_VIRT_BASE 0xFFFFE00100000000ULL
 

@@ -1,3 +1,20 @@
+/* src/impl/kernel/display/framebuffer.c — framebuffer abstraction.
+ *
+ * Two backends behind a single API:
+ *   MB2 mode    — the contiguous run of physical pages GRUB handed us.
+ *                  Direct writes are visible on the scanout.
+ *   virtio-gpu  — a scatter-gather pixel buffer attached to the host
+ *                  resource. Damage tracking + framebuffer_present()
+ *                  flush touched rects over the virtqueue.
+ *
+ * Page tables map either backend's pages contiguously at FB_VIRT_BASE so
+ * pixel writers don't need to care which mode is active. Switching is
+ * one-way (MB2 → virtio); on virtio failure the MB2 buffer stays live.
+ *
+ * The flush thread (framebuffer_flush_thread_entry) polls + presents at
+ * PIT tick rate so the (synchronous virtio ACK) flush is decoupled from
+ * whoever marked damage.
+ */
 #include "display/framebuffer.h"
 #include "boot/multiboot2.h"
 #include "input/mouse.h"

@@ -1,3 +1,9 @@
+/* userspace/bin/hello/hello.c — smoke-test "hello world".
+ *
+ * Writes a fixed string to stdout via raw write() (no printf, no libc
+ * pull-in beyond syscall.h). Returns 42 so the shell shows a recognisable
+ * non-zero exit code, confirming the user→kernel→user round trip.
+ */
 #include "../../lib/syscall.h"
 
 int main(int argc, char **argv) {

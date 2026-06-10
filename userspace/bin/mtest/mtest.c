@@ -1,10 +1,10 @@
-/*
- * mtest — small interactive demo for libwm. Spawns a 640x480 window, paints
- * a cursor at the last-known mouse position, drops a colored dot on every
- * MOUSE_DOWN, and quits on ESC. Exercises window create/poll/invalidate +
- * the WM_EV_RESIZE path (surface re-bind on grip drag).
+/* userspace/bin/mtest/mtest.c — libwm + mouse smoke test.
+ *
+ * Spawns a 640x480 window, draws a cursor at the last-known mouse
+ * position, drops a colored dot on every MOUSE_DOWN, and quits on ESC.
+ * Exercises window create/poll/invalidate, multi-button mouse state, and
+ * the WM_EV_RESIZE surface-rebind path (grip-drag → fresh shared buffer).
  */
-
 #include "../../lib/syscall.h"
 #include "../../lib/wm.h"
 #include "../../include/key_codes.h"
@@ -20,8 +20,8 @@ extern int printf(const char *, ...);
 static struct { int16_t x, y; uint32_t color; } dots[MAX_DOTS];
 static int dot_count = 0;
 
-/* Fill `w` x `h` rect into the window surface. Stride is implicit: rows are
- * `fb_w` pixels apart because the shared surface is a tight w*h*4 buffer. */
+/* Fill a w x h rect into the window surface. The shared surface is a
+ * tight w*h*4 BGRA buffer, so row stride is implicitly fb_w pixels. */
 static void fill_rect(uint32_t *px, int fb_w, int fb_h,
                       int x, int y, int w, int h, uint32_t color) {
     if (x < 0) { w += x; x = 0; }
@@ -35,11 +35,13 @@ static void fill_rect(uint32_t *px, int fb_w, int fb_h,
     }
 }
 
+/* Flat-fill the entire surface. */
 static void clear_surface(uint32_t *px, int fb_w, int fb_h, uint32_t color) {
     size_t n = (size_t)fb_w * (size_t)fb_h;
     for (size_t i = 0; i < n; i++) px[i] = color;
 }
 
+/* Repaint background → dot trail → cursor (top-most). */
 static void redraw(uint32_t *px, int fb_w, int fb_h,
                    int cur_x, int cur_y, uint8_t buttons) {
     clear_surface(px, fb_w, fb_h, BG_COLOR);
@@ -68,6 +70,9 @@ int main(void) {
     uint8_t buttons = 0;
     int dirty = 1;
 
+    /* Event loop: drain all pending events, then composite + yield if
+     * anything changed. ev.param on mouse events is the held-button mask;
+     * we mirror it locally so we can color the cursor while held. */
     for (;;) {
         struct wm_event ev;
         while (wm_poll_event(&ev)) {
@@ -106,20 +111,20 @@ int main(void) {
             case WM_EV_MOUSE_UP:
                 cur_x   = ev.x;
                 cur_y   = ev.y;
-                /* Drop released buttons from the locally-tracked held set. */
+                /* Drop released buttons from the held set. */
                 buttons &= (uint8_t)~ev.param;
                 dirty = 1;
                 break;
 
             case WM_EV_RESIZE:
-                /* winman handed us a fresh shared surface. The old va becomes
-                 * invalid the moment winman frees the previous backing. */
+                /* winman handed us a fresh shared surface; the previous va
+                 * becomes invalid the moment winman frees the old backing. */
                 px    = (uint32_t *)(uintptr_t)ev.surface_va;
                 win.w = ev.w;
                 win.h = ev.h;
                 win.surface_va = ev.surface_va;
                 win.pitch      = ev.pitch;
-                /* Clamp the cursor so it doesn't render past the new bounds. */
+                /* Keep cursor inside the new bounds. */
                 if (cur_x >= win.w) cur_x = win.w - 1;
                 if (cur_y >= win.h) cur_y = win.h - 1;
                 dirty = 1;

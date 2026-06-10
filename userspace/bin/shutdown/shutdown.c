@@ -1,29 +1,35 @@
+/* userspace/bin/shutdown/shutdown.c — `shutdown` command.
+ *
+ * Thin wrapper over SYS_SHUTDOWN. Accepts a delay and a free-form reason
+ * string the kernel logs before powering off. Doesn't return on success.
+ */
 #include "../../lib/syscall.h"
 #include "../../include/stdlib.h"
 #include "../../include/string.h"
 
 extern int printf(const char *, ...);
 
+/* Trigger the shutdown syscall after printing a status line. */
 static void elfshutdown(int time, const char *reason) {
-	if (time < 0) time = 0;
+    if (time < 0) time = 0;
 
-  if (time == 0) printf("shutting down now (%s)...\n", reason);
-  else           printf("shutting down in %d seconds (%s)...\n", time, reason);
+    if (time == 0) printf("shutting down now (%s)...\n", reason);
+    else           printf("shutting down in %d seconds (%s)...\n", time, reason);
 
-  sys_shutdown(time, reason);
+    sys_shutdown(time, reason);
 }
 
+/* Accepted forms:
+ *   shutdown
+ *   shutdown N
+ *   shutdown -t N
+ *   shutdown -t N -r REASON
+ *   shutdown -r REASON
+ */
 int main(int argc, char **argv) {
-		int          time   = 0;
+    int          time   = 0;
     const char  *reason = "user";
 
-    /* Accepted forms:
-     *   shutdown
-     *   shutdown N
-     *   shutdown -t N
-     *   shutdown -t N -r REASON
-     *   shutdown -r REASON
-     */
     int i = 1;
     while (i < argc) {
         if (strcmp(argv[i], "-t") == 0 && i + 1 < argc) {

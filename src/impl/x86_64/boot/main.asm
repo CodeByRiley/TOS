@@ -1,11 +1,12 @@
-; 32-bit boot stub. Job description: convince a CPU that's currently
-; pretending it's 1986 to act like it's at least 2003. We check that the
-; bootloader handed us valid magic, that cpuid exists, that long mode exists,
-; that SSE exists — basically every capability we already know is there but
-; refuse to assume because someone, somewhere, is booting this on something
-; weird. Then build a 1 GiB identity-mapped pagetable with 2 MiB huge pages
-; (one PML4 entry pointing at one PDPT pointing at one PD with 512 entries),
-; flip CR0.PG, far-jump to 64-bit. Total runtime: roughly one blink.
+; src/impl/x86_64/boot/main.asm — 32-bit boot stub.
+;
+; Convinces a CPU currently pretending it's 1986 to act like it's at
+; least 2003. Checks valid Multiboot2 magic, cpuid, long mode, and SSE —
+; every capability we already know is there but refuse to assume because
+; someone, somewhere, is booting this on something weird. Then builds a
+; 1 GiB identity-mapped pagetable with 2 MiB huge pages (one PML4 entry
+; -> one PDPT -> one PD with 512 entries), flips CR0.PG, far-jumps to
+; 64-bit. Total runtime: roughly one blink.
 
 global start
 extern long_mode_start

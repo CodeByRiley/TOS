@@ -1,3 +1,10 @@
+/* src/intf/memory/heap.h — kernel heap (kmalloc/kfree).
+ *
+ * First-fit free list over pmm-backed pages. Initialised after pmm_init.
+ * Userspace mmap is unrelated; this surface is kernel-internal only.
+ *
+ * Implementation: src/impl/kernel/memory/heap.c.
+ */
 #ifndef HEAP_H
 #define HEAP_H
 
