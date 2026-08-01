@@ -18,6 +18,7 @@ void     pmm_init(uint64_t mb2_addr);
 
 /* Allocate a frame, returning its physical base. 0 on out-of-memory. */
 uint64_t pmm_alloc_frame(void);
+uint64_t pmm_alloc_frame_below(uint64_t limit);
 
 void     pmm_free_frame(uint64_t frame);
 

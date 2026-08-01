@@ -14,6 +14,7 @@
 #include "virtio/virtio.h"
 #include "pci/pci.h"
 #include "memory/pmm.h"
+#include "memory/hhdm.h"
 #include "memory/vmm.h"
 #include "sched/sched.h"
 #include "utilities/log.h"
@@ -90,6 +91,11 @@ struct gpu_mem_entry {
     uint32_t length;
     uint32_t padding;
 } __attribute__((packed));
+
+/* The driver submits one command at a time. Keeping this 16 KiB coalescing
+ * workspace out of the boot/task stack avoids overflowing the small kernel
+ * stacks during framebuffer attachment. */
+static struct gpu_mem_entry backing_runs[1024];
 
 struct gpu_attach_backing_hdr {
     struct gpu_ctrl_hdr hdr;
@@ -219,24 +225,24 @@ static int do_attach_backing(uint32_t rid,
      * spec allows arbitrary entry length. Coalescing keeps us under the entry
      * cap for large framebuffers. */
     uint32_t entries = 0;
-    struct gpu_mem_entry tmp[1024];
     if (n_pages == 0) return -1;
 
-    tmp[0].addr = page_phys[0];
-    tmp[0].length = 4096;
-    tmp[0].padding = 0;
+    backing_runs[0].addr = page_phys[0];
+    backing_runs[0].length = 4096;
+    backing_runs[0].padding = 0;
     entries = 1;
     for (uint32_t i = 1; i < n_pages; i++) {
-        if (page_phys[i] == tmp[entries - 1].addr + tmp[entries - 1].length) {
-            tmp[entries - 1].length += 4096;
+        if (page_phys[i] == backing_runs[entries - 1].addr
+                          + backing_runs[entries - 1].length) {
+            backing_runs[entries - 1].length += 4096;
         } else {
             if (entries >= 1024) {
                 log_write("gpu: too many backing runs", KERNEL, LOG_ERROR);
                 return -1;
             }
-            tmp[entries].addr    = page_phys[i];
-            tmp[entries].length  = 4096;
-            tmp[entries].padding = 0;
+            backing_runs[entries].addr    = page_phys[i];
+            backing_runs[entries].length  = 4096;
+            backing_runs[entries].padding = 0;
             entries++;
         }
     }
@@ -253,7 +259,7 @@ static int do_attach_backing(uint32_t rid,
     q->nr_entries  = entries;
 
     struct gpu_mem_entry *tail = (struct gpu_mem_entry*)(scratch_req + sizeof(*q));
-    for (uint32_t i = 0; i < entries; i++) tail[i] = tmp[i];
+    for (uint32_t i = 0; i < entries; i++) tail[i] = backing_runs[i];
 
     uint32_t req_len = (uint32_t)sizeof(*q) + entries * (uint32_t)sizeof(struct gpu_mem_entry);
     memset(scratch_resp, 0, sizeof(struct gpu_ctrl_hdr));
@@ -302,15 +308,15 @@ int virtio_gpu_init(void) {
     /* Queue 1 (cursorq) is optional — we leave it unconfigured. */
     virtio_queue_enable(&vdev, &controlq);
 
-    /* Allocate scratch req/resp pages. Identity-mapped, accessible via phys. */
+    /* Allocate physical scratch pages and access them through the HHDM. */
     scratch_req_phys  = pmm_alloc_frame();
     scratch_resp_phys = pmm_alloc_frame();
     if (!scratch_req_phys || !scratch_resp_phys) {
         log_write("gpu: scratch alloc failed", KERNEL, LOG_ERROR);
         return -1;
     }
-    scratch_req  = (uint8_t*)scratch_req_phys;
-    scratch_resp = (uint8_t*)scratch_resp_phys;
+    scratch_req  = phys_to_virt(scratch_req_phys);
+    scratch_resp = phys_to_virt(scratch_resp_phys);
 
     virtio_driver_ok(&vdev);
 

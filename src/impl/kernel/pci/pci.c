@@ -1,31 +1,34 @@
-/* src/impl/kernel/pci/pci.c — PCI enumeration + config-space access.
+/* src/impl/kernel/pci/pci.c — PCI/PCIe enumeration + config-space access.
  *
- * Config-space access via the legacy 0xCF8/0xCFC IO ports. pci_init does
- * one brute-force scan (256 busses x 32 devs x 8 fns) on first call and
- * caches results in pci_table. BAR decode runs at scan time so callers
- * can lookup decoded `base` + `size` directly.
+ * ACPI MCFG ranges use PCIe ECAM. A single 4 KiB virtual slot is remapped
+ * to the requested function on demand, avoiding a permanent mapping for
+ * every possible function. Segment 0 falls back to legacy 0xCF8/0xCFC
+ * when no ECAM allocation covers the requested bus.
  *
  * Capability list walk lets vendor-specific drivers (virtio) find their
  * caps without re-walking the config header.
  */
+#include "acpi/pci_mcfg.h"
 #include "pci/pci.h"
 #include "devices/io.h"
+#include "memory/vmm.h"
+#include "sync/spinlock.h"
 #include "utilities/log.h"
 #include <stdint.h>
 
 #define PCI_CFG_ADDR 0xCF8
 #define PCI_CFG_DATA 0xCFC
+#define PCI_ECAM_VIRT 0xFFFFE00300000000ULL
 
 #define MAX_PCI_DEVICES 64
 
 static struct pci_device pci_table[MAX_PCI_DEVICES];
 static uint32_t pci_count = 0;
 static int      pci_scanned = 0;
+static spinlock_t cfg_lock = SPINLOCK_INIT;
+static uint64_t ecam_mapped_page = UINT64_MAX;
 
-static uint32_t cfg_addr(struct pci_addr a, uint8_t off) {
-    /* The legacy CF8/CFC mechanism only exposes the first 256 bytes of config
-     * space; MCFG (PCIe ECAM) is required for extended config but virtio-pci
-     * fits within the first 64 bytes for our purposes. */
+static uint32_t legacy_cfg_addr(struct pci_addr a, uint16_t off) {
     return (uint32_t)0x80000000u
          | ((uint32_t)a.bus << 16)
          | ((uint32_t)(a.dev & 0x1F) << 11)
@@ -33,40 +36,128 @@ static uint32_t cfg_addr(struct pci_addr a, uint8_t off) {
          | ((uint32_t)(off & 0xFC));
 }
 
-uint32_t pci_cfg_read32(struct pci_addr a, uint8_t off) {
-    outl(PCI_CFG_ADDR, cfg_addr(a, off));
+static int ecam_function_page(struct pci_addr a, uint64_t *page_phys) {
+    struct pci_mcfg_range range;
+    if (a.dev >= 32 || a.fn >= 8)
+        return 0;
+    if (!pci_mcfg_find(a.segment, a.bus, &range))
+        return 0;
+
+    *page_phys = range.base_phys
+               + ((uint64_t)(a.bus - range.start_bus) << 20)
+               + ((uint64_t)a.dev << 15)
+               + ((uint64_t)a.fn << 12);
+    return 1;
+}
+
+/* Caller holds cfg_lock. */
+static int map_ecam_function(uint64_t page_phys) {
+    if (ecam_mapped_page == page_phys)
+        return 0;
+    if (vmm_map(PCI_ECAM_VIRT, page_phys,
+                VMM_PRESENT | VMM_WRITE | VMM_PCD | VMM_PWT) != 0)
+        return -1;
+    ecam_mapped_page = page_phys;
+    return 0;
+}
+
+/* Caller holds cfg_lock. */
+static uint32_t cfg_read32_locked(struct pci_addr a, uint16_t off) {
+    off &= 0xFFCu;
+
+    uint64_t page_phys;
+    if (ecam_function_page(a, &page_phys)) {
+        if (map_ecam_function(page_phys) != 0)
+            return 0xFFFFFFFFu;
+        volatile uint32_t *reg =
+            (volatile uint32_t*)(uintptr_t)(PCI_ECAM_VIRT + off);
+        return *reg;
+    }
+
+    if (a.segment != 0 || off > 0xFC)
+        return 0xFFFFFFFFu;
+    outl(PCI_CFG_ADDR, legacy_cfg_addr(a, off));
     return inl(PCI_CFG_DATA);
 }
 
-uint16_t pci_cfg_read16(struct pci_addr a, uint8_t off) {
-    uint32_t v = pci_cfg_read32(a, off & 0xFC);
-    return (uint16_t)(v >> ((off & 2) * 8));
+/* Caller holds cfg_lock. */
+static void cfg_write32_locked(struct pci_addr a, uint16_t off,
+                               uint32_t value) {
+    off &= 0xFFCu;
+
+    uint64_t page_phys;
+    if (ecam_function_page(a, &page_phys)) {
+        if (map_ecam_function(page_phys) != 0)
+            return;
+        volatile uint32_t *reg =
+            (volatile uint32_t*)(uintptr_t)(PCI_ECAM_VIRT + off);
+        *reg = value;
+        return;
+    }
+
+    if (a.segment != 0 || off > 0xFC)
+        return;
+    outl(PCI_CFG_ADDR, legacy_cfg_addr(a, off));
+    outl(PCI_CFG_DATA, value);
 }
 
-uint8_t pci_cfg_read8(struct pci_addr a, uint8_t off) {
-    uint32_t v = pci_cfg_read32(a, off & 0xFC);
-    return (uint8_t)(v >> ((off & 3) * 8));
+uint32_t pci_cfg_read32(struct pci_addr a, uint16_t off) {
+    if (off > 0xFFC)
+        return 0xFFFFFFFFu;
+    uint64_t flags = spin_lock_irqsave(&cfg_lock);
+    uint32_t value = cfg_read32_locked(a, off);
+    spin_unlock_irqrestore(&cfg_lock, flags);
+    return value;
 }
 
-void pci_cfg_write32(struct pci_addr a, uint8_t off, uint32_t val) {
-    outl(PCI_CFG_ADDR, cfg_addr(a, off));
-    outl(PCI_CFG_DATA, val);
+uint16_t pci_cfg_read16(struct pci_addr a, uint16_t off) {
+    if (off > 0xFFE)
+        return 0xFFFFu;
+    uint64_t flags = spin_lock_irqsave(&cfg_lock);
+    uint32_t value = cfg_read32_locked(a, off);
+    spin_unlock_irqrestore(&cfg_lock, flags);
+    return (uint16_t)(value >> ((off & 2) * 8));
 }
 
-void pci_cfg_write16(struct pci_addr a, uint8_t off, uint16_t val) {
-    uint32_t cur = pci_cfg_read32(a, off & 0xFC);
+uint8_t pci_cfg_read8(struct pci_addr a, uint16_t off) {
+    if (off > 0xFFF)
+        return 0xFFu;
+    uint64_t flags = spin_lock_irqsave(&cfg_lock);
+    uint32_t value = cfg_read32_locked(a, off);
+    spin_unlock_irqrestore(&cfg_lock, flags);
+    return (uint8_t)(value >> ((off & 3) * 8));
+}
+
+void pci_cfg_write32(struct pci_addr a, uint16_t off, uint32_t val) {
+    if (off > 0xFFC)
+        return;
+    uint64_t flags = spin_lock_irqsave(&cfg_lock);
+    cfg_write32_locked(a, off, val);
+    spin_unlock_irqrestore(&cfg_lock, flags);
+}
+
+void pci_cfg_write16(struct pci_addr a, uint16_t off, uint16_t val) {
+    if (off > 0xFFE)
+        return;
+    uint64_t flags = spin_lock_irqsave(&cfg_lock);
+    uint32_t cur = cfg_read32_locked(a, off);
     int shift = (off & 2) * 8;
     cur &= ~(0xFFFFu << shift);
     cur |=  ((uint32_t)val << shift);
-    pci_cfg_write32(a, off & 0xFC, cur);
+    cfg_write32_locked(a, off, cur);
+    spin_unlock_irqrestore(&cfg_lock, flags);
 }
 
-void pci_cfg_write8(struct pci_addr a, uint8_t off, uint8_t val) {
-    uint32_t cur = pci_cfg_read32(a, off & 0xFC);
+void pci_cfg_write8(struct pci_addr a, uint16_t off, uint8_t val) {
+    if (off > 0xFFF)
+        return;
+    uint64_t flags = spin_lock_irqsave(&cfg_lock);
+    uint32_t cur = cfg_read32_locked(a, off);
     int shift = (off & 3) * 8;
     cur &= ~(0xFFu << shift);
     cur |=  ((uint32_t)val << shift);
-    pci_cfg_write32(a, off & 0xFC, cur);
+    cfg_write32_locked(a, off, cur);
+    spin_unlock_irqrestore(&cfg_lock, flags);
 }
 
 /* Read BAR pair (bar_off) and follow the size-discovery dance: save the
@@ -74,7 +165,7 @@ void pci_cfg_write8(struct pci_addr a, uint8_t off, uint8_t val) {
  * 64-bit BARs by also touching bar_off+4. Returns the number of BAR slots
  * consumed (1 or 2). */
 static int probe_bar(struct pci_addr a, int idx, struct pci_bar *out) {
-    uint8_t off = (uint8_t)(PCI_CFG_BAR0 + idx * 4);
+    uint16_t off = (uint16_t)(PCI_CFG_BAR0 + idx * 4);
     uint32_t orig = pci_cfg_read32(a, off);
     if (orig == 0) {
         out->valid = 0;
@@ -105,18 +196,40 @@ static int probe_bar(struct pci_addr a, int idx, struct pci_bar *out) {
     uint64_t size = (uint64_t)(~(mask_lo & 0xFFFFFFF0u)) + 1u;
 
     if (is_64) {
+        // read original high DWORD and read low mask (assumed already read as mask_lo)
         uint32_t orig_hi = pci_cfg_read32(a, off + 4);
+
+        // write all 1s to test writable address bits in the high DWORD
         pci_cfg_write32(a, off + 4, 0xFFFFFFFFu);
         uint32_t mask_hi = pci_cfg_read32(a, off + 4);
+
+        // restore original high DWORD
         pci_cfg_write32(a, off + 4, orig_hi);
-        base |= ((uint64_t)orig_hi << 32);
-        /* Extend size mask into the high dword. If high mask is all-ones,
-         * the region fits in 32 bits; if not, combine. */
-        if (mask_hi != 0xFFFFFFFFu) {
-            uint64_t full_mask = ((uint64_t)mask_hi << 32) | (mask_lo & 0xFFFFFFF0u);
-            size = (~full_mask) + 1ULL;
-        }
+
+        // combine base address (clearing bottom 4 flag bits from orig/mask_lo)
+        base = ((uint64_t)orig_hi << 32) | (orig & ~0x0Fu);
+
+        // combine 64-bit mask and calculate size
+        uint64_t full_mask = ((uint64_t)mask_hi << 32) | (uint64_t)(mask_lo & ~0x0Fu);
+
+        // PCI size formula: (~mask) + 1
+        // If full_mask is 0 (unimplemented/disabled BAR), size becomes 0
+        size = full_mask ? (~full_mask + 1ULL) : 0ULL;
     }
+
+    // if (is_64) {
+    //     uint32_t orig_hi = pci_cfg_read32(a, off + 4);
+    //     pci_cfg_write32(a, off + 4, 0xFFFFFFFFu);
+    //     uint32_t mask_hi = pci_cfg_read32(a, off + 4);
+    //     pci_cfg_write32(a, off + 4, orig_hi);
+    //     base |= ((uint64_t)orig_hi << 32);
+    //     /* Extend size mask into the high dword. If high mask is all-ones,
+    //      * the region fits in 32 bits; if not, combine. */
+    //     if (mask_hi != 0xFFFFFFFFu) {
+    //         uint64_t full_mask = ((uint64_t)mask_hi << 32) | (mask_lo & 0xFFFFFFF0u);
+    //         size = (~full_mask) + 1ULL;
+    //     }
+    // }
 
     out->base     = base;
     out->size     = size;
@@ -125,6 +238,30 @@ static int probe_bar(struct pci_addr a, int idx, struct pci_bar *out) {
     out->prefetch = (orig & PCI_BAR_PREFETCH) ? 1 : 0;
     out->valid    = 1;
     return is_64 ? 2 : 1;
+}
+
+static void probe_rom(struct pci_addr a, struct pci_rom *out) {
+    uint32_t original = pci_cfg_read32(a, PCI_CFG_ROM_ADDRESS);
+
+    /* The enable bit is not part of the address mask and must remain clear
+     * during the standard size-discovery write. */
+    pci_cfg_write32(a, PCI_CFG_ROM_ADDRESS, 0xFFFFFFFEu);
+    uint32_t mask = pci_cfg_read32(a, PCI_CFG_ROM_ADDRESS);
+    pci_cfg_write32(a, PCI_CFG_ROM_ADDRESS, original);
+
+    uint32_t address_mask = mask & PCI_ROM_ADDR_MASK;
+    if (mask == 0xFFFFFFFFu || address_mask == 0) {
+        out->base = 0;
+        out->size = 0;
+        out->enabled = 0;
+        out->valid = 0;
+        return;
+    }
+
+    out->base = original & PCI_ROM_ADDR_MASK;
+    out->size = ((~(uint64_t)address_mask) & 0xFFFFFFFFULL) + 1;
+    out->enabled = (original & PCI_ROM_ENABLE) ? 1 : 0;
+    out->valid = 1;
 }
 
 static void describe_fn(struct pci_addr a) {
@@ -156,12 +293,14 @@ static void describe_fn(struct pci_addr a) {
     for (int i = 0; i < 6; i++) {
         d->bar[i].valid = 0;
     }
+    d->rom.valid = 0;
     if (d->header_type == 0) {
         int i = 0;
         while (i < 6) {
             int consumed = probe_bar(a, i, &d->bar[i]);
             i += consumed;
         }
+        probe_rom(a, &d->rom);
     }
 }
 
@@ -171,8 +310,13 @@ static void check_fn(struct pci_addr a) {
     describe_fn(a);
 }
 
-static void check_dev(uint8_t bus, uint8_t dev) {
-    struct pci_addr a = { bus, dev, 0 };
+static void check_dev(uint16_t segment, uint8_t bus, uint8_t dev) {
+    struct pci_addr a = {
+        .bus = bus,
+        .dev = dev,
+        .fn = 0,
+        .segment = segment,
+    };
     uint16_t v = pci_cfg_read16(a, PCI_CFG_VENDOR_ID);
     if (v == 0xFFFF) return;
     check_fn(a);
@@ -181,10 +325,27 @@ static void check_dev(uint8_t bus, uint8_t dev) {
     uint8_t hdr = pci_cfg_read8(a, PCI_CFG_HEADER_TYPE);
     if (hdr & 0x80) {
         for (uint8_t fn = 1; fn < 8; fn++) {
-            struct pci_addr af = { bus, dev, fn };
+            struct pci_addr af = {
+                .bus = bus,
+                .dev = dev,
+                .fn = fn,
+                .segment = segment,
+            };
             check_fn(af);
         }
     }
+}
+
+static int scan_bus_range(uint16_t segment, uint8_t start_bus,
+                          uint8_t end_bus) {
+    for (uint16_t bus = start_bus; bus <= end_bus; bus++) {
+        for (uint8_t dev = 0; dev < 32; dev++) {
+            check_dev(segment, (uint8_t)bus, dev);
+            if (pci_count >= MAX_PCI_DEVICES)
+                return -1;
+        }
+    }
+    return 0;
 }
 
 void pci_init(void) {
@@ -192,19 +353,30 @@ void pci_init(void) {
     pci_scanned = 1;
     pci_count = 0;
 
-    for (uint16_t bus = 0; bus < 256; bus++) {
-        for (uint8_t dev = 0; dev < 32; dev++) {
-            check_dev((uint8_t)bus, dev);
-            if (pci_count >= MAX_PCI_DEVICES) goto done;
+    uint32_t ecam_ranges = pci_mcfg_range_count();
+    if (ecam_ranges) {
+        log_write("PCI: using ACPI MCFG ECAM", KERNEL, LOG_INFO);
+        for (uint32_t i = 0; i < ecam_ranges; i++) {
+            struct pci_mcfg_range range;
+            if (!pci_mcfg_range_at(i, &range))
+                continue;
+            if (scan_bus_range(range.segment, range.start_bus,
+                               range.end_bus) != 0)
+                break;
         }
+    } else {
+        log_write("PCI: using legacy config IO", KERNEL, LOG_INFO);
+        scan_bus_range(0, 0, 255);
     }
-done:
-    log_write_hex("PCI: devices found =", pci_count, KERNEL, LOG_INFO);
-    for (uint32_t i = 0; i < pci_count; i++) {
-        struct pci_device *d = &pci_table[i];
-        uint32_t tag = ((uint32_t)d->vendor << 16) | d->device;
-        log_write_hex("PCI: vendor:device  =", tag, KERNEL, LOG_INFO);
-    }
+
+    // log_write_hex("PCI: devices found =", pci_count, KERNEL, LOG_INFO);
+    // for (uint32_t i = 0; i < pci_count; i++) {
+    //     struct pci_device *d = &pci_table[i];
+    //     uint32_t tag = ((uint32_t)d->vendor << 16) | d->device;
+    //     log_write_hex("PCI: vendor:device =", tag, KERNEL, LOG_INFO);
+    //     log_write_hex("PCI: class_code =", d->class_code, KERNEL, LOG_INFO);
+    //     log_write_hex("PCI: header_type =", d->header_type, KERNEL, LOG_INFO);
+    // }
 }
 
 int pci_find_by_id(uint16_t vendor, uint16_t device, struct pci_device *out) {
@@ -249,6 +421,37 @@ uint8_t pci_find_capability(struct pci_addr a, uint8_t cap_id) {
         off = next;
     }
     return 0;
+}
+
+uint16_t pci_find_ext_capability(struct pci_addr a, uint16_t cap_id) {
+    uint16_t off = 0x100;
+    int hops = 0;
+
+    while (off && off <= 0xFFC && hops++ < 256) {
+        uint32_t header = pci_cfg_read32(a, off);
+        if (header == 0 || header == 0xFFFFFFFFu)
+            return 0;
+        if ((header & 0xFFFFu) == cap_id)
+            return off;
+
+        uint16_t next = (uint16_t)((header >> 20) & 0xFFFu);
+        if (next < 0x100 || (next & 3) || next == off)
+            return 0;
+        off = next;
+    }
+    return 0;
+}
+
+int pci_enable_memory(struct pci_device *d) {
+    if (!d)
+        return -1;
+
+    uint16_t cmd = pci_cfg_read16(d->addr, PCI_CFG_COMMAND);
+    if (cmd & PCI_CMD_MEM)
+        return 0;
+
+    pci_cfg_write16(d->addr, PCI_CFG_COMMAND, cmd | PCI_CMD_MEM);
+    return (pci_cfg_read16(d->addr, PCI_CFG_COMMAND) & PCI_CMD_MEM) ? 0 : -1;
 }
 
 void pci_enable(struct pci_device *d) {

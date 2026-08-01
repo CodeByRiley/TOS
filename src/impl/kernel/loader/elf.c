@@ -5,16 +5,24 @@
  * table, and copies every PT_LOAD segment into the target PML4 with the
  * requested permissions.
  *
- * Caller must arrange for the kernel to be able to write the user vaddrs
- * in the target PML4 — usually by switching CR3 to `pml4` first, since
- * the kernel-low identity map is shared into every process PML4.
+ * Segment bytes are written through the HHDM rather than through the user
+ * vaddr, so the loader does not care which PML4 is in CR3. Do not "simplify"
+ * this back into a straight memcpy to p_vaddr: that only works while the
+ * caller has switched CR3 to the target, and it silently corrupts the
+ * caller's address space when it hasn't.
  */
 #include "utilities/string.h"
 #include "utilities/log.h"
 #include "memory/pmm.h"
+#include "memory/hhdm.h"
 #include "memory/vmm.h"
 #include "loader/elf.h"
 #include "fs/stdio.h"
+
+/* Upper bound for the ELF image region. Sits below MMAP_USER_BASE
+ * (sched.c) so a segment can never land on the mmap or shmem arenas.
+ * Doubles as the bound that keeps p_vaddr + p_memsz from wrapping. */
+#define USER_IMAGE_MAX 0x0000000070000000ULL
 
 uint64_t elf_load(const char *path, uint64_t *pml4) {
     FILE *fp = fopen(path, "rb");
@@ -54,11 +62,43 @@ uint64_t elf_load(const char *path, uint64_t *pml4) {
         }
         if (ph.p_type != PT_LOAD) continue;
 
+        /* Pages are mapped for p_memsz but bytes are read for p_filesz.
+         * A filesz larger than memsz writes past the end of the mapping. */
+        if (ph.p_filesz > ph.p_memsz) {
+            log_write("elf: filesz exceeds memsz", KERNEL, LOG_ERROR);
+            fclose(fp);
+            return 0;
+        }
+
+        /* p_vaddr comes straight off disk and is fully attacker-controlled.
+         * Unchecked, a kernel-half vaddr walks into PML4[256..511] — which
+         * process_pml4_create shares by physical address with kernel_pml4 —
+         * and walk_or_create ORs VMM_USER into those shared entries on the
+         * way down. That hands ring 3 a mapping in the kernel half of every
+         * address space. Bound memsz first so the second test cannot wrap. */
+        if (ph.p_memsz > USER_IMAGE_MAX ||
+            ph.p_vaddr > USER_IMAGE_MAX - ph.p_memsz) {
+            log_write("elf: segment vaddr out of range", KERNEL, LOG_ERROR);
+            fclose(fp);
+            return 0;
+        }
+
         uint64_t va_start = ph.p_vaddr & ~0xFFFULL;
         uint64_t va_end   = (ph.p_vaddr + ph.p_memsz + 0xFFF) & ~0xFFFULL;
 
+        /* NX on anything the ELF does not mark executable. Depends on
+         * EFER.NXE, which enable_paging sets on the BSP and the AP
+         * trampoline sets on every other core; check_long_mode has
+         * already proven CPUID reports NX support.
+         *
+         * Safe despite the loader not merging flags on pages two segments
+         * share: user.ld page-aligns .data, so the R E and RW segments
+         * never land on the same page. If that ever changes, the first
+         * segment to map a shared page wins and an NX-first ordering
+         * would make .text unexecutable. */
         uint64_t flags = VMM_PRESENT | VMM_USER;
         if (ph.p_flags & PF_W) flags |= VMM_WRITE;
+        if (!(ph.p_flags & PF_X)) flags |= VMM_NX;
 
         /* Map missing pages and zero only the freshly-allocated frames.
          *
@@ -78,19 +118,41 @@ uint64_t elf_load(const char *path, uint64_t *pml4) {
                     fclose(fp);
                     return 0;
                 }
-                memset((void*)phys, 0, 4096);
-                vmm_map_in(pml4, va, phys, flags);
+                memset(phys_to_virt(phys), 0, 4096);
+                /* Free on failure: an allocated-but-unmapped frame is
+                 * invisible to free_user_pml4's page-table walk, so the
+                 * caller's cleanup would never reclaim it. */
+                if (vmm_map_in(pml4, va, phys, flags) != 0) {
+                    pmm_free_frame(phys);
+                    log_write("elf: map failed", KERNEL, LOG_ERROR);
+                    fclose(fp);
+                    return 0;
+                }
             }
         }
 
-        /* copy file bytes into user virt (kernel can write through user mapping).
-         * BSS region (memsz > filesz) is left as the zeros we wrote above. */
+        /* Copy file bytes a page at a time through the HHDM. Consecutive
+         * user vaddrs are not consecutive physical frames, so this cannot
+         * be one flat read. BSS (memsz > filesz) keeps the zeros above. */
         fseek(fp, ph.p_offset, SEEK_SET);
-        size_t got = fread((void*)ph.p_vaddr, 1, ph.p_filesz, fp);
-        if (got != ph.p_filesz) {
-            log_write("elf: could not read full segment data", KERNEL, LOG_ERROR);
-            fclose(fp);
-            return 0;
+        for (uint64_t done = 0; done < ph.p_filesz; ) {
+            uint64_t va    = ph.p_vaddr + done;
+            /* Page-aligned vaddr in, so the return is a clean frame base
+             * and the offset below is not double-counted. */
+            uint64_t phys  = vmm_translate_in(pml4, va & ~0xFFFULL);
+            if (!phys) {
+                log_write("elf: segment page not mapped", KERNEL, LOG_ERROR);
+                fclose(fp);
+                return 0;
+            }
+            size_t   chunk = 4096 - (va & 0xFFF);
+            if (chunk > ph.p_filesz - done) chunk = ph.p_filesz - done;
+            if (fread((uint8_t*)phys_to_virt(phys) + (va & 0xFFF), 1, chunk, fp) != chunk) {
+                log_write("elf: could not read full segment data", KERNEL, LOG_ERROR);
+                fclose(fp);
+                return 0;
+            }
+            done += chunk;
         }
 
         log_write_hex("elf: loaded segment va =", ph.p_vaddr,  KERNEL, LOG_INFO);

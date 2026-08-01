@@ -67,7 +67,7 @@ $(info DOOM_OBJS first = $(firstword $(DOOM_OBJS)))
 	$(USER_CC) $(DOOM_CFLAGS) -c $< -o $@
 
 .PHONY: all clean
-all: $(SIMPLE_BIN_ELFS) bin/doom/doom.elf
+all: $(SIMPLE_BIN_ELFS)  bin/doom/doom.elf
 
 # --- library objects -----------------------------------------------------
 
@@ -92,4 +92,4 @@ $(SIMPLE_BIN_ELFS): bin/%.elf: bin/%.o $(LIB_OBJS)
 	$(USER_LD) $(USER_LDFLAGS) $^ -o $@
 
 clean:
-	rm -f lib/*.o bin/*/*.o bin/*/*.elf $(DOOM_OBJS) $(DOOM_PLATFORM_OBJS) $(DOOM_EXTRA_OBJS)
+	rm -f lib/*.o bin/*/*.o bin/*/*.elf # $(DOOM_OBJS) $(DOOM_PLATFORM_OBJS) $(DOOM_EXTRA_OBJS)

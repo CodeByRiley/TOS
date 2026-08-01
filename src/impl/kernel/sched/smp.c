@@ -16,7 +16,9 @@
 #include "devices/pit.h"
 #include "interrupts/idt.h"
 #include "memory/heap.h"
+#include "memory/hhdm.h"
 #include "memory/vmm.h"
+#include "arch/cpu.h"
 #include "utilities/log.h"
 #include "utilities/string.h"
 #include <stdint.h>
@@ -42,12 +44,6 @@ extern uint8_t _binary_build_x86_64_boot_ap_trampoline_bin_end[];
 #define AP_PATCH_CPUID_OFF  20
 #define AP_PATCH_STACK_OFF  16
 #define AP_PATCH_ENTRY_OFF   8
-
-static uint64_t read_cr3(void) {
-    uint64_t v;
-    __asm__ volatile ("mov %%cr3, %0" : "=r"(v));
-    return v;
-}
 
 /* Spin for roughly `us` microseconds using PIT ticks (100 Hz = 10 ms each).
  * Granularity is 10 ms — we round up to at least one tick. Good enough for
@@ -77,7 +73,7 @@ static int boot_one_ap(int cpu_id, uint8_t apic_id, uint32_t pml4_phys) {
     gdt_install_tss(cpu_id, stack_top);
     log_write("SMP:   tss installed", KERNEL, LOG_INFO);
 
-    uint8_t *t   = (uint8_t*)AP_TRAMPOLINE_PHYS;
+    uint8_t *t   = phys_to_virt(AP_TRAMPOLINE_PHYS);
     size_t   len = (size_t)(_binary_build_x86_64_boot_ap_trampoline_bin_end -
                             _binary_build_x86_64_boot_ap_trampoline_bin_start);
     log_write_hex("SMP:   trampoline len =", len, KERNEL, LOG_INFO);

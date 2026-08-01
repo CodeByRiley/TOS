@@ -46,9 +46,11 @@ struct __attribute__((packed)) Elf64_Phdr {
 
 /* Load an ELF into `pml4` and return entry-point va, or 0 on failure.
  *
- * Caller must arrange that the kernel can write to the user vaddrs in
- * the target PML4 — easiest is to switch CR3 to `pml4` before calling,
- * since the kernel-low identity map is shared into every process PML4. */
+ * CR3-independent: segment bytes go in through the HHDM, so `pml4` need
+ * not be the active address space and the caller need not switch to it.
+ *
+ * On failure the target PML4 may hold partial mappings. The caller owns
+ * cleanup — free_user_pml4() reclaims every frame this function mapped. */
 uint64_t elf_load(const char *path, uint64_t *pml4);
 
 #endif

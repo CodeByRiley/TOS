@@ -45,7 +45,7 @@ struct log_entry {
     uint8_t        has_hex;
     uint8_t        has_int;
     uint64_t       hex_value;
-    char          *string_value;
+    const char    *string_value;
     int64          int_value;
 };
 
@@ -56,7 +56,8 @@ void log_write(const char *message, uint8_t raw_type, uint8_t raw_level);
 void log_write_entry(struct log_entry *entry);
 
 /* CPU exception logger — pretty-prints the IDT vector, name, error code,
- * and faulting RIP. Always at LOG_FATAL severity. */
+ * and faulting RIP. Page faults are serial-only because framebuffer output
+ * may itself be the failing mapping. */
 void log_write_exception(uint64_t int_num, const char *name,
                          uint64_t err_code, uint64_t rip);
 

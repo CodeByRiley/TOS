@@ -54,9 +54,10 @@ ap_pmode_start:
     mov eax, [ap_pml4_phys]
     mov cr3, eax
 
-    mov ecx, 0xC0000080         ; IA32_EFER
+    mov ecx, 0xC0000080         ; IA32_EFER MSR
     rdmsr
-    or  eax, 1 << 8             ; EFER.LME
+    or  eax, 1 << 8             ; EFER.LME (long mode enable)
+    or  eax, 1 << 11            ; EFER.NXE (no-execute enable, must match BSP)
     wrmsr
 
     mov eax, cr0

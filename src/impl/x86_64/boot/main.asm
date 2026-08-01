@@ -10,7 +10,7 @@
 
 global start
 extern long_mode_start
-section .text
+section .boot.text progbits alloc exec nowrite align=16
 bits 32
 
 mb2_magic equ 0x36D76289
@@ -103,7 +103,9 @@ check_sse:
 	mov esi, msg_no_sse
 	jmp error
 
-; verify long mode supported via extended cpuid leaf 0x80000001, edx bit 29
+; verify long mode (edx bit 29) and NX (edx bit 20) via extended cpuid
+; leaf 0x80000001. Both bits come from one cpuid; enable_paging sets
+; EFER.LME and EFER.NXE off the back of this.
 check_long_mode:
 	mov eax, 0x80000000
 	cpuid
@@ -113,34 +115,101 @@ check_long_mode:
 	cpuid
 	test edx, 1 << 29          ; long mode flag
 	jz .no_long_mode
+	test edx, 1 << 20          ; NX flag
+	jz .no_nx
 	ret
 .no_long_mode:
 	mov esi, msg_no_long_mode
 	jmp error
+.no_nx:
+	mov esi, msg_no_nx
+	jmp error
 
-; build identity-mapping page tables for first 1 GiB using 2 MiB huge pages
+HHDM_GIB equ 4
+
+; Build low identity and kernel aliases plus a 4 GiB bootstrap HHDM.
 setup_page_tables:
-	mov eax, page_table_l3
-	or eax, 0b11               ; present, writable
-	mov [page_table_l4], eax   ; PML4[0] -> PDPT
+  ; PML4[0] and PML4[511] share this PDPT.
+  ; It provides the low identity map and the kernel alias.
+  mov eax, page_table_l3
+  or eax, 0b11
+  mov [page_table_l4], eax              ; PML4[0]: low identity map
+  mov [page_table_l4 + 511 * 8], eax    ; PML4[511]: kernel high half
 
-	mov eax, page_table_l2
-	or eax, 0b11               ; present, writable
-	mov [page_table_l3], eax   ; PDPT[0] -> PD
+  ; PML4[256] owns the separate HHDM range:
+  ; 0xffff800000000000 + physical address.
+  mov eax, page_table_hhdm_l3
+  or eax, 0b11
+  mov [page_table_l4 + 256 * 8], eax    ; PML4[256]: HHDM
 
-	; Walk PD entries with a running running-add instead of a mul per iter.
-	; 512 iterations isn't a perf cliff, but mul-in-a-tight-loop is the kind
-	; of thing you grep for during a "why does boot take 200ms" investigation
-	; six months from now. eax = next PTE value, advances by 2 MiB each step.
-	mov eax, 0b10000011        ; PTE flags: present + writable + PS (huge)
-	xor ecx, ecx               ; index 0..511
-.loop:
-	mov [page_table_l2 + ecx * 8], eax
-	add eax, 0x200000          ; advance physical addr by 2 MiB
-	inc ecx
-	cmp ecx, 512               ; full PD = 512 entries = 1 GiB
-	jne .loop
-	ret
+  ; The shared low/kernel PDPT:
+  mov eax, page_table_l2
+  or eax, 0b11
+  mov [page_table_l3], eax              ; PDPT[0]: low 0..1 GiB
+  mov [page_table_l3 + 510 * 8], eax    ; PDPT[510]: kernel alias
+
+  ; Fill its page directory: 512 * 2 MiB = 1 GiB.
+  mov eax, 0x83                          ; present | writable | PS
+  xor ecx, ecx
+.low_pd_loop:
+  mov [page_table_l2 + ecx * 8], eax
+  mov dword [page_table_l2 + ecx * 8 + 4], 0
+  add eax, 0x200000
+  inc ecx
+  cmp ecx, 512
+  jne .low_pd_loop
+
+  ; HHDM PDPT[0..3] -> four consecutive page-directory pages.
+  mov edi, page_table_hhdm_l3
+  mov eax, page_table_hhdm_l2
+  mov ecx, HHDM_GIB
+.hhdm_pdpt_loop:
+    mov ebx, eax
+    or ebx, 0b11
+    mov [edi], ebx
+    mov dword [edi + 4], 0
+    add edi, 8
+    add eax, 4096
+    dec ecx
+    jnz .hhdm_pdpt_loop
+
+    ; Fill all four HHDM page directories.
+    ; eax: physical address bits 0..31
+    ; edx: physical address bits 32..63
+    mov edi, page_table_hhdm_l2
+    xor eax, eax
+    xor edx, edx
+    mov ebp, HHDM_GIB
+.hhdm_pd_loop:
+    mov ecx, 512
+.hhdm_entry_loop:
+		; eax = phys base low
+		; edx = phys base high
+    mov ebx, eax
+    or ebx, 0x83                          ; present | writable | PS
+    mov [edi], ebx
+    ; The HHDM is a data-only window over physical memory: kernel code runs
+    ; from the low identity map and the PML4[511] alias, never from here.
+    ; edx is the entry's high dword, so bit 31 here is entry bit 63 (NX).
+    ; Requires EFER.NXE, which enable_paging sets before CR0.PG — and
+    ; check_long_mode has already proven the CPU supports it.
+    or edx, (1 << 31)                     ; NX
+    mov [edi + 4], edx
+
+    ; edx carries the physical high dword and the NX bit together, so the
+    ; adc below increments a value with bit 31 already set. That is fine:
+    ; the carry lands in the address bits and the `or` above re-sets NX
+    ; every iteration. At HHDM_GIB = 4 the carry never fires at all.
+    add eax, 0x200000                     ; next 2 MiB physical range
+    adc edx, 0                             ; increment after 4 GiB
+    add edi, 8
+    dec ecx
+    jnz .hhdm_entry_loop
+
+    dec ebp
+    jnz .hhdm_pd_loop
+
+    ret
 
 ; load page tables, enable PAE, long mode, paging
 enable_paging:
@@ -151,9 +220,10 @@ enable_paging:
 	or eax, 1 << 5             ; CR4.PAE
 	mov cr4, eax
 
-	mov ecx, 0xC0000080        ; EFER MSR
+	mov ecx, 0xC0000080        ; IA32_EFER
 	rdmsr
 	or eax, 1 << 8             ; EFER.LME (long mode enable)
+	or eax, 1 << 11            ; EFER.NXE (no-execute enable)
 	wrmsr
 
 	mov eax, cr0
@@ -285,7 +355,7 @@ serial_putln:
 	call serial_putc
 	ret
 
-section .bss
+section .boot.bss nobits alloc noexec write align=4096
 align 4096
 page_table_l4:
 	resb 4096
@@ -293,27 +363,34 @@ page_table_l3:
 	resb 4096
 page_table_l2:
 	resb 4096
+
+page_table_hhdm_l3:
+  resb 4096                    ; HHDM PDPT
+page_table_hhdm_l2:
+  resb 4096 * HHDM_GIB          ; one PD per bootstrap HHDM GiB
+
 stack_bottom:
 	resb 4096 * 4
 stack_top:
 mb2_save:
 	resd 1                     ; saved multiboot2 info pointer
 
-section .rodata
-msg_error_prefix:  db "ERROR: ", 0
+section .boot.rodata progbits alloc noexec nowrite align=8
+msg_error_prefix:  db "[ERROR] ", 0
 msg_no_multiboot:  db "NO MULTIBOOT", 0
+msg_no_nx:         db "NO NX", 0
 msg_no_cpuid:      db "NO CPUID", 0
 msg_no_sse:        db "NO SSE", 0
 msg_no_long_mode:  db "NO LONG MODE", 0
 
-msg_boot:          db "[boot (32)] entered 32-bit start", 0
-msg_chk_cpuid:     db "[boot (32)] checking cpuid", 0
-msg_chk_sse:       db "[boot (32)] checking sse", 0
-msg_chk_lm:        db "[boot (32)] checking long mode", 0
-msg_setup_pt:      db "[boot (32)] setting up page tables", 0
-msg_enable_paging: db "[boot (32)] enabling paging", 0
-msg_enable_sse:    db "[boot (32)] enabling sse", 0
-msg_jump_lm:       db "[boot (32)] jumping to long mode", 0
+msg_boot:          db "[BOOT(32)] entered 32-bit start", 0
+msg_chk_cpuid:     db "[BOOT(32)] checking cpuid", 0
+msg_chk_sse:       db "[BOOT(32)] checking sse", 0
+msg_chk_lm:        db "[BOOT(32)] checking long mode", 0
+msg_setup_pt:      db "[BOOT(32)] setting up page tables", 0
+msg_enable_paging: db "[BOOT(32)] enabling paging", 0
+msg_enable_sse:    db "[BOOT(32)] enabling sse", 0
+msg_jump_lm:       db "[BOOT(32)] jumping to long mode", 0
 
 ; 64-bit GDT: null + flat code segment
 gdt64:

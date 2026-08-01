@@ -77,50 +77,50 @@ ISR_NOERR 47
 ; no calling convention to lean on, no caller-saved/callee-saved distinction
 ; we get to honour. Skipping any of these is a bug, full stop.
 isr_common:
-    push rax
-    push rcx
-    push rdx
-    push rbx
-    push rbp
-    push rsi
-    push rdi
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    push r14
-    push r15
+  push rax
+  push rcx
+  push rdx
+  push rbx
+  push rbp
+  push rsi
+  push rdi
+  push r8
+  push r9
+  push r10
+  push r11
+  push r12
+  push r13
+  push r14
+  push r15
 
-    mov rdi, rsp        ; SysV ABI: first arg = rdi = pointer to regs
-    cld                 ; required by SysV before calling C
-    call isr_handler
+  mov rdi, rsp        ; SysV ABI: first arg = rdi = pointer to regs
+  cld                 ; required by SysV before calling C
+  call isr_handler
 
-    pop r15
-    pop r14
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdi
-    pop rsi
-    pop rbp
-    pop rbx
-    pop rdx
-    pop rcx
-    pop rax
+  pop r15
+  pop r14
+  pop r13
+  pop r12
+  pop r11
+  pop r10
+  pop r9
+  pop r8
+  pop rdi
+  pop rsi
+  pop rbp
+  pop rbx
+  pop rdx
+  pop rcx
+  pop rax
 
-    add rsp, 16         ; discard vector + err code
-    iretq
+  add rsp, 16         ; discard vector + err code
+  iretq
 
 ; expose stub addresses as a C-visible table
 global isr_stub_table
 isr_stub_table:
 %assign i 0
 %rep 48
-    dq isr %+ i
+  dq isr %+ i
 %assign i i+1
 %endrep

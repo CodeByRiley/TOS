@@ -7,7 +7,7 @@
 ; else if it doesn't like the size — but every sane firmware honours it.
 ; Insane firmware can write in.
 
-section .multiboot_header
+section .multiboot_header progbits alloc noexec nowrite align=8
 align 8
 header_start:
 	dd 0xe85250d6                     ; magic

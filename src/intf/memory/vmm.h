@@ -31,8 +31,8 @@ int      vmm_map(uint64_t virt, uint64_t phys, uint64_t flags);
 int      vmm_unmap(uint64_t virt);
 uint64_t vmm_translate(uint64_t virt);   /* returns 0 if unmapped */
 
-/* Per-PML4 variants. Operate on the supplied PML4 (physical addr cast
- * to ptr — works because pmm allocates from identity-mapped low memory).
+/* Per-PML4 variants. Operate on the supplied PML4 as an HHDM pointer;
+ * physical addresses remain physical in the entries themselves.
  * The non-_in versions are wrappers that pass kernel_pml4. */
 int      vmm_map_in(uint64_t *pml4, uint64_t virt, uint64_t phys, uint64_t flags);
 int      vmm_unmap_in(uint64_t *pml4, uint64_t virt);

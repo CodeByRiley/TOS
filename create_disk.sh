@@ -18,6 +18,23 @@ payloads=(
 	"userspace/bin/btop/btop.elf::BTOP.ELF"
 )
 
+# NVIDIA's upstream names exceed FAT 8.3. Keep the source names on the host
+# and expose deterministic short names to the kernel. Firmware is optional:
+# QEMU and non-NVIDIA systems continue to build the same root filesystem.
+optional_payloads=(
+	"disk_root/firmware/gsp_ga10x.bin::GSPGA10X.BIN"
+	"disk_root/firmware/gsp_tu10x.bin::GSPTU10X.BIN"
+	"disk_root/firmware/ucodes_ga10x.bin::UCGA10X.BIN"
+	"disk_root/firmware/ucodes_tu10x.bin::UCTU10X.BIN"
+)
+
+for entry in "${optional_payloads[@]}"; do
+	host_path="${entry%%::*}"
+	if [[ -f "$host_path" ]]; then
+		payloads+=("$entry")
+	fi
+done
+
 if [[ -z "${DISK_SIZE_MIB:-}" ]]; then
 	payload_bytes=0
 	for entry in "${payloads[@]}"; do

@@ -13,8 +13,9 @@ ap_trampoline_obj := build/x86_64/boot/ap_trampoline.o
 x86_64_asm_source_files := $(filter-out $(ap_trampoline_src), $(call rwildcard,src/impl/x86_64/,*.asm))
 x86_64_asm_object_files := $(patsubst src/impl/x86_64/%.asm, build/x86_64/%.o, $(x86_64_asm_source_files))
 x86_64_object_files := $(x86_64_c_object_files) $(x86_64_asm_object_files) $(ap_trampoline_obj)
-kernel_c_flags := -I src/intf -ffreestanding -mno-red-zone
-rootfs_payload_files := disk_root/readme.txt disk_root/games/doom/doom.wad
+kernel_c_flags := -I src/intf -ffreestanding -mno-red-zone -mcmodel=kernel -fno-pic -fno-pie
+nvidia_firmware_files := $(wildcard disk_root/firmware/*.bin)
+rootfs_payload_files := disk_root/readme.txt disk_root/games/doom/doom.wad $(nvidia_firmware_files)
 
 $(kernel_object_files): build/kernel/%.o : src/impl/kernel/%.c
 	mkdir -p $(dir $@) && \
@@ -50,7 +51,7 @@ disk.img: userspace create_disk.sh $(rootfs_payload_files)
 build-x86_64: $(kernel_object_files) $(x86_64_object_files) disk.img
 	mkdir -p dist/x86_64 && \
 	mkdir -p targets/x86_64/iso/boot/grub && \
-	x86_64-elf-ld -n -o dist/x86_64/kernel.bin -T targets/x86_64/linker.ld $(kernel_object_files) $(x86_64_object_files) && \
+	x86_64-elf-ld -z max-page-size=0x1000 -o dist/x86_64/kernel.bin -T targets/x86_64/linker.ld $(kernel_object_files) $(x86_64_object_files) && \
 	cp dist/x86_64/kernel.bin targets/x86_64/iso/boot/kernel.bin && \
 	cp disk.img               targets/x86_64/iso/boot/disk.img && \
 	wsl bash -c "\

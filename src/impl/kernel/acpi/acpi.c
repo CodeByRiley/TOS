@@ -1,19 +1,20 @@
-/* src/impl/kernel/acpi/acpi.c — ACPI discovery + MADT parser.
+/* src/impl/kernel/acpi/acpi.c — ACPI discovery + SDT/MADT parsing.
  *
  * Two RSDP sources, in order of preference:
  *   1. Multiboot2 ACPI_NEW (XSDP) or ACPI_OLD (RSDP) tag
  *   2. Legacy BIOS scan: EBDA pointer + the 0xE0000-0xFFFFF window
  *
- * For SMP we only care about the LAPIC MMIO base and the list of enabled
- * processors. Everything else in MADT is ignored.
+ * RSDT/XSDT discovery is retained as a table directory so other subsystems
+ * can request checksum-valid SDTs by signature. MADT supplies SMP topology;
+ * MCFG is handed to the PCI ECAM parser.
  *
- * Boot identity-maps only the first 1 GiB (main.asm). Firmware likes to
- * park ACPI tables near the top of RAM, so acpi_map() lazily pages in
- * any 4 KiB window outside the boot identity range before we touch it.
+ * ACPI physical addresses are accessed through the kernel HHDM, which PMM
+ * extends across the physical memory-map endpoints before ACPI starts.
  */
 #include "acpi/acpi.h"
+#include "acpi/pci_mcfg.h"
 #include "boot/multiboot2.h"
-#include "memory/vmm.h"
+#include "memory/hhdm.h"
 #include "utilities/log.h"
 #include "utilities/string.h"
 #include <stdint.h>
@@ -21,26 +22,15 @@
 static uint64_t lapic_phys = 0;
 static uint8_t  cpu_ids[ACPI_MAX_CPUS];
 static int      cpu_count = 0;
+static const struct acpi_sdt_header *root_sdt;
+static uint8_t root_entry_size;
 
-/* Boot identity-maps only the first 1 GiB (main.asm), but firmware likes to
- * park ACPI tables near the top of RAM — on QEMU with 2 GiB that's ~0x7FFE0000,
- * which faults if we just dereference it. acpi_map ensures every 4 KiB page
- * touched by `[phys, phys+len)` has an identity mapping in the current
- * kernel PML4. Idempotent: vmm_map silently no-ops if the page already maps
- * to the same frame.
- *
- * We avoid using vmm_map for anything inside the existing 1 GiB huge-page
- * region — walk_or_create returns -1 when it hits a 2 MiB present mapping
- * (correctly: it can't sub-divide a huge page without breaking it). */
+#define ACPI_MAX_TABLE_LENGTH (16u * 1024u * 1024u)
+
+/* Return an HHDM pointer for an ACPI physical range. */
 static void *acpi_map(uint64_t phys, size_t len) {
-    if (phys + len <= 0x40000000ULL) return (void*)phys;   /* in boot identity */
-    uint64_t start = phys & ~0xFFFULL;
-    uint64_t end   = (phys + len + 0xFFFULL) & ~0xFFFULL;
-    for (uint64_t p = start; p < end; p += 0x1000) {
-        if (p < 0x40000000ULL) continue;
-        vmm_map(p, p, VMM_PRESENT | VMM_WRITE);
-    }
-    return (void*)phys;
+    (void)len;
+    return phys_to_virt(phys);
 }
 
 static uint8_t checksum(const void *p, size_t n) {
@@ -61,6 +51,7 @@ static const struct acpi_rsdp_v1 *validate_rsdp(const uint8_t *p) {
     if (checksum(r, sizeof(*r)) != 0)            return 0;
     if (r->revision >= 2) {
         const struct acpi_rsdp_v2 *r2 = (const struct acpi_rsdp_v2*)p;
+        if (r2->length < sizeof(*r2) || r2->length > 4096) return 0;
         if (checksum(r2, r2->length) != 0)       return 0;
     }
     return r;
@@ -69,7 +60,8 @@ static const struct acpi_rsdp_v1 *validate_rsdp(const uint8_t *p) {
 /* Scan a 64K-aligned 16-byte-stepped region for the RSDP signature. */
 static const struct acpi_rsdp_v1 *scan_for_rsdp(uint64_t start, uint64_t end) {
     for (uint64_t addr = start; addr < end; addr += 16) {
-        const struct acpi_rsdp_v1 *r = validate_rsdp((const uint8_t*)addr);
+        const struct acpi_rsdp_v1 *r =
+            validate_rsdp(phys_to_virt(addr));
         if (r) return r;
     }
     return 0;
@@ -87,7 +79,7 @@ static const struct acpi_rsdp_v1 *find_rsdp(uint64_t mb2_addr) {
     }
 
     /* 2. EBDA pointer at 0x40E (segment) -> first 1 KiB of EBDA. */
-    uint16_t ebda_seg = *(uint16_t*)0x40E;
+    uint16_t ebda_seg = *(uint16_t*)phys_to_virt(0x40E);
     if (ebda_seg) {
         uint64_t ebda = (uint64_t)ebda_seg << 4;
         const struct acpi_rsdp_v1 *r = scan_for_rsdp(ebda, ebda + 0x400);
@@ -128,15 +120,67 @@ static int parse_madt(const struct acpi_madt *madt) {
 }
 
 static const struct acpi_sdt_header *map_sdt(uint64_t phys) {
+    if (!phys) return 0;
+
     /* Map header first to learn the table's length, then re-map the full
      * extent. Two-step because the length field is inside the header itself. */
-    acpi_map(phys, sizeof(struct acpi_sdt_header));
-    const struct acpi_sdt_header *h = (const struct acpi_sdt_header*)phys;
-    acpi_map(phys, h->length);
-    return h;
+    const struct acpi_sdt_header *h =
+        acpi_map(phys, sizeof(struct acpi_sdt_header));
+    if (h->length < sizeof(*h) || h->length > ACPI_MAX_TABLE_LENGTH)
+        return 0;
+    return acpi_map(phys, h->length);
+}
+
+static int set_root_sdt(uint64_t phys, const char signature[4],
+                        uint8_t entry_size) {
+    const struct acpi_sdt_header *root = map_sdt(phys);
+    if (!root || !sig_eq(root->signature, signature, 4))
+        return -1;
+    if (checksum(root, root->length) != 0)
+        return -1;
+    if ((root->length - sizeof(*root)) % entry_size != 0)
+        return -1;
+
+    root_sdt = root;
+    root_entry_size = entry_size;
+    return 0;
+}
+
+const struct acpi_sdt_header *acpi_find_table(const char signature[4],
+                                              uint32_t index) {
+    if (!root_sdt || !root_entry_size)
+        return 0;
+
+    uint32_t count =
+        (root_sdt->length - sizeof(*root_sdt)) / root_entry_size;
+    const uint8_t *entries = (const uint8_t*)root_sdt + sizeof(*root_sdt);
+
+    for (uint32_t i = 0; i < count; i++) {
+        uint64_t phys;
+        if (root_entry_size == 8)
+            phys = ((const uint64_t*)entries)[i];
+        else
+            phys = ((const uint32_t*)entries)[i];
+
+        const struct acpi_sdt_header *table = map_sdt(phys);
+        if (!table || checksum(table, table->length) != 0)
+            continue;
+        if (!sig_eq(table->signature, signature, 4))
+            continue;
+        if (index-- == 0)
+            return table;
+    }
+
+    return 0;
 }
 
 int acpi_init(uint64_t mb2_addr) {
+    root_sdt = 0;
+    root_entry_size = 0;
+    lapic_phys = 0;
+    cpu_count = 0;
+    pci_mcfg_init(0);
+
     const struct acpi_rsdp_v1 *rsdp = find_rsdp(mb2_addr);
     if (!rsdp) {
         log_write("ACPI: no RSDP found", KERNEL, LOG_ERROR);
@@ -144,29 +188,32 @@ int acpi_init(uint64_t mb2_addr) {
     }
     log_write_hex("ACPI: RSDP revision  =", rsdp->revision, KERNEL, LOG_INFO);
 
-    /* Walk RSDT (v1) or XSDT (v2) looking for "APIC" (= MADT). */
-    const struct acpi_madt *madt = 0;
+    /* Prefer XSDT when ACPI 2.0+ supplies one; otherwise use RSDT. */
+    int root_ok = -1;
     if (rsdp->revision >= 2) {
         const struct acpi_rsdp_v2 *r2 = (const struct acpi_rsdp_v2*)rsdp;
-        const struct acpi_sdt_header *xsdt = map_sdt(r2->xsdt_phys);
-        if (!sig_eq(xsdt->signature, ACPI_SIG_XSDT, 4)) return -1;
-        int n = (xsdt->length - sizeof(*xsdt)) / 8;
-        const uint64_t *ents = (const uint64_t*)((const uint8_t*)xsdt + sizeof(*xsdt));
-        for (int i = 0; i < n; i++) {
-            const struct acpi_sdt_header *h = map_sdt(ents[i]);
-            if (sig_eq(h->signature, ACPI_SIG_APIC, 4)) { madt = (const struct acpi_madt*)h; break; }
-        }
-    } else {
-        const struct acpi_sdt_header *rsdt = map_sdt((uint64_t)rsdp->rsdt_phys);
-        if (!sig_eq(rsdt->signature, ACPI_SIG_RSDT, 4)) return -1;
-        int n = (rsdt->length - sizeof(*rsdt)) / 4;
-        const uint32_t *ents = (const uint32_t*)((const uint8_t*)rsdt + sizeof(*rsdt));
-        for (int i = 0; i < n; i++) {
-            const struct acpi_sdt_header *h = map_sdt((uint64_t)ents[i]);
-            if (sig_eq(h->signature, ACPI_SIG_APIC, 4)) { madt = (const struct acpi_madt*)h; break; }
-        }
+        if (r2->xsdt_phys)
+            root_ok = set_root_sdt(r2->xsdt_phys, ACPI_SIG_XSDT, 8);
+    }
+    if (root_ok != 0)
+        root_ok = set_root_sdt((uint64_t)rsdp->rsdt_phys,
+                               ACPI_SIG_RSDT, 4);
+    if (root_ok != 0) {
+        log_write("ACPI: invalid RSDT/XSDT", KERNEL, LOG_ERROR);
+        return -1;
     }
 
+    const struct acpi_sdt_header *mcfg = acpi_find_table(ACPI_SIG_MCFG, 0);
+    if (mcfg) {
+        if (pci_mcfg_init(mcfg) != 0)
+            log_write("ACPI: MCFG parse failed", KERNEL, LOG_WARN);
+    } else {
+        log_write("ACPI: no MCFG, PCI will use legacy config IO",
+                  KERNEL, LOG_INFO);
+    }
+
+    const struct acpi_madt *madt =
+        (const struct acpi_madt*)acpi_find_table(ACPI_SIG_APIC, 0);
     if (!madt) {
         log_write("ACPI: no MADT (APIC table) found", KERNEL, LOG_ERROR);
         return -1;

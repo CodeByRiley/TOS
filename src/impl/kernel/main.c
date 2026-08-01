@@ -32,6 +32,8 @@
 #include "display/framebuffer.h"
 #include "display/print.h"
 #include "display/tty.h"
+#include "drivers/driver.h"
+#include "drivers/video/nvidia.h"
 #include "fs/fat.h"
 #include "input/keyboard.h"
 #include "input/mouse.h"
@@ -40,6 +42,7 @@
 #include "loader/elf.h"
 #include "loader/process.h"
 #include "memory/heap.h"
+#include "memory/hhdm.h"
 #include "memory/pmm.h"
 #include "memory/vmm.h"
 #include "msg/msg.h"
@@ -50,6 +53,7 @@
 #include "utilities/printf.h"
 #include "virtio/virtio_gpu.h"
 #include <stdint.h>
+
 
 void kernel_main(uint64_t mb2_addr) {
   print_clear();
@@ -101,23 +105,48 @@ void kernel_main(uint64_t mb2_addr) {
   framebuffer_init(mb2_addr);
   log_write("framebuffer initialised", KERNEL, LOG_INFO);
 
-  /* Bring up PCI then virtio-gpu. If the device is present we hand the
-   * framebuffer over to it so the host window can drive resolution; if
-   * absent or any step fails, framebuffer stays in MB2 (fixed-mode)
-   * fallback and the rest of boot proceeds unchanged. */
+  /* Register hardware drivers, scan PCI, and bind discovered devices.
+   * NVIDIA currently keeps the firmware framebuffer active while recording
+   * the GPU's PCI resources for later native modesetting work. */
+  driver_core_init();
+  if (nvidia_driver_register() != 0) {
+    log_write("nvidia: driver registration failed", KERNEL, LOG_ERROR);
+  }
   pci_init();
-  if (virtio_gpu_init() == 0) {
-    if (framebuffer_attach_virtio() != 0) {
-      log_write("display: virtio attach failed, staying on MB2 fb",
-                KERNEL, LOG_WARN);
+  driver_probe_pci_devices();
+
+  /* Pick who drives scanout. The test is whether a native driver has
+   * actually taken the display, not whether its hardware merely exists:
+   * an NVIDIA GPU that is only detected still leaves the firmware
+   * framebuffer in charge, and in that case virtio-gpu is strictly better
+   * than staying in MB2 fixed mode. Probing for virtio costs nothing when
+   * the device is absent.
+   *
+   * Once NVIDIA modesetting lands this needs revisiting: nvidia_driver_late_init
+   * runs after the root filesystem mounts, which is well past this point, so a
+   * device that can drive scanout cannot say so yet. */
+  if (!nvidia_display_active()) {
+    if (nvidia_device_count() > 0) {
+      log_write("display: NVIDIA detected but not driving scanout",
+                KERNEL, LOG_INFO);
+    }
+    if (virtio_gpu_init() == 0) {
+      if (framebuffer_attach_virtio() != 0) {
+        log_write("display: virtio attach failed, staying on MB2 fb",
+                  KERNEL, LOG_WARN);
+      } else {
+        task_spawn(framebuffer_flush_thread_entry);
+        log_write("display: fb flush thread spawned", KERNEL, LOG_INFO);
+      }
     } else {
-      task_spawn(framebuffer_flush_thread_entry);
-      log_write("display: fb flush thread spawned", KERNEL, LOG_INFO);
+      log_write("display: no virtio-gpu, staying on MB2 fb",
+                KERNEL, LOG_INFO);
     }
   } else {
-    log_write("display: no virtio-gpu, staying on MB2 fb",
+    log_write("display: NVIDIA driving scanout, keeping its framebuffer",
               KERNEL, LOG_INFO);
   }
+
 
   mouse_set_bounds((int32_t)framebuffer_width(), (int32_t)framebuffer_height());
 
@@ -140,8 +169,13 @@ void kernel_main(uint64_t mb2_addr) {
     log_write_hex("rootfs: module size =", m->mod_end - m->mod_start, FILESYS,
                   LOG_INFO);
     log_write("rootfs: module found", FILESYS, LOG_INFO);
-    fat_init((uint8_t *)(uint64_t)m->mod_start, m->mod_end - m->mod_start);
-    log_write("rootfs: fat module initialised", FILESYS, LOG_INFO);
+    if (fat_init(phys_to_virt(m->mod_start),
+                 m->mod_end - m->mod_start) != 0) {
+      log_write("rootfs: FAT initialisation failed", FILESYS, LOG_ERROR);
+    } else {
+      log_write("rootfs: fat module initialised", FILESYS, LOG_INFO);
+      nvidia_driver_late_init();
+    }
 
     pic_clear_mask(0);
     pic_clear_mask(1);

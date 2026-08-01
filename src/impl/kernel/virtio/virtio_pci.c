@@ -12,6 +12,7 @@
 #include "virtio/virtio.h"
 #include "pci/pci.h"
 #include "memory/pmm.h"
+#include "memory/hhdm.h"
 #include "memory/vmm.h"
 #include "utilities/log.h"
 #include "utilities/string.h"
@@ -189,8 +190,7 @@ int virtio_queue_setup(struct virtio_dev *dev, uint16_t qidx, struct virtq *vq) 
     vq->qsize      = qsize;
     vq->notify_off = c->queue_notify_off;
 
-    /* Allocate one phys page per ring. PMM gives identity-mapped low memory,
-     * so we can write to it via its physical address directly. */
+    /* Allocate physical ring pages and access them through the HHDM. */
     vq->desc_page  = pmm_alloc_frame();
     vq->avail_page = pmm_alloc_frame();
     vq->used_page  = pmm_alloc_frame();
@@ -198,13 +198,13 @@ int virtio_queue_setup(struct virtio_dev *dev, uint16_t qidx, struct virtq *vq) 
         log_write("virtio: queue alloc failed", KERNEL, LOG_ERROR);
         return -1;
     }
-    memset((void*)vq->desc_page,  0, 4096);
-    memset((void*)vq->avail_page, 0, 4096);
-    memset((void*)vq->used_page,  0, 4096);
+    memset(phys_to_virt(vq->desc_page),  0, 4096);
+    memset(phys_to_virt(vq->avail_page), 0, 4096);
+    memset(phys_to_virt(vq->used_page),  0, 4096);
 
-    vq->desc  = (volatile struct virtq_desc*) vq->desc_page;
-    vq->avail = (volatile struct virtq_avail*)vq->avail_page;
-    vq->used  = (volatile struct virtq_used*) vq->used_page;
+    vq->desc  = phys_to_virt(vq->desc_page);
+    vq->avail = phys_to_virt(vq->avail_page);
+    vq->used  = phys_to_virt(vq->used_page);
     vq->desc_phys  = vq->desc_page;
     vq->avail_phys = vq->avail_page;
     vq->used_phys  = vq->used_page;

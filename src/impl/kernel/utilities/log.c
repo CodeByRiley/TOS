@@ -188,6 +188,12 @@ void log_write_exception(uint64_t int_num, const char *name,
     serial_write_hex(rip);
     serial_write_str("\n");
 
+    /* A page fault may have been caused by the framebuffer mapping itself.
+     * Keep that report on the polled serial path so diagnostics cannot recurse
+     * into a second page fault while trying to draw the first one. */
+    if (int_num == 14)
+        return;
+
     print_write_str("[KERNEL]: !! exception ");
     print_write_hex(int_num);
     print_write_str(" (");

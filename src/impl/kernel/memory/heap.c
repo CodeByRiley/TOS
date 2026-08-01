@@ -17,7 +17,7 @@
 #include "utilities/log.h"
 #include <stdint.h>
 
-#define HEAP_BASE          0xFFFF800000000000ULL
+#define HEAP_BASE          0xFFFF900000000000ULL
 #define HEAP_INITIAL_PAGES 256   /* 1 MiB */
 #define SPLIT_THRESHOLD    16    /* payload bytes below which we won't split */
 
@@ -34,21 +34,35 @@ static struct block *head = 0;
 static struct block *tail = 0;
 static uint64_t      heap_end = 0;
 
-/* Map `pages` fresh frames at the top of the heap. */
-static void heap_grow(size_t pages) {
-    for (size_t i = 0; i < pages; i++) {
+/* Map fresh frames at the top of the heap and report how many succeeded. */
+static size_t heap_grow(size_t pages) {
+    size_t mapped = 0;
+    for (; mapped < pages; mapped++) {
         uint64_t phys = pmm_alloc_frame();
-        if (!phys) { log_write("heap: OOM", KERNEL, LOG_ERROR); return; }
-        vmm_map(heap_end, phys, VMM_PRESENT | VMM_WRITE);
+        if (!phys) {
+            log_write("heap: OOM", KERNEL, LOG_ERROR);
+            break;
+        }
+        if (vmm_map(heap_end, phys, VMM_PRESENT | VMM_WRITE) != 0) {
+            pmm_free_frame(phys);
+            log_write("heap: could not map growth page", KERNEL, LOG_ERROR);
+            break;
+        }
         heap_end += 4096;
     }
+    return mapped;
 }
 
 void heap_init(void) {
     heap_end = HEAP_BASE;
-    heap_grow(HEAP_INITIAL_PAGES);
+    size_t initial_pages = heap_grow(HEAP_INITIAL_PAGES);
+    if (initial_pages == 0) {
+        log_write("heap: initial allocation failed", KERNEL, LOG_ERROR);
+        for (;;)
+            __asm__ volatile("cli; hlt");
+    }
     head = (struct block*)HEAP_BASE;
-    head->size = HEAP_INITIAL_PAGES * 4096 - sizeof(struct block);
+    head->size = initial_pages * 4096 - sizeof(struct block);
     head->free = 1;
     head->next = 0;
     head->prev = 0;
@@ -101,9 +115,9 @@ void *kmalloc(size_t size) {
         /* Out of fit. Grow heap, append (or merge into free tail), retry. */
         size_t needed = (size + sizeof(struct block) + 4095) / 4096;
         uint64_t old_end = heap_end;
-        heap_grow(needed);
-        if (heap_end == old_end) return 0;        /* pmm bailed mid-grow */
-        list_append(old_end, needed * 4096);
+        size_t mapped = heap_grow(needed);
+        if (mapped == 0) return 0;
+        list_append(old_end, mapped * 4096);
     }
 }
 

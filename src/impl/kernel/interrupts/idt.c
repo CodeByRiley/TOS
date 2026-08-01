@@ -11,6 +11,10 @@
  * framebuffer probe path).
  */
 #include "interrupts/idt.h"
+#include "arch/cpu.h"
+#include "memory/hhdm.h"
+#include "memory/pmm.h"
+#include "sched/sched.h"
 #include "utilities/log.h"
 #include "devices/serial.h"
 #include "interrupts/pic.h"
@@ -128,6 +132,271 @@ static const char *exception_names[32] = {
     "reserved", "reserved", "reserved", "reserved",
 };
 
+#define PF_PAGE_SIZE 4096ULL
+#define PF_ADDR_MASK 0x000FFFFFFFFFF000ULL
+#define PF_PRESENT   (1ULL << 0)
+#define PF_WRITE     (1ULL << 1)
+#define PF_USER      (1ULL << 2)
+#define PF_HUGE      (1ULL << 7)
+
+static void fault_hex(const char *label, uint64_t value) {
+    serial_write_str("[KERNEL]:   ");
+    serial_write_str(label);
+    serial_write_str("=");
+    serial_write_hex(value);
+    serial_write_str("\n");
+}
+
+static void fault_hex2(const char *left_label, uint64_t left,
+                       const char *right_label, uint64_t right) {
+    serial_write_str("[KERNEL]:   ");
+    serial_write_str(left_label);
+    serial_write_str("=");
+    serial_write_hex(left);
+    serial_write_str("  ");
+    serial_write_str(right_label);
+    serial_write_str("=");
+    serial_write_hex(right);
+    serial_write_str("\n");
+}
+
+static void fault_text(const char *label, const char *value) {
+    serial_write_str("[KERNEL]:   ");
+    serial_write_str(label);
+    serial_write_str("=");
+    serial_write_str(value);
+    serial_write_str("\n");
+}
+
+static void fault_bit(const char *name, uint64_t error, uint8_t bit) {
+    serial_write_str(name);
+    serial_write_str("=");
+    serial_write_char((error & (1ULL << bit)) ? '1' : '0');
+}
+
+static int canonical_address(uint64_t address) {
+    uint64_t upper = address >> 48;
+    return (address & (1ULL << 47)) ? upper == 0xFFFF : upper == 0;
+}
+
+static const char *fault_address_region(uint64_t address) {
+    if (!canonical_address(address))
+        return "non-canonical";
+    if (address < 0x1000)
+        return "null page";
+    if (address <= 0x00007FFFFFFFFFFFULL)
+        return "user canonical range";
+    if (address < 0xFFFFE00000000000ULL)
+        return "kernel direct-map/heap range";
+    if (address < 0xFFFFFFFF80000000ULL)
+        return "kernel MMIO range";
+    return "kernel image range";
+}
+
+static uint64_t interrupted_rsp(const struct registers *r) {
+    if ((r->cs & 3) == 3)
+        return r->rsp;
+
+    /* Same-privilege interrupts do not push SS:RSP. The address immediately
+     * after the hardware RFLAGS slot is the interrupted kernel RSP. */
+    return (uint64_t)(uintptr_t)&r->rsp;
+}
+
+static uint64_t *fault_table(uint64_t physical) {
+    uint64_t physical_limit = pmm_total_frames() * PF_PAGE_SIZE;
+    if ((physical & (PF_PAGE_SIZE - 1)) != 0 || physical_limit == 0)
+        return 0;
+    if (physical > physical_limit || PF_PAGE_SIZE > physical_limit - physical)
+        return 0;
+    return phys_to_virt(physical);
+}
+
+static int fault_walk_next(const char *level, uint64_t index,
+                           uint64_t entry, uint64_t **next) {
+    serial_write_str("[KERNEL]:   ");
+    serial_write_str(level);
+    serial_write_str("[");
+    serial_write_hex(index);
+    serial_write_str("]=");
+    serial_write_hex(entry);
+    serial_write_str("\n");
+
+    if (!(entry & PF_PRESENT)) {
+        serial_write_str("[KERNEL]:   walk stopped: ");
+        serial_write_str(level);
+        serial_write_str(" is not present\n");
+        return -1;
+    }
+
+    uint64_t physical = entry & PF_ADDR_MASK;
+    *next = fault_table(physical);
+    if (!*next) {
+        serial_write_str("[KERNEL]:   walk stopped: next table physical ");
+        serial_write_hex(physical);
+        serial_write_str(" is outside the mapped RAM span\n");
+        return -1;
+    }
+    return 0;
+}
+
+static void page_fault_walk(uint64_t address, uint64_t cr3) {
+    uint64_t index[4] = {
+        (address >> 39) & 0x1FF,
+        (address >> 30) & 0x1FF,
+        (address >> 21) & 0x1FF,
+        (address >> 12) & 0x1FF,
+    };
+
+    fault_hex2("PML4 index", index[0], "PDPT index", index[1]);
+    fault_hex2("PD index", index[2], "PT index", index[3]);
+
+    uint64_t *table = fault_table(cr3 & PF_ADDR_MASK);
+    if (!table) {
+        serial_write_str("[KERNEL]:   walk stopped: CR3 root is outside mapped RAM\n");
+        return;
+    }
+
+    uint64_t entry = table[index[0]];
+    if (fault_walk_next("PML4E", index[0], entry, &table) != 0)
+        return;
+
+    entry = table[index[1]];
+    serial_write_str("[KERNEL]:   PDPTE[");
+    serial_write_hex(index[1]);
+    serial_write_str("]=");
+    serial_write_hex(entry);
+    serial_write_str("\n");
+    if (!(entry & PF_PRESENT)) {
+        serial_write_str("[KERNEL]:   walk stopped: PDPTE is not present\n");
+        return;
+    }
+    if (entry & PF_HUGE) {
+        uint64_t physical = (entry & 0x000FFFFFC0000000ULL)
+                          | (address & 0x3FFFFFFFULL);
+        fault_hex("resolved 1 GiB physical", physical);
+        return;
+    }
+    table = fault_table(entry & PF_ADDR_MASK);
+    if (!table) {
+        serial_write_str("[KERNEL]:   walk stopped: PD physical is outside mapped RAM\n");
+        return;
+    }
+
+    entry = table[index[2]];
+    serial_write_str("[KERNEL]:   PDE[");
+    serial_write_hex(index[2]);
+    serial_write_str("]=");
+    serial_write_hex(entry);
+    serial_write_str("\n");
+    if (!(entry & PF_PRESENT)) {
+        serial_write_str("[KERNEL]:   walk stopped: PDE is not present\n");
+        return;
+    }
+    if (entry & PF_HUGE) {
+        uint64_t physical = (entry & 0x000FFFFFFFE00000ULL)
+                          | (address & 0x1FFFFFULL);
+        fault_hex("resolved 2 MiB physical", physical);
+        return;
+    }
+    table = fault_table(entry & PF_ADDR_MASK);
+    if (!table) {
+        serial_write_str("[KERNEL]:   walk stopped: PT physical is outside mapped RAM\n");
+        return;
+    }
+
+    entry = table[index[3]];
+    serial_write_str("[KERNEL]:   PTE[");
+    serial_write_hex(index[3]);
+    serial_write_str("]=");
+    serial_write_hex(entry);
+    serial_write_str("\n");
+    if (!(entry & PF_PRESENT)) {
+        serial_write_str("[KERNEL]:   walk stopped: PTE is not present\n");
+        return;
+    }
+    fault_hex("resolved physical",
+              (entry & PF_ADDR_MASK) | (address & 0xFFF));
+}
+
+static void page_fault_report(const struct registers *r, uint64_t address) {
+    uint64_t error = r->err_code;
+    uint64_t cr0;
+    uint64_t cr4;
+    __asm__ volatile ("mov %%cr0, %0" : "=r"(cr0));
+    __asm__ volatile ("mov %%cr4, %0" : "=r"(cr4));
+    uint64_t cr3 = read_cr3();
+    uint64_t rsp = interrupted_rsp(r);
+
+    serial_write_str("[KERNEL]: page-fault details\n");
+    fault_hex("address", address);
+    fault_text("region", fault_address_region(address));
+    fault_text("access", (error & (1ULL << 4)) ? "instruction fetch"
+                         : (error & (1ULL << 1)) ? "write" : "read");
+    fault_text("origin", (error & (1ULL << 2)) ? "user" : "supervisor");
+    const char *cause = (error & (1ULL << 3)) ? "reserved page-table bit"
+                      : (error & (1ULL << 5)) ? "protection key"
+                      : (error & (1ULL << 6)) ? "shadow stack"
+                      : (error & (1ULL << 15)) ? "SGX access-control"
+                      : (error & 1) ? "protection violation" : "not present";
+    fault_text("cause", cause);
+
+    serial_write_str("[KERNEL]:   error bits: ");
+    fault_bit("P", error, 0);
+    serial_write_str(" ");
+    fault_bit("W", error, 1);
+    serial_write_str(" ");
+    fault_bit("U", error, 2);
+    serial_write_str(" ");
+    fault_bit("RSVD", error, 3);
+    serial_write_str(" ");
+    fault_bit("I/D", error, 4);
+    serial_write_str(" ");
+    fault_bit("PK", error, 5);
+    serial_write_str(" ");
+    fault_bit("SS", error, 6);
+    serial_write_str(" ");
+    fault_bit("SGX", error, 15);
+    serial_write_str("\n");
+
+    fault_hex2("cr0", cr0, "cr3", cr3);
+    fault_hex2("cr4", cr4, "rflags", r->rflags);
+    fault_hex2("cs", r->cs, "rsp", rsp);
+    if ((r->cs & 3) == 3)
+        fault_hex("ss", r->ss);
+
+    struct task *task = task_current();
+    if (task) {
+        fault_hex2("task pid", (uint64_t)(uint32_t)task->pid,
+                   "task cr3", task->cr3);
+        fault_text("task name", task->name[0] ? task->name : "unnamed");
+        if (task->kstack) {
+            uint64_t stack_base = (uint64_t)(uintptr_t)task->kstack;
+            fault_hex2("kstack base", stack_base,
+                       "kstack top", task->syscall_kstack_top);
+        }
+    } else {
+        fault_text("task", "scheduler not initialised");
+    }
+
+    fault_hex2("rax", r->rax, "rbx", r->rbx);
+    fault_hex2("rcx", r->rcx, "rdx", r->rdx);
+    fault_hex2("rsi", r->rsi, "rdi", r->rdi);
+    fault_hex2("rbp", r->rbp, "r8", r->r8);
+    fault_hex2("r9", r->r9, "r10", r->r10);
+    fault_hex2("r11", r->r11, "r12", r->r12);
+    fault_hex2("r13", r->r13, "r14", r->r14);
+    fault_hex("r15", r->r15);
+
+    extern char _kernel_start[];
+    extern char _kernel_end[];
+    uint64_t kernel_start = (uint64_t)(uintptr_t)_kernel_start;
+    uint64_t kernel_end = (uint64_t)(uintptr_t)_kernel_end;
+    if (r->rip >= kernel_start && r->rip < kernel_end)
+        fault_hex("kernel RIP offset", r->rip - kernel_start);
+
+    page_fault_walk(address, cr3);
+}
+
 void isr_handler(struct registers *r) {
   if (r->int_num < 32) {
     const char *name = "unknown";
@@ -151,7 +420,7 @@ void isr_handler(struct registers *r) {
     if (r->int_num == 14) {
         uint64_t cr2;
         __asm__ volatile ("mov %%cr2, %0" : "=r"(cr2));
-        log_write_hex("  cr2 (fault addr) =", cr2, KERNEL, LOG_INFO);
+        page_fault_report(r, cr2);
     }
 
     log_write("kernel panic: unhandled exception", KERNEL, LOG_FATAL);

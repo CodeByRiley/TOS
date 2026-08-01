@@ -31,6 +31,7 @@
 #include "input/mouse.h"
 #include "memory/heap.h"
 #include "memory/pmm.h"
+#include "memory/hhdm.h"
 #include "memory/vmm.h"
 #include "msg/msg.h"
 #include "sched/sched.h"
@@ -156,7 +157,7 @@ static long sys_mmap(long len) {
       return -1;
     }
 
-    memset((void*)phys, 0, 4096);
+    memset(phys_to_virt(phys), 0, 4096);
     if (vmm_map_in(t->user_pml4, base + i * 4096, phys,
                    VMM_PRESENT | VMM_WRITE | VMM_USER) != 0) {
       pmm_free_frame(phys);

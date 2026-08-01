@@ -6,9 +6,9 @@ section .text
 _start:
 	xor rbp, rbp 		; clear frame ptr
 
-	; argc, argv ( rsp[0] = argc, rsp[8] = argv[8])
+	; Initial stack: [rsp] = argc, [rsp+8...] = argv pointers + NULL.
 	mov rdi, [rsp]
-	mov rsi, [rsp + 8]
+	lea rsi, [rsp + 8]
 
 	call main
 	mov rdi, rax 		; main return

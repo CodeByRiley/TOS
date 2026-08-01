@@ -11,7 +11,9 @@
  * into every process PML4, so writes there propagate to kernel_pml4 too.
  */
 #include "memory/vmm.h"
+#include "memory/hhdm.h"
 #include "memory/pmm.h"
+#include "arch/cpu.h"
 #include "utilities/string.h"
 #include "utilities/log.h"
 #include <stdint.h>
@@ -47,13 +49,13 @@ static int walk_or_create(uint64_t *pml4, uint64_t virt, uint64_t flags,
         if ((flags & VMM_USER) && !(pml4[i[0]] & VMM_USER)) {
             pml4[i[0]] |= VMM_USER;
         }
-        pdpt = (uint64_t*)(pml4[i[0]] & ADDR_MASK);
+        pdpt = phys_to_virt(pml4[i[0]] & ADDR_MASK);
     } else {
         uint64_t phys = pmm_alloc_frame();
         if (!phys) return -1;
-        memset((void*)phys, 0, PAGE_SIZE);
+        memset(phys_to_virt(phys), 0, PAGE_SIZE);
         pml4[i[0]] = phys | VMM_PRESENT | VMM_WRITE | (flags & VMM_USER);
-        pdpt = (uint64_t*)phys;
+        pdpt = phys_to_virt(phys);
     }
 
     uint64_t *pd;
@@ -62,13 +64,13 @@ static int walk_or_create(uint64_t *pml4, uint64_t virt, uint64_t flags,
         if ((flags & VMM_USER) && !(pdpt[i[1]] & VMM_USER)) {
             pdpt[i[1]] |= VMM_USER;
         }
-        pd = (uint64_t*)(pdpt[i[1]] & ADDR_MASK);
+        pd = phys_to_virt(pdpt[i[1]] & ADDR_MASK);
     } else {
         uint64_t phys = pmm_alloc_frame();
         if (!phys) return -1;
-        memset((void*)phys, 0, PAGE_SIZE);
+        memset(phys_to_virt(phys), 0, PAGE_SIZE);
         pdpt[i[1]] = phys | VMM_PRESENT | VMM_WRITE | (flags & VMM_USER);
-        pd = (uint64_t*)phys;
+        pd = phys_to_virt(phys);
     }
 
     uint64_t *pt;
@@ -77,13 +79,13 @@ static int walk_or_create(uint64_t *pml4, uint64_t virt, uint64_t flags,
         if ((flags & VMM_USER) && !(pd[i[2]] & VMM_USER)) {
             pd[i[2]] |= VMM_USER;
         }
-        pt = (uint64_t*)(pd[i[2]] & ADDR_MASK);
+        pt = phys_to_virt(pd[i[2]] & ADDR_MASK);
     } else {
         uint64_t phys = pmm_alloc_frame();
         if (!phys) return -1;
-        memset((void*)phys, 0, PAGE_SIZE);
+        memset(phys_to_virt(phys), 0, PAGE_SIZE);
         pd[i[2]] = phys | VMM_PRESENT | VMM_WRITE | (flags & VMM_USER);
-        pt = (uint64_t*)phys;
+        pt = phys_to_virt(phys);
     }
 
     *pte_out = &pt[i[3]];
@@ -98,13 +100,13 @@ static uint64_t *walk_only(uint64_t *pml4, uint64_t virt) {
 
     uint64_t e = pml4[i[0]];
     if (!(e & VMM_PRESENT)) return 0;
-    uint64_t *pdpt = (uint64_t*)(e & ADDR_MASK);
+    uint64_t *pdpt = phys_to_virt(e & ADDR_MASK);
     e = pdpt[i[1]];
     if (!(e & VMM_PRESENT) || (e & PAGE_PS)) return 0;
-    uint64_t *pd = (uint64_t*)(e & ADDR_MASK);
+    uint64_t *pd = phys_to_virt(e & ADDR_MASK);
     e = pd[i[2]];
     if (!(e & VMM_PRESENT) || (e & PAGE_PS)) return 0;
-    uint64_t *pt = (uint64_t*)(e & ADDR_MASK);
+    uint64_t *pt = phys_to_virt(e & ADDR_MASK);
     return &pt[i[3]];
 }
 
@@ -132,15 +134,15 @@ uint64_t vmm_translate_in(uint64_t *pml4, uint64_t virt) {
 
     uint64_t e = pml4[i[0]];
     if (!(e & VMM_PRESENT)) return 0;
-    uint64_t *pdpt = (uint64_t*)(e & ADDR_MASK);
+    uint64_t *pdpt = phys_to_virt(e & ADDR_MASK);
     e = pdpt[i[1]];
     if (!(e & VMM_PRESENT)) return 0;
     if (e & PAGE_PS) return (e & ADDR_MASK) | (virt & 0x3FFFFFFF);   /* 1 GiB */
-    uint64_t *pd = (uint64_t*)(e & ADDR_MASK);
+    uint64_t *pd = phys_to_virt(e & ADDR_MASK);
     e = pd[i[2]];
     if (!(e & VMM_PRESENT)) return 0;
     if (e & PAGE_PS) return (e & ADDR_MASK) | (virt & 0x1FFFFF);     /* 2 MiB */
-    uint64_t *pt = (uint64_t*)(e & ADDR_MASK);
+    uint64_t *pt = phys_to_virt(e & ADDR_MASK);
     e = pt[i[3]];
     if (!(e & VMM_PRESENT)) return 0;
     return (e & ADDR_MASK) | (virt & 0xFFF);
@@ -148,9 +150,7 @@ uint64_t vmm_translate_in(uint64_t *pml4, uint64_t virt) {
 
 /* Read CR3 and strip the flags to get the active PML4 base. */
 static inline uint64_t *current_pml4(void) {
-    uint64_t cr3;
-    __asm__ volatile ("mov %%cr3, %0" : "=r"(cr3));
-    return (uint64_t*)(cr3 & ADDR_MASK);
+    return phys_to_virt(read_cr3() & ADDR_MASK);
 }
 
 int vmm_map(uint64_t virt, uint64_t phys, uint64_t flags) {
@@ -167,8 +167,6 @@ uint64_t vmm_translate(uint64_t virt) {
 
 void vmm_init(void) {
     /* Grab the boot PML4 from CR3 — that's the table set up by main.asm. */
-    uint64_t cr3;
-    __asm__ volatile ("mov %%cr3, %0" : "=r"(cr3));
-    kernel_pml4 = (uint64_t*)(cr3 & ADDR_MASK);
+    kernel_pml4 = phys_to_virt(read_cr3() & ADDR_MASK);
     log_write("VMM: using boot PML4", KERNEL, LOG_INFO);
 }

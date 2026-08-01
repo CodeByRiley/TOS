@@ -21,6 +21,7 @@
 // #region INCLUDES
 
 #include "sched/sched.h"
+#include "memory/hhdm.h"
 #include "arch/gdt.h"
 #include "memory/heap.h"
 #include "msg/msg.h"
@@ -196,7 +197,7 @@ void sched_init(void) {
   struct task *t = alloc_slot();
   t->pid = next_pid++;
   t->state = TASK_RUNNING;
-  t->cr3 = (uint64_t)kernel_pml4;
+  t->cr3 = virt_to_phys(kernel_pml4);
   t->kstack = 0;
   t->kthread_entry = 0;
   t->user_pml4 = 0;
@@ -281,7 +282,7 @@ struct task *task_spawn(void (*entry)(void)) {
   }
 
   t->saved_rsp = build_initial_frame(stack_base, kthread_trampoline);
-  t->cr3 = (uint64_t)kernel_pml4;
+  t->cr3 = virt_to_phys(kernel_pml4);
   t->syscall_kstack_top = (uint64_t)stack_base + KSTACK_BYTES;
   t->user_rsp_saved = 0;
   t->user_entry = 0;
@@ -317,7 +318,7 @@ struct task *task_spawn_user(uint64_t *user_pml4, uint64_t entry,
   }
 
   t->saved_rsp = build_initial_frame(stack_base, user_task_trampoline);
-  t->cr3 = (uint64_t)user_pml4;
+  t->cr3 = virt_to_phys(user_pml4);
   t->syscall_kstack_top = (uint64_t)stack_base + KSTACK_BYTES;
   t->user_rsp_saved = user_rsp;
   t->user_entry = entry;

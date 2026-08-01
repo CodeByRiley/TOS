@@ -9,38 +9,97 @@
 ; swapped for 64-bit. Yes that's duplication. No it's not getting
 ; deduped — the 32-bit copy literally cannot link against the 64-bit
 ; one. Six lines of `mov` vs. a weekend with a linker script.
-
-global long_mode_start
 extern kernel_main
+
+section .boot.text progbits alloc exec nowrite align=16
+bits 64
+global long_mode_start
+
+; Low 64-bit trampoline.
+; rdi: mb2 info pointer
+section .boot.text progbits alloc exec nowrite align=16
+bits 64
+
+long_mode_start:
+    push rdi
+
+    mov rsi, msg_lm_entered
+    call boot_serial_putln
+
+    pop rdi
+    mov rax, high_half_start
+    jmp rax
+
+boot_serial_putc:
+    mov ah, al
+.wait:
+    mov dx, 0x3fd
+    in al, dx
+    test al, 0x20
+    jz .wait
+    mov dx, 0x3f8
+    mov al, ah
+    out dx, al
+    ret
+
+boot_serial_puts:
+    push rax
+.loop:
+    mov al, [rsi]
+    test al, al
+    jz .done
+    call boot_serial_putc
+    inc rsi
+    jmp .loop
+.done:
+    pop rax
+    ret
+
+boot_serial_putln:
+    call boot_serial_puts
+    mov al, 0x0d
+    call boot_serial_putc
+    mov al, 0x0a
+    call boot_serial_putc
+    ret
+
+
+section .boot.rodata progbits alloc noexec nowrite align=8
+msg_lm_entered: db "[BOOT(64)] long mode entered", 0
+
 section .text
 bits 64
 
-; entry point from 32-bit boot via far jump through 64-bit GDT
-; rdi: mb2 info pointer (passed through to kernel_main as arg0)
-long_mode_start:
-	push rdi                   ; preserve mb2 ptr through logging calls
+global high_half_start
 
-	mov rsi, msg_lm_entered
-	call serial_putln
+; High-half kernel entry.
+; rdi: mb2 info pointer
+high_half_start:
+    push rdi
 
-	mov ax, 0                  ; zero out segment registers (unused in long mode)
-	mov ss, ax
-	mov ds, ax
-	mov es, ax
-	mov fs, ax
-	mov gs, ax
+    mov rsi, msg_hi_started
+    call serial_putln
 
-	mov rsi, msg_lm_segs
-	call serial_putln
+    mov ax, 0
+    mov ss, ax
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
 
-	mov rsi, msg_lm_call_kernel
-	call serial_putln
+    mov rsi, msg_lm_segs
+    call serial_putln
 
-	pop rdi                    ; restore mb2 ptr for kernel_main(arg0)
-	call kernel_main
-	hlt                        ; unreachable if kernel_main returns
+    mov rsi, msg_lm_call_kernel
+    call serial_putln
 
-; COM1 already initialised in 32-bit boot, helpers below reuse same hardware
+    pop rdi
+    call kernel_main
+
+.hang:
+    hlt
+    jmp .hang
+
 
 ; send one byte over COM1
 ; al: char to send
@@ -83,6 +142,6 @@ serial_putln:
 	ret
 
 section .rodata
-msg_lm_entered:     db "[boot (64)] long mode entered", 0
-msg_lm_segs:        db "[boot (64)] segments zeroed", 0
-msg_lm_call_kernel: db "[boot (64)] calling kernel_main", 0
+msg_lm_segs:        db "[BOOT(64)] segments zeroed", 0
+msg_lm_call_kernel: db "[BOOT(64)] calling kernel_main", 0
+msg_hi_started: 		db "[BOOT(64)] high half started", 0

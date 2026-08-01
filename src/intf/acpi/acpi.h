@@ -1,8 +1,8 @@
 /* src/intf/acpi/acpi.h — ACPI table parsing surface.
  *
- * Only the bits we actually use for SMP: RSDP → RSDT/XSDT → MADT, then
- * walking MADT for LOCAL_APIC entries. The full ACPI spec covers dozens
- * of tables; everything else is ignored.
+ * RSDP discovery establishes a reusable RSDT/XSDT table directory.
+ * Subsystems can then find validated SDTs by signature. ACPI itself parses
+ * MADT for SMP; PCI consumes MCFG through acpi/pci_mcfg.h.
  *
  * Implementation: src/impl/kernel/acpi/acpi.c.
  */
@@ -79,9 +79,16 @@ struct __attribute__((packed)) madt_entry_local_apic {
 
 #define ACPI_MAX_CPUS 16
 
-/* Parse RSDP from the Multiboot2 info struct and walk MADT to collect
- * usable CPUs. Returns 0 on success, -1 if no ACPI / no MADT was found. */
+/* Parse RSDP from the Multiboot2 info struct, establish the root SDT, parse
+ * MCFG if present, and walk MADT for usable CPUs. Returns 0 when MADT was
+ * parsed, -1 when ACPI or MADT is unavailable. Other valid tables remain
+ * available even when MADT is absent. */
 int      acpi_init(uint64_t mb2_addr);
+
+/* Return the `index`th checksum-valid SDT with this four-byte signature.
+ * The pointer remains valid for the lifetime of the kernel. */
+const struct acpi_sdt_header *acpi_find_table(const char signature[4],
+                                              uint32_t index);
 
 /* Default LAPIC MMIO physical base reported by MADT. */
 uint64_t acpi_lapic_phys(void);
