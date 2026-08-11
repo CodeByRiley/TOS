@@ -211,15 +211,29 @@ struct fb_info { uint64_t width, height, pitch, bpp; };
 _Static_assert(sizeof(struct fb_info) == 32,
                "fb_info must match kernel fb_info size");
 
-/* ---------------- Raw syscall trampolines ------------------------------- */
-/* Assembly-defined wrappers that load arg registers and execute syscall.
+/* ---------------- Raw syscall trampolines -------------------------------
+ *
+ * Everything crossing the syscall boundary is sysarg_t, never `long`.
+ * The ELF toolchain is LP64 so the two are the same width there, but the
+ * PE variants are built by mingw, which is LLP64: `long` is four bytes.
+ * A pointer passed as long would reach the kernel truncated to its low 32
+ * bits — for a PE image based at 0x140000000, an address 4 GiB from the
+ * one intended. long long is 64-bit under both models.
+ *
+ * ELF builds get these from lib/syscall.s; PE builds from lib/syscall_pe.c.
  * Userspace code normally calls the typed wrappers below instead. */
-long syscall0(long n);
-long syscall1(long n, long a);
-long syscall2(long n, long a, long b);
-long syscall3(long n, long a, long b, long c);
-long syscall4(long n, long a, long b, long c, long d);
-long syscall6(long n, long a, long b, long c, long d, long e, long f);
+typedef long long sysarg_t;
+
+sysarg_t syscall0(sysarg_t n);
+sysarg_t syscall1(sysarg_t n, sysarg_t a);
+sysarg_t syscall2(sysarg_t n, sysarg_t a, sysarg_t b);
+sysarg_t syscall3(sysarg_t n, sysarg_t a, sysarg_t b, sysarg_t c);
+sysarg_t syscall4(sysarg_t n, sysarg_t a, sysarg_t b, sysarg_t c, sysarg_t d);
+sysarg_t syscall6(sysarg_t n, sysarg_t a, sysarg_t b, sysarg_t c, sysarg_t d,
+                  sysarg_t e, sysarg_t f);
+
+/* Pointer -> syscall argument, at full width under both data models. */
+#define SYSPTR(p) ((sysarg_t)(uintptr_t)(p))
 
 /* ---------------- Typed libc-style wrappers ----------------------------- */
 /* Standard POSIX-ish file / process surface. */

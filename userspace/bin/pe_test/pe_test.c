@@ -14,14 +14,26 @@
  * (rdi/rsi/rdx/r10/r8/r9, number in rax). The stubs below pin registers
  * explicitly so the compiler emits the moves; do not "simplify" them into
  * a plain call.
+ *
+ * Nor into `long`. mingw is LLP64, so `long` is FOUR bytes here while the
+ * kernel — built LP64 — reads eight. A pointer passed as long arrives
+ * truncated to its low 32 bits, which for an image based at 0x140000000
+ * means the kernel dereferences an address 4 GiB away from the one meant.
+ * Everything crossing the syscall boundary is `sarg`, which is 64-bit
+ * under both models.
  */
 #include "syscall.h"
+
+typedef long long          sarg;
+typedef unsigned long long uarg;
+
+#define ARG(p) ((sarg)(uarg)(__UINTPTR_TYPE__)(p))
 
 /* --- syscall stubs ------------------------------------------------------
  * syscall clobbers rcx (return rip) and r11 (saved rflags). */
 
-static long sys1(long n, long a) {
-    long ret;
+static sarg sys1(sarg n, sarg a) {
+    sarg ret;
     __asm__ volatile ("syscall"
                       : "=a"(ret)
                       : "a"(n), "D"(a)
@@ -29,8 +41,8 @@ static long sys1(long n, long a) {
     return ret;
 }
 
-static long sys3(long n, long a, long b, long c) {
-    long ret;
+static sarg sys3(sarg n, sarg a, sarg b, sarg c) {
+    sarg ret;
     __asm__ volatile ("syscall"
                       : "=a"(ret)
                       : "a"(n), "D"(a), "S"(b), "d"(c)
@@ -38,9 +50,9 @@ static long sys3(long n, long a, long b, long c) {
     return ret;
 }
 
-static long sys4(long n, long a, long b, long c, long d) {
-    long ret;
-    register long r10 __asm__("r10") = d;
+static sarg sys4(sarg n, sarg a, sarg b, sarg c, sarg d) {
+    sarg ret;
+    register sarg r10 __asm__("r10") = d;
     __asm__ volatile ("syscall"
                       : "=a"(ret)
                       : "a"(n), "D"(a), "S"(b), "d"(c), "r"(r10)
@@ -51,9 +63,9 @@ static long sys4(long n, long a, long b, long c, long d) {
 /* fd 1 is mirrored to the serial port by the kernel, which is the only
  * way this output is readable from outside a running VM. */
 static void put(const char *s) {
-    long n = 0;
+    sarg n = 0;
     while (s[n]) n++;
-    sys3(SYS_WRITE, 1, (long)(__UINTPTR_TYPE__)s, n);
+    sys3(SYS_WRITE, 1, ARG(s), n);
 }
 
 static void put_hex(unsigned long long v) {
@@ -102,7 +114,7 @@ void _start(void) {
 
     /* Where did we actually land? If the loader honoured ImageBase, every
      * address in this image sits just above 0x140000000. */
-    unsigned long long here = (unsigned long long)(__UINTPTR_TYPE__)&_start;
+    uarg here = (uarg)(__UINTPTR_TYPE__)&_start;
     put("  entry  = "); put_hex(here); put("\n");
     put("  data   = ");
     put_hex((unsigned long long)(__UINTPTR_TYPE__)&initialised); put("\n\n");
@@ -124,14 +136,14 @@ void _start(void) {
 
     /* The syscall surface works the same from a PE image as from an ELF
      * one: nothing about the ABI changes across the loader. */
-    long pid = sys1(SYS_GET_PID, 0);
+    sarg pid = sys1(SYS_GET_PID, 0);
     check("get_pid returns a live pid", pid > 0);
 
-    void *m = (void *)(__UINTPTR_TYPE__)sys4(SYS_MMAP, 0, 4096,
-                                             PROT_READ | PROT_WRITE,
-                                             MAP_PRIVATE | MAP_ANONYMOUS);
-    check("mmap from a PE image", (long)(__UINTPTR_TYPE__)m > 0);
-    if ((long)(__UINTPTR_TYPE__)m > 0) {
+    sarg raw = sys4(SYS_MMAP, 0, 4096, PROT_READ | PROT_WRITE,
+                    MAP_PRIVATE | MAP_ANONYMOUS);
+    void *m = (void *)(__UINTPTR_TYPE__)raw;
+    check("mmap from a PE image", raw > 0);
+    if (raw > 0) {
         volatile unsigned long long *p = m;
         *p = 0xA5A5A5A5A5A5A5A5ull;
         check("mapped page is usable", *p == 0xA5A5A5A5A5A5A5A5ull);

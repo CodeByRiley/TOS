@@ -7,9 +7,12 @@ USER_CFLAGS  := -ffreestanding -nostdlib -fno-pie -mno-red-zone -static \
                 -I lib -I ../kernel -O2 -Wall -Wextra
 USER_LDFLAGS := -nostdlib -static -T lib/user.ld
 
-# PE binaries share no objects with the ELF ones — mingw cannot link an ELF
-# .o into a PE image, so bin/pe_*/ sources carry their own syscall stubs and
-# entry point. Only the SYS_* numbers are shared, via -I lib.
+# PE binaries cannot link ELF objects, so every object is built twice: once
+# by the ELF cross-compiler into foo.o, once by mingw into foo.pe.o. The
+# SOURCES are shared — bin/hello/hello.c produces both hello.elf and
+# hello.exe — because the syscall layer is typed on sysarg_t rather than
+# `long`, which differs in width between the two toolchains. See the note
+# in lib/syscall.h.
 #
 # -fno-asynchronous-unwind-tables drops .pdata/.xdata: nothing unwinds, and
 # it keeps the section count down to what the loader has to walk.
@@ -17,9 +20,25 @@ PE_CFLAGS := -ffreestanding -nostdlib -fno-pie -mno-red-zone -static \
              -fno-asynchronous-unwind-tables \
              -I lib -I ../kernel -O2 -Wall -Wextra
 
+# mingw counterparts of crt0.s and syscall.s; everything else is the same
+# source the ELF build uses.
+PE_LIB_OBJS := lib/crt0_pe.pe.o lib/syscall_pe.pe.o lib/syscall.pe.o \
+               lib/printf.pe.o lib/string.pe.o lib/string_extra.pe.o \
+               lib/malloc.pe.o
+
+# C-source PE lib objects (crt0_pe is assembly and has its own rule).
+PE_LIB_C_OBJS := $(filter-out lib/crt0_pe.pe.o, $(PE_LIB_OBJS))
+
+# Self-contained PE programs: their own entry point and stubs, no PE_LIB.
 PE_BINS := pe_test
-PE_BIN_OBJS := $(foreach b,$(PE_BINS),bin/$(b)/$(b).o)
+PE_BIN_OBJS := $(foreach b,$(PE_BINS),bin/$(b)/$(b).pe.o)
 PE_BIN_EXES := $(foreach b,$(PE_BINS),bin/$(b)/$(b).exe)
+
+# PE variants built from the very same sources as the ELF binaries of the
+# same name. bin/hello/hello.c -> hello.elf and hello.exe.
+PE_VARIANTS := hello ls
+PE_VARIANT_OBJS := $(foreach b,$(PE_VARIANTS),bin/$(b)/$(b).pe.o)
+PE_VARIANT_EXES := $(foreach b,$(PE_VARIANTS),bin/$(b)/$(b).exe)
 
 # string_extra carries strstr/strcpy/strcat/strrchr/strcasecmp, which
 # string.c does not define. Without it any tool calling one of those only
@@ -88,7 +107,7 @@ $(info DOOM_OBJS first = $(firstword $(DOOM_OBJS)))
 	$(USER_ELF_CC) $(DOOM_CFLAGS) -c $< -o $@
 
 .PHONY: all clean
-all: $(SIMPLE_BIN_ELFS) bin/doom/doom.elf $(PE_BIN_EXES)
+all: $(SIMPLE_BIN_ELFS) bin/doom/doom.elf $(PE_BIN_EXES) $(PE_VARIANT_EXES)
 
 # --- library objects -----------------------------------------------------
 
@@ -114,11 +133,16 @@ $(SIMPLE_BIN_ELFS): bin/%.elf: bin/%.o $(LIB_OBJS)
 
 # --- PE binaries ---------------------------------------------------------
 
-# Compile PE source objects using MinGW
-$(PE_BIN_OBJS): %.o: %.c
+# Every PE object, whether library or program, comes from a .c of the same
+# stem compiled by mingw. The .pe.o suffix keeps it clear of the ELF object
+# the same source also produces.
+$(PE_LIB_C_OBJS) $(PE_BIN_OBJS) $(PE_VARIANT_OBJS): %.pe.o: %.c
 	$(USER_PE_CC) $(PE_CFLAGS) -c $< -o $@
 
-# Link PE executables using MinGW. No $(LIB_OBJS) here: those are ELF
+lib/crt0_pe.pe.o: lib/crt0_pe.S
+	$(USER_PE_CC) -c $< -o $@
+
+# Link PE executables using MinGW. Never $(LIB_OBJS) — those are ELF
 # objects and mingw's ld refuses to put them in a PE image.
 #
 # -e _start                    : no CRT, so name the entry point ourselves
@@ -127,11 +151,17 @@ $(PE_BIN_OBJS): %.o: %.c
 #                                MAP_FIXED and the loader's fixed placement
 #                                need to handle
 # -Wl,--subsystem,console      : cosmetic here, but keeps the header honest
-$(PE_BIN_EXES): bin/%.exe: bin/%.o
-	$(USER_PE_CC) -nostdlib -static -e _start \
-	-Wl,--image-base,0x140000000 \
-	-Wl,--subsystem,console \
-	$^ -o $@
+PE_LDFLAGS := -nostdlib -static -e _start \
+              -Wl,--image-base,0x140000000 \
+              -Wl,--subsystem,console
+
+# Self-contained programs link no library at all.
+$(PE_BIN_EXES): bin/%.exe: bin/%.pe.o
+	$(USER_PE_CC) $(PE_LDFLAGS) $^ -o $@
+
+# Variants link the mingw-built library, same as their ELF twins link LIB_OBJS.
+$(PE_VARIANT_EXES): bin/%.exe: bin/%.pe.o $(PE_LIB_OBJS)
+	$(USER_PE_CC) $(PE_LDFLAGS) $^ -o $@
 
 clean:
 	rm -f lib/*.o bin/*/*.o bin/*/*.elf bin/*/*.exe
