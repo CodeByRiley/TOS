@@ -104,9 +104,10 @@ _Static_assert(sizeof(struct stat_user) == 24,
 #define SYS_IPC_SEND       130
 #define SYS_IPC_RECV       131
 #define SYS_SHMEM_SHARE    132
-#define SYS_WM_REGISTER    133
-#define SYS_WM_PID         134
-#define SYS_TTY_DRAIN      135
+#define SYS_SHMEM_UNSHARE  133
+#define SYS_WM_REGISTER    134
+#define SYS_WM_PID         135
+#define SYS_TTY_DRAIN      136
 
 /* --- Diagnostics ------------------------------------------------------ */
 /* Consumed by userspace btop. */

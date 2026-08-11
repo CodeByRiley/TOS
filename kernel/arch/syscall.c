@@ -601,6 +601,74 @@ static long sys_shmem_share(long target_pid, uint64_t my_va, long npages,
   return 0;
 }
 
+/* Unmap shared pages from the target process. `va` is an address in the
+ * TARGET's address space — the value sys_shmem_share wrote back through
+ * out_target_va, not the caller's own mapping of the same frames.
+ *
+ * The caller still owns the physical frames (they were marked VMM_SHARED
+ * at map time), so this does NOT call pmm_free_frame. The caller is
+ * responsible for freeing its own mapping via sys_munmap or
+ * aligned_page_free.
+ *
+ * Pages in the range that are not currently shared are skipped rather
+ * than treated as an error: a caller tearing down a surface should not
+ * have to track exactly which pages survived. */
+static long sys_shmem_unshare(long target_pid, uint64_t va, long npages) {
+  if (target_pid <= 0 || npages <= 0 || npages > MAX_SHMEM_PAGES)
+    return -1;
+  if (va & 0xFFFULL)
+    return -1;
+
+  struct task *me = task_current();
+  if (!me || !me->user_pml4)
+    return -1;
+
+  struct task *target = task_find((int)target_pid);
+  if (!target || !target->user_pml4)
+    return -1;
+
+  /* Confine the range to the shmem arena, where sys_shmem_share places
+   * every mapping it makes.
+   *
+   * This is not tidiness. process_pml4_create copies PML4[256..511] and
+   * the low-1 GiB PDPT entry into every process by physical address, so
+   * those page tables are the same memory in all of them. Unmapping an
+   * address down there would clear a PTE the kernel and every other
+   * process walk, not just this target's view of it. */
+  uint64_t bytes = (uint64_t)npages * 4096;
+  if (va < USER_SHMEM_BASE || !user_range_ok(va, bytes))
+    return -1;
+
+  /* Only pages carrying VMM_SHARED arrived through a share, so only those
+   * are ours to take away. Without this check any task could hand another
+   * task's pid to unshare and unmap its stack or its text.
+   *
+   * It still does not prove *this* task was the one that shared them —
+   * that needs per-share ownership the kernel does not record yet — but
+   * it keeps the blast radius inside genuinely shared pages. */
+  long removed = 0;
+  for (long i = 0; i < npages; i++) {
+    uint64_t target_va = va + (uint64_t)i * 4096;
+    uint64_t entry = vmm_entry_in(target->user_pml4, target_va);
+    if (!entry || !(entry & VMM_SHARED))
+      continue;
+    vmm_unmap_in(target->user_pml4, target_va);
+    removed++;
+  }
+
+  /* Decrement by what actually went away, and never past zero.
+   * task_reap_unclaimed reads a positive count as "receivers still map my
+   * frames" and declines to reap; a count driven negative would let this
+   * task be reaped and free_user_pml4 hand those frames back to the PMM
+   * while a receiver was still writing through them. */
+  if (removed >= me->shmem_shared_out)
+    me->shmem_shared_out = 0;
+  else
+    me->shmem_shared_out -= (int)removed;
+
+  return 0;
+}
+
 static long sys_wm_register(void) {
   struct task *t = task_current();
   if (!t)
@@ -1129,6 +1197,9 @@ long syscall_dispatch(struct syscall_frame *f) {
   case SYS_SHMEM_SHARE:
     ret = sys_shmem_share((uintptr_t)a1, (uint64_t)(uintptr_t)a2, (uintptr_t)a3,
                           (uint64_t *)(uintptr_t)a4);
+    break;
+  case SYS_SHMEM_UNSHARE:
+    ret = sys_shmem_unshare((uintptr_t)a1, (uint64_t)(uintptr_t)a2, (uintptr_t)a3);
     break;
   case SYS_WM_REGISTER:
     ret = sys_wm_register();

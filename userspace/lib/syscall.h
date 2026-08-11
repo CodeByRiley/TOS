@@ -42,28 +42,28 @@
 #define SYS_READDIR_PATH   218
 
 
-#define SYS_YIELD   	  24
-#define SYS_EXIT    	  60
-#define SYS_FB_INFO     100
-#define SYS_FB_MAP      101
-#define SYS_FB_DAMAGE   108
-#define SYS_KBD_POLL    102
-#define SYS_GET_TICKS   103
-#define SYS_EXEC        104
-#define SYS_MSG_GET     105
-#define SYS_MSG_PEEK    106
-#define SYS_MOUSE_POS   107
-#define SYS_CON_WRITE   120
-#define SYS_CON_CLEAR   121
-#define SYS_SLEEP_TICKS 122
-#define SYS_GET_PID     123
-#define SYS_IPC_SEND    130
-#define SYS_IPC_RECV    131
-#define SYS_SHMEM_SHARE 132
-#define SYS_WM_REGISTER 133
-#define SYS_WM_PID      134
-#define SYS_TTY_DRAIN   135
-
+#define SYS_YIELD   	  	 24
+#define SYS_EXIT    	  	 60
+#define SYS_FB_INFO     	 100
+#define SYS_FB_MAP      	 101
+#define SYS_FB_DAMAGE   	 108
+#define SYS_KBD_POLL    	 102
+#define SYS_GET_TICKS   	 103
+#define SYS_EXEC        	 104
+#define SYS_MSG_GET     	 105
+#define SYS_MSG_PEEK    	 106
+#define SYS_MOUSE_POS   	 107
+#define SYS_CON_WRITE   	 120
+#define SYS_CON_CLEAR   	 121
+#define SYS_SLEEP_TICKS 	 122
+#define SYS_GET_PID     	 123
+#define SYS_IPC_SEND       130
+#define SYS_IPC_RECV       131
+#define SYS_SHMEM_SHARE    132
+#define SYS_SHMEM_UNSHARE  133
+#define SYS_WM_REGISTER    134
+#define SYS_WM_PID         135
+#define SYS_TTY_DRAIN      136
 
 #define SYS_PROC_LIST   140
 #define SYS_MEM_STATS   141
@@ -301,6 +301,7 @@ long  ipc_send(int target_pid, const struct ipc_msg *m);
 long  ipc_recv(struct ipc_msg *out);
 long  shmem_share(int target_pid, uint64_t my_va, long npages,
                   uint64_t *out_target_va);
+long  shmem_unshare(int target_pid, uint64_t my_va, long npages);
 
 /* Winman registration / discovery. The pid of the WM is not cached because
  * winman is allowed to crash and respawn. */

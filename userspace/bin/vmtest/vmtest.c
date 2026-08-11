@@ -171,6 +171,61 @@ static void test_stat(void) {
     check("fstat on a closed fd fails", fstat_raw(9, &st) != 0);
 }
 
+/* shmem_unshare takes a pid and an address in THAT process's space, so a
+ * missing range check would make it an arbitrary-unmap primitive against
+ * any process — including this one, and including page tables the kernel
+ * shares with every process.
+ *
+ * The two cases that point it at our own memory are deliberately
+ * destructive if the guard regresses: the page they name is one we read
+ * back immediately afterwards, so a kernel that honoured the request
+ * would fault us here rather than let the test pass quietly. With no
+ * per-task fault handling that shows up as a hung boot, which is loud
+ * enough to notice and better than a silent pass. */
+static void test_shmem_unshare(void) {
+    printf("shmem_unshare rejections\n");
+
+    long self = get_pid();
+    check("get_pid for self", self > 0);
+
+    unsigned char *page = mmap(0, 4096, PROT_READ | PROT_WRITE,
+                               MAP_PRIVATE | MAP_ANONYMOUS);
+    if (page == MAP_FAILED) { check("setup mapping", 0); return; }
+    page[0] = 0x5A;
+
+    unsigned long long pv = (unsigned long long)(unsigned long)page;
+
+    check("zero pages rejected",  shmem_unshare((int)self, pv, 0) != 0);
+    check("negative pages rejected", shmem_unshare((int)self, pv, -1) != 0);
+    check("oversized page count rejected",
+          shmem_unshare((int)self, 0x80000000ull, 1 << 20) != 0);
+    check("unaligned address rejected",
+          shmem_unshare((int)self, 0x80000800ull, 1) != 0);
+    check("unknown pid rejected", shmem_unshare(31337, 0x80000000ull, 1) != 0);
+    check("pid 0 rejected", shmem_unshare(0, 0x80000000ull, 1) != 0);
+
+    /* Below the shmem arena: our own mmap'd page. */
+    check("address below the shmem arena rejected",
+          shmem_unshare((int)self, pv, 1) != 0);
+    check("that page is still mapped", page[0] == 0x5A);
+
+    /* The kernel half, whose page tables every process shares. Nothing
+     * here can fault us — a kernel that obeyed would corrupt itself
+     * silently — so the return value is the only evidence available. */
+    check("kernel-half address rejected",
+          shmem_unshare((int)self, 0xFFFF800000000000ull, 1) != 0);
+
+    /* Inside the arena but not actually shared: nothing to remove, and
+     * removing nothing is not an error. */
+    check("unshared page in range is a no-op",
+          shmem_unshare((int)self, 0x80000000ull, 1) == 0);
+
+    /* Still here, still running, still own our memory. */
+    page[0] = 0xA5;
+    check("still executing afterwards", page[0] == 0xA5);
+    munmap(page, 4096);
+}
+
 int main(void) {
     printf("vmtest: memory + metadata syscalls\n\n");
 
@@ -179,6 +234,7 @@ int main(void) {
     test_prot();
     test_bad_args();
     test_stat();
+    test_shmem_unshare();
 
     if (failures == 0) printf("\nall checks passed\n");
     else               printf("\n%d check(s) FAILED\n", failures);

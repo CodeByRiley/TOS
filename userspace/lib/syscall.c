@@ -197,6 +197,10 @@ long shmem_share(int target_pid, uint64_t my_va, long npages,
                     (sysarg_t)(uintptr_t)out_target_va);
 }
 
+long shmem_unshare(int target_pid, uint64_t my_va, long npages) {
+    return syscall3(SYS_SHMEM_UNSHARE, target_pid, (sysarg_t)my_va, npages);
+}
+
 /* --- Winman registration ----------------------------------------------- */
 long wm_register(void) { return syscall0(SYS_WM_REGISTER); }
 long wm_pid(void)      { return syscall0(SYS_WM_PID); }
