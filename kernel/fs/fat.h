@@ -27,8 +27,23 @@ struct fat_file {
     struct dir_entry *dir_ent;     /* pointer in fs_image; NULL if read-only/unlinked */
 };
 
+/* Metadata for one path, without opening it. `attr` is the raw FAT
+ * attribute byte; is_dir is broken out because that is the only bit every
+ * caller wants. Directories report size 0 — FAT does not store a size for
+ * them, and walking the cluster chain to synthesise one would be a lie
+ * with extra steps. */
+struct fat_stat {
+    uint32_t size;
+    uint32_t first_cluster;
+    uint8_t  attr;
+    uint8_t  is_dir;
+};
+
 /* Bind the driver to an in-memory FAT16 image. */
 int    fat_init(uint8_t *image, size_t size);
+
+/* Stat a root-relative 8.3 path. Returns 0 on success, -1 if not found. */
+int    fat_stat(const char *path, struct fat_stat *out);
 
 /* Open an existing file by root-relative 8.3 path. */
 int    fat_open(const char *path, struct fat_file *f);

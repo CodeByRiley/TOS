@@ -59,8 +59,9 @@ static struct block *request_block(size_t n) {
     if (bytes < HEAP_CHUNK_SIZE) bytes = HEAP_CHUNK_SIZE;
     bytes = align_page(bytes);
 
-    void *mem = mmap(bytes);
-    if (!mem) return 0;
+    void *mem = mmap(0, bytes, PROT_READ | PROT_WRITE,
+                     MAP_PRIVATE | MAP_ANONYMOUS);
+    if (mem == MAP_FAILED) return 0;
 
     struct block *b = (struct block*)mem;
     b->size = bytes - sizeof(*b);

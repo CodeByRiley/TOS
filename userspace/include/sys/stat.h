@@ -1,9 +1,13 @@
 /* userspace/include/sys/stat.h — file-metadata structs + mode bits.
  *
- * stat()/fstat() are currently stubbed in lib/stat_stub.c. mkdir() is
- * backed by the FAT directory syscall. The struct still has to exist because DOOM and friends declare
- * variables of type `struct stat`. Mode bits follow the standard Unix
- * octal encoding so ported code works unchanged.
+ * stat()/fstat() are backed by SYS_STAT / SYS_FSTAT and implemented in
+ * lib/stat.c, which expands the kernel's compact struct stat_user into
+ * the POSIX shape below; mkdir() is backed by the FAT directory syscall.
+ * Fields FAT cannot answer for are documented in lib/stat.c — notably the
+ * timestamps, which are always 0.
+ *
+ * Mode bits follow the standard Unix octal encoding so ported code works
+ * unchanged.
  */
 #ifndef SYS_STAT_H
 #define SYS_STAT_H

@@ -11,8 +11,34 @@
 
 #include <stdint.h>
 
+/* --- User address-space map -------------------------------------------
+ *
+ * One place for every fixed user VA boundary. These used to live in four
+ * files (elf.c, sched.c, syscall.c, here) with nothing checking they
+ * agreed.
+ *
+ *   0x0000_1000 .. 0x6000_0000   image: ELF PT_LOAD / PE section mapping
+ *   0x6000_0000 .. 0x7000_0000   framebuffer window (SYS_FB_MAP)
+ *   0x7000_0000 .. 0x8000_0000   mmap arena (auto-placed allocations)
+ *   0x8000_0000 .. 1 GiB up      shmem arena (SYS_SHMEM_SHARE, grows up)
+ *   0x1_0000_0000 and above      free for MAP_FIXED (PE ImageBase lands
+ *                                here: 0x1_4000_0000 for a 64-bit .exe)
+ *   USER_STACK_TOP downward      stack, USER_STACK_PAGES eagerly mapped
+ */
+#define USER_VA_MIN      0x0000000000001000ULL
+#define USER_IMAGE_MAX   0x0000000070000000ULL
+#define USER_FB_BASE     0x0000000060000000ULL
+#define USER_MMAP_BASE   0x0000000070000000ULL
+#define USER_MMAP_LIMIT  0x0000000080000000ULL
+#define USER_SHMEM_BASE  0x0000000080000000ULL
+
+/* Ceiling for MAP_FIXED. Well clear of the stack, and inside the 47-bit
+ * canonical lower half. */
+#define USER_VA_MAX      0x00007F0000000000ULL
+
 #define USER_STACK_TOP   0x00007FFFFFFFE000ULL
 #define USER_STACK_PAGES 512
+#define USER_STACK_LOW   (USER_STACK_TOP - (uint64_t)USER_STACK_PAGES * 4096)
 
 /* Allocate a user stack in the kernel PML4 / in a supplied PML4.
  * Returns 0 on success and -1 on allocation or mapping failure. */

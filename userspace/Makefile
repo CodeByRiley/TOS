@@ -10,16 +10,18 @@ USER_LDFLAGS := -nostdlib -static -T lib/user.ld
 # string.c does not define. Without it any tool calling one of those only
 # links while the call is optimised away — which is how plist and pkill
 # built despite referencing strstr.
+# stat.o is in the base set, not the DOOM-only extras: stat/fstat are real
+# syscalls now, so every binary should be able to call them.
 LIB_OBJS := lib/crt0.o lib/syscall_asm.o lib/syscall.o lib/wm.o \
             lib/printf.o lib/malloc.o lib/stdio.o lib/string.o lib/keymap.o lib/console.o \
-            lib/stdlib_extra.o lib/string_extra.o
+            lib/stdlib_extra.o lib/string_extra.o lib/stat.o
 
 # C-source lib objects (.s sources have their own explicit rules below).
 LIB_C_OBJS := $(filter-out lib/crt0.o lib/syscall_asm.o, $(LIB_OBJS))
 
 # One binary per directory under bin/, named after the directory.
 # Doom is special (multi-source) and gets its own rules.
-SIMPLE_BINS := hello cat gfx ls sh shutdown reboot mtest winman btop pkill plist fdchild
+SIMPLE_BINS := hello cat gfx ls sh shutdown reboot mtest winman btop pkill plist fdchild vmtest
 SIMPLE_BIN_OBJS := $(foreach b,$(SIMPLE_BINS),bin/$(b)/$(b).o)
 SIMPLE_BIN_ELFS := $(foreach b,$(SIMPLE_BINS),bin/$(b)/$(b).elf)
 
@@ -48,7 +50,7 @@ DOOM_PLATFORM_OBJS := $(DOOM_PLATFORM_SRC:.c=.o)
 
 DOOM_EXTRA_OBJS := lib/string_extra.o lib/stdio_extra.o \
                    lib/math_stub.o lib/setjmp_stub.o lib/errno.o \
-                   lib/time_stub.o lib/unistd_stub.o lib/stat_stub.o
+                   lib/time_stub.o lib/unistd_stub.o
 
 DOOM_CFLAGS := -ffreestanding -nostdlib -fno-pie -mno-red-zone -static \
                 -I include -I lib \

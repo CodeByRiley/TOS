@@ -17,12 +17,12 @@
 #include "memory/hhdm.h"
 #include "memory/vmm.h"
 #include "loader/elf.h"
+#include "loader/process.h"
 #include "fs/stdio.h"
 
-/* Upper bound for the ELF image region. Sits below MMAP_USER_BASE
- * (sched.c) so a segment can never land on the mmap or shmem arenas.
- * Doubles as the bound that keeps p_vaddr + p_memsz from wrapping. */
-#define USER_IMAGE_MAX 0x0000000070000000ULL
+/* USER_IMAGE_MAX (loader/process.h) bounds the image region: it sits below
+ * the mmap arena so a segment can never land on mmap or shmem, and it
+ * doubles as the bound that keeps p_vaddr + p_memsz from wrapping. */
 
 uint64_t elf_load(const char *path, uint64_t *pml4) {
     FILE *fp = fopen(path, "rb");

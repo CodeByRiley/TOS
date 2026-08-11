@@ -38,4 +38,12 @@ int      vmm_map_in(uint64_t *pml4, uint64_t virt, uint64_t phys, uint64_t flags
 int      vmm_unmap_in(uint64_t *pml4, uint64_t virt);
 uint64_t vmm_translate_in(uint64_t *pml4, uint64_t virt);
 
+/* Change permissions on an already-mapped page, keeping its frame and its
+ * VMM_SHARED ownership bit. Returns -1 if the page is not mapped. */
+int      vmm_protect_in(uint64_t *pml4, uint64_t virt, uint64_t flags);
+
+/* Raw leaf PTE (frame + flags), or 0 if unmapped. Callers mask with
+ * ~0xFFF for the frame and test VMM_* for the flags. */
+uint64_t vmm_entry_in(uint64_t *pml4, uint64_t virt);
+
 #endif

@@ -45,7 +45,8 @@
 
 // #region CONSTANTS
 
-#define USER_FB_BASE 0x0000000060000000ULL
+/* User VA boundaries (USER_FB_BASE, USER_MMAP_BASE, USER_MMAP_LIMIT,
+ * USER_VA_MIN/MAX, stack) all come from loader/process.h. */
 
 #define MSR_EFER 0xC0000080
 #define MSR_STAR 0xC0000081
@@ -53,7 +54,6 @@
 #define MSR_FMASK 0xC0000084
 
 #define MAX_SHMEM_PAGES 4096 /* per-call cap; 16 MiB */
-#define USER_MMAP_LIMIT 0x0000000080000000ULL
 
 // #endregion CONSTANTS
 
@@ -141,7 +141,105 @@ static void sys_mmap_rollback(struct task *t, uint64_t base, uint64_t pages) {
   }
 }
 
-static long sys_mmap(long len) {
+/* Translate PROT_* into PTE bits. Returns 0 for a protection this VMM
+ * cannot express, which callers must treat as an error — 0 is never a
+ * legal user PTE flag set (VMM_USER is always required). */
+static uint64_t prot_to_pte(int prot) {
+  if (prot == PROT_NONE)
+    return 0;                       /* see the PROT_NONE note in syscall.h */
+  if (prot & ~(PROT_READ | PROT_WRITE | PROT_EXEC))
+    return 0;
+  if (!(prot & PROT_READ))
+    return 0;                       /* x86 has no write-only or exec-only  */
+
+  uint64_t flags = VMM_PRESENT | VMM_USER;
+  if (prot & PROT_WRITE)
+    flags |= VMM_WRITE;
+  if (!(prot & PROT_EXEC))
+    flags |= VMM_NX;
+  return flags;
+}
+
+/* True if `base .. base+bytes` is a legal user range that does not run
+ * into the stack. Wrap-around is checked by the caller's overflow test. */
+static int user_range_ok(uint64_t base, uint64_t bytes) {
+  if (bytes == 0 || base < USER_VA_MIN)
+    return 0;
+  if (base + bytes < base || base + bytes > USER_VA_MAX)
+    return 0;
+  if (base < USER_STACK_TOP && base + bytes > USER_STACK_LOW)
+    return 0;
+  return 1;
+}
+
+/* Every page in the range must be free for a MAP_FIXED to succeed. */
+static int range_is_unmapped(struct task *t, uint64_t base, uint64_t bytes) {
+  for (uint64_t off = 0; off < bytes; off += 4096) {
+    if (vmm_translate_in(t->user_pml4, base + off))
+      return 0;
+  }
+  return 1;
+}
+
+/* Record a freed arena range for reuse, merging with any hole it touches
+ * so repeated map/unmap of adjacent blocks doesn't shred the list. */
+static void hole_add(struct task *t, uint64_t base, uint64_t bytes) {
+  for (int i = 0; i < TASK_MMAP_HOLES; i++) {
+    struct vm_hole *h = &t->mmap_holes[i];
+    if (!h->len)
+      continue;
+    if (h->base + h->len == base) {
+      h->len += bytes;
+      return;
+    }
+    if (base + bytes == h->base) {
+      h->base = base;
+      h->len += bytes;
+      return;
+    }
+  }
+
+  for (int i = 0; i < TASK_MMAP_HOLES; i++) {
+    if (!t->mmap_holes[i].len) {
+      t->mmap_holes[i].base = base;
+      t->mmap_holes[i].len = bytes;
+      return;
+    }
+  }
+  /* List full: the range stays unmapped but its VA is not reused. */
+  log_write("mmap: hole list full, leaking user VA", KERNEL, LOG_WARN);
+}
+
+/* First-fit over the free list, then the bump pointer. Returns 0 when the
+ * arena is exhausted — never a valid address, since the arena starts well
+ * above USER_VA_MIN. */
+static uint64_t arena_alloc(struct task *t, uint64_t bytes) {
+  for (int i = 0; i < TASK_MMAP_HOLES; i++) {
+    struct vm_hole *h = &t->mmap_holes[i];
+    if (!h->len || h->len < bytes)
+      continue;
+    uint64_t base = h->base;
+    h->base += bytes;
+    h->len -= bytes;
+    return base;
+  }
+
+  uint64_t base = t->mmap_next_va;
+  if (base + bytes < base || base + bytes > USER_MMAP_LIMIT)
+    return 0;
+  t->mmap_next_va = base + bytes;
+  return base;
+}
+
+/* mmap(addr, len, prot, flags).
+ *
+ * Anonymous, private, eagerly backed: every page gets a zeroed frame at
+ * call time. There is no demand paging and no file-backed mapping — a
+ * loader reads section bytes in with read() after mapping the range.
+ *
+ * Without MAP_FIXED, `addr` is ignored and the range comes from the arena.
+ * With MAP_FIXED, `addr` must be page-aligned and entirely unmapped. */
+static long sys_mmap(uint64_t addr, long len, int prot, int flags) {
   if (len <= 0)
     return -1;
 
@@ -149,10 +247,27 @@ static long sys_mmap(long len) {
   if (!t || !t->user_pml4)
     return -1;
 
-  uint64_t bytes = ((uint64_t)len + 4095) & ~4095ULL;
-  uint64_t base = t->mmap_next_va;
-  if (bytes == 0 || base + bytes < base || base + bytes > USER_MMAP_LIMIT) {
+  uint64_t pte_flags = prot_to_pte(prot);
+  if (!pte_flags)
     return -1;
+
+  uint64_t bytes = ((uint64_t)len + 4095) & ~4095ULL;
+  if (bytes < (uint64_t)len)          /* rounding wrapped */
+    return -1;
+
+  uint64_t base;
+  if (flags & MAP_FIXED) {
+    if (addr & 4095)
+      return -1;
+    if (!user_range_ok(addr, bytes))
+      return -1;
+    if (!range_is_unmapped(t, addr, bytes))
+      return -1;
+    base = addr;
+  } else {
+    base = arena_alloc(t, bytes);
+    if (!base)
+      return -1;
   }
 
   uint64_t pages = bytes / 4096;
@@ -164,16 +279,87 @@ static long sys_mmap(long len) {
     }
 
     memset(phys_to_virt(phys), 0, 4096);
-    if (vmm_map_in(t->user_pml4, base + i * 4096, phys,
-                   VMM_PRESENT | VMM_WRITE | VMM_USER) != 0) {
+    if (vmm_map_in(t->user_pml4, base + i * 4096, phys, pte_flags) != 0) {
       pmm_free_frame(phys);
       sys_mmap_rollback(t, base, i);
       return -1;
     }
   }
 
-  t->mmap_next_va = base + bytes;
   return (long)base;
+}
+
+/* mprotect(addr, len, prot).
+ *
+ * All-or-nothing: the range is validated before a single PTE changes, so
+ * a partial failure can't leave a PE image half RX and half RW. Pages must
+ * already be mapped — this only changes permissions, it never allocates. */
+static long sys_mprotect(uint64_t addr, long len, int prot) {
+  if (len <= 0 || (addr & 4095))
+    return -1;
+
+  struct task *t = task_current();
+  if (!t || !t->user_pml4)
+    return -1;
+
+  uint64_t pte_flags = prot_to_pte(prot);
+  if (!pte_flags)
+    return -1;
+
+  uint64_t bytes = ((uint64_t)len + 4095) & ~4095ULL;
+  if (bytes < (uint64_t)len || !user_range_ok(addr, bytes))
+    return -1;
+
+  for (uint64_t off = 0; off < bytes; off += 4096) {
+    if (!vmm_translate_in(t->user_pml4, addr + off))
+      return -1;
+  }
+
+  for (uint64_t off = 0; off < bytes; off += 4096) {
+    if (vmm_protect_in(t->user_pml4, addr + off, pte_flags) != 0)
+      return -1;
+  }
+  return 0;
+}
+
+/* munmap(addr, len).
+ *
+ * Unmaps whole pages and returns their frames to the PMM, except frames
+ * carrying VMM_SHARED: those belong to whichever task shared them in, and
+ * freeing one here would hand a live page back to the allocator. Ranges
+ * inside the mmap arena go on the free list; MAP_FIXED ranges outside it
+ * need no bookkeeping, since fixed mappings are placed by the caller and
+ * collision-checked at map time.
+ *
+ * Unmapping a range with holes in it is not an error — POSIX says the same
+ * — so this reports success as long as the range itself is legal. */
+static long sys_munmap(uint64_t addr, long len) {
+  if (len <= 0 || (addr & 4095))
+    return -1;
+
+  struct task *t = task_current();
+  if (!t || !t->user_pml4)
+    return -1;
+
+  uint64_t bytes = ((uint64_t)len + 4095) & ~4095ULL;
+  if (bytes < (uint64_t)len || !user_range_ok(addr, bytes))
+    return -1;
+
+  for (uint64_t off = 0; off < bytes; off += 4096) {
+    uint64_t va = addr + off;
+    uint64_t entry = vmm_entry_in(t->user_pml4, va);
+    if (!entry)
+      continue;
+    vmm_unmap_in(t->user_pml4, va);
+    /* Mask to bits 12-51: VMM_NX lives at bit 63, so stripping the low
+     * flag bits alone would hand the PMM an address with it still set. */
+    if (!(entry & VMM_SHARED))
+      pmm_free_frame(entry & 0x000FFFFFFFFFF000ULL);
+  }
+
+  if (addr >= USER_MMAP_BASE && addr + bytes <= USER_MMAP_LIMIT)
+    hole_add(t, addr, bytes);
+  return 0;
 }
 
 // #endregion MMAP
@@ -645,6 +831,45 @@ static long sys_read(int fd, void *buf, size_t n) {
   return (long)fat_read(t->fds[fd], buf, n);
 }
 
+static void stat_from_fat(const struct fat_stat *fs, struct stat_user *out) {
+  out->size = fs->size;
+  out->first_cluster = fs->first_cluster;
+  out->type = fs->is_dir ? STAT_TYPE_DIR : STAT_TYPE_FILE;
+  out->attr = fs->attr;
+}
+
+static long sys_stat(const char *path, struct stat_user *out) {
+  if (!path || !out)
+    return -1;
+
+  char resolved[TASK_CWD_MAX];
+  if (resolve_path(path, resolved, sizeof(resolved)) != 0)
+    return -1;
+
+  struct fat_stat fs;
+  if (fat_stat(resolved, &fs) != 0)
+    return -1;
+
+  stat_from_fat(&fs, out);
+  return 0;
+}
+
+/* fstat works off the open handle rather than re-resolving a path, so it
+ * still reports the right size for a file that has been written through
+ * this fd — and keeps working if the name is unlinked while open. */
+static long sys_fstat(int fd, struct stat_user *out) {
+  struct task *t = task_current();
+  if (!t || !out || fd < 3 || fd >= TASK_MAX_FDS || !t->fds[fd])
+    return -1;
+
+  struct fat_file *f = t->fds[fd];
+  out->size = f->size;
+  out->first_cluster = f->first_cluster;
+  out->type = STAT_TYPE_FILE;   /* fat_open refuses directories */
+  out->attr = 0;
+  return 0;
+}
+
 static long sys_lseek(int fd, long off, int whence) {
   struct task *t = task_current();
   if (!t || fd < 3 || fd >= TASK_MAX_FDS || !t->fds[fd])
@@ -834,7 +1059,20 @@ long syscall_dispatch(struct syscall_frame *f) {
     ret = sys_lseek((uintptr_t)a1, (uintptr_t)a2, (uintptr_t)a3);
     break;
   case SYS_MMAP:
-    ret = sys_mmap((uintptr_t)a1);
+    ret = sys_mmap((uint64_t)a1, a2, (int)a3, (int)a4);
+    break;
+  case SYS_MPROTECT:
+    ret = sys_mprotect((uint64_t)a1, a2, (int)a3);
+    break;
+  case SYS_MUNMAP:
+    ret = sys_munmap((uint64_t)a1, a2);
+    break;
+  case SYS_STAT:
+    ret = sys_stat((const char *)(uintptr_t)a1,
+                   (struct stat_user *)(uintptr_t)a2);
+    break;
+  case SYS_FSTAT:
+    ret = sys_fstat((int)a1, (struct stat_user *)(uintptr_t)a2);
     break;
   case SYS_READDIR:
     ret = sys_readdir((uint32_t *)(uintptr_t)a1, (char *)(uintptr_t)a2, a3);

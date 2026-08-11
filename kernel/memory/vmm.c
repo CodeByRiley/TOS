@@ -118,6 +118,29 @@ int vmm_map_in(uint64_t *pml4, uint64_t virt, uint64_t phys, uint64_t flags) {
     return 0;
 }
 
+/* Rewrite the permission bits of an existing leaf PTE, keeping its frame.
+ * VMM_SHARED is preserved because it records ownership (whose PMM frame
+ * this is), not permission — losing it would make the receiver free a
+ * frame the owner still maps. Fails if the page isn't mapped: mprotect on
+ * an unmapped address must be an error, not a silent no-op. */
+int vmm_protect_in(uint64_t *pml4, uint64_t virt, uint64_t flags) {
+    uint64_t *pte = walk_only(pml4, virt);
+    if (!pte || !(*pte & VMM_PRESENT)) return -1;
+    uint64_t keep = (*pte & ADDR_MASK) | (*pte & VMM_SHARED);
+    *pte = keep | (flags | VMM_PRESENT);
+    __asm__ volatile ("invlpg (%0)" : : "r"(virt) : "memory");
+    return 0;
+}
+
+/* Physical frame behind a leaf PTE, plus its flags. Returns 0 if the page
+ * isn't mapped. Used by munmap to decide whether the frame is ours to
+ * hand back to the PMM. */
+uint64_t vmm_entry_in(uint64_t *pml4, uint64_t virt) {
+    uint64_t *pte = walk_only(pml4, virt);
+    if (!pte || !(*pte & VMM_PRESENT)) return 0;
+    return *pte;
+}
+
 int vmm_unmap_in(uint64_t *pml4, uint64_t virt) {
     uint64_t *pte = walk_only(pml4, virt);
     if (!pte) return -1;

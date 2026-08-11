@@ -19,11 +19,24 @@
 
 #define TASK_MAX_FDS 32
 #define TASK_CWD_MAX 256
+
+/* Freed mmap ranges, kept for reuse. Small and fixed: the arena is a bump
+ * allocator, and this list is what stops a load/unload cycle from walking
+ * mmap_next_va to the top of the arena and never coming back. If it fills
+ * up, the oldest hole is dropped — that VA is leaked for the life of the
+ * process, exactly as it was before the list existed. */
+#define TASK_MMAP_HOLES 16
+
 #include "msg/msg.h"
 #include <stddef.h>
 #include <stdint.h>
 
 struct fat_file;
+
+struct vm_hole {
+  uint64_t base;
+  uint64_t len;                   /* 0 marks an unused slot                */
+};
 
 enum task_state {
   TASK_RUNNING,
@@ -72,6 +85,12 @@ struct task {
   /* Bump allocator for shmem regions mapped into this task by peers. */
   uint64_t shmem_next_va;
   uint64_t mmap_next_va;
+
+  /* Ranges returned to the mmap arena by munmap, reusable by the next
+   * auto-placed mmap. MAP_FIXED mappings outside the arena are not
+   * tracked here: their addresses come from the caller, so a collision
+   * check against the page tables is the only bookkeeping they need. */
+  struct vm_hole mmap_holes[TASK_MMAP_HOLES];
 
   /* Pages this task has shared OUT to other tasks. Receivers carry
    * VMM_SHARED so their cleanup skips the frame, which makes the owner

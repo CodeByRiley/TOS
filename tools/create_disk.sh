@@ -24,6 +24,7 @@ payloads=(
 	"userspace/bin/plist/plist.elf::PLIST.ELF"
 	"userspace/bin/fdchild/fdchild.elf::FDCHILD.ELF"
 	"userspace/bin/mtest/mtest.elf::MTEST.ELF"
+	"userspace/bin/vmtest/vmtest.elf::VMTEST.ELF"
 	"userspace/bin/winman/winman.elf::WINMAN.ELF"
 	"userspace/bin/btop/btop.elf::BTOP.ELF"
 )

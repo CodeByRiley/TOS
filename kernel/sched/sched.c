@@ -21,6 +21,7 @@
 // #region INCLUDES
 
 #include "sched/sched.h"
+#include "loader/process.h"
 #include "memory/hhdm.h"
 #include "arch/gdt.h"
 #include "memory/heap.h"
@@ -33,8 +34,7 @@
 
 // #region CONSTANTS
 
-#define SHMEM_USER_BASE 0x0000000080000000ULL
-#define MMAP_USER_BASE  0x0000000070000000ULL
+/* Arena bases come from loader/process.h — see the user address-space map. */
 #define INPUT_RING_SIZE_LOCAL 64
 #define IPC_RING_SIZE_LOCAL   16
 
@@ -133,8 +133,8 @@ static int alloc_rings_for(struct task *t) {
     memset(t->ipc_ring, 0, sizeof(struct ipc_msg) * IPC_RING_SIZE_LOCAL);
     t->ipc_head = t->ipc_tail = 0;
 
-    t->shmem_next_va = SHMEM_USER_BASE;
-    t->mmap_next_va  = MMAP_USER_BASE;
+    t->shmem_next_va = USER_SHMEM_BASE;
+    t->mmap_next_va  = USER_MMAP_BASE;
     t->input_owner_restore_pid = -1;
     return 0;
 }

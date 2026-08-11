@@ -13,19 +13,68 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* --- File / I/O surface ------------------------------------------------ */
+/* --- File / I/O surface ------------------------------------------------
+ *
+ * Numbers follow Linux x86_64 wherever the call means the same thing, so
+ * a future Linux personality doesn't need a translation table. TOS-only
+ * calls take numbers Linux has not used at all.
+ *
+ * 12 (brk) and 13 (rt_sigaction) are deliberately left free.
+ */
 #define SYS_READ    		 0
 #define SYS_WRITE   		 1
 #define SYS_OPEN    		 2
 #define SYS_CLOSE   		 3
+#define SYS_STAT             4
+#define SYS_FSTAT            5
 #define SYS_LSEEK   		 8
 #define SYS_MMAP    		 9
-#define SYS_READDIR 		 10
-#define SYS_READDIR_PATH 11
-#define SYS_CHDIR        12
-#define SYS_GETCWD       13
+#define SYS_MPROTECT        10
+#define SYS_MUNMAP          11
+#define SYS_GETCWD          79
+#define SYS_CHDIR           80
 #define SYS_MKDIR   		 83
 #define SYS_UNLINK  		 87
+#define SYS_READDIR        217   /* Linux getdents64 slot                  */
+#define SYS_READDIR_PATH   218   /* TOS extension: enumerate by path       */
+
+/* --- mmap / mprotect ---------------------------------------------------
+ *
+ * PROT_* and MAP_* use the Linux values. Deviations from Linux, both
+ * deliberate:
+ *
+ *   - MAP_FIXED fails with -1 if any page in the range is already mapped
+ *     instead of silently replacing it. A loader trying its preferred
+ *     ImageBase wants "taken, go relocate", not a clobbered mapping.
+ *   - PROT_NONE is rejected. Every mapping here is backed by a real frame
+ *     at map time, so there is nothing to represent a reserved-but-absent
+ *     page; guard pages need a reservation concept the VMM doesn't have.
+ */
+#define PROT_NONE       0x0
+#define PROT_READ       0x1
+#define PROT_WRITE      0x2
+#define PROT_EXEC       0x4
+
+#define MAP_PRIVATE     0x02
+#define MAP_FIXED       0x10
+#define MAP_ANONYMOUS   0x20
+
+/* --- stat --------------------------------------------------------------
+ * Compact kernel-side metadata. Userspace libc expands this into the
+ * POSIX struct stat; keeping the ABI struct small means adding a POSIX
+ * field later doesn't change the syscall boundary. */
+#define STAT_TYPE_FILE 0
+#define STAT_TYPE_DIR  1
+
+struct stat_user {
+  uint64_t size;
+  uint64_t first_cluster;   /* FAT-specific; 0 for the root directory */
+  uint32_t type;            /* STAT_TYPE_*                            */
+  uint32_t attr;            /* raw FAT attribute byte                 */
+};
+
+_Static_assert(sizeof(struct stat_user) == 24,
+               "stat_user must match the userspace mirror");
 
 /* --- Process control -------------------------------------------------- */
 #define SYS_YIELD   24

@@ -21,17 +21,25 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* ---------------- System-call numbers ----------------------------------- */
+/* ---------------- System-call numbers -----------------------------------
+ *
+ * Linux x86_64 numbers wherever the call means the same thing; TOS-only
+ * calls take numbers Linux has not used. 12 (brk) and 13 (rt_sigaction)
+ * are deliberately left free. */
 #define SYS_READ    		 0
 #define SYS_WRITE   		 1
 #define SYS_OPEN    		 2
 #define SYS_CLOSE   		 3
+#define SYS_STAT             4
+#define SYS_FSTAT            5
 #define SYS_LSEEK   		 8
 #define SYS_MMAP    		 9
-#define SYS_READDIR 		 10
-#define SYS_READDIR_PATH 11
-#define SYS_CHDIR 			 12
-#define SYS_GETCWD	 		 13
+#define SYS_MPROTECT        10
+#define SYS_MUNMAP          11
+#define SYS_GETCWD          79
+#define SYS_CHDIR           80
+#define SYS_READDIR        217
+#define SYS_READDIR_PATH   218
 
 
 #define SYS_YIELD   	  24
@@ -69,6 +77,46 @@
 #define SYS_UNLINK     87
 #define SYS_SHUTDOWN   888
 #define SYS_REBOOT     887
+
+/* ---------------- mmap / mprotect --------------------------------------
+ *
+ * Linux PROT_ and MAP_ values. Two deliberate deviations from Linux:
+ *
+ *   - MAP_FIXED FAILS if any page in the range is already mapped, rather
+ *     than replacing it. A loader probing its preferred image base gets
+ *     "taken, go relocate" instead of a silently clobbered mapping.
+ *   - PROT_NONE is rejected. Mappings are eagerly backed by real frames,
+ *     so there is no reserved-but-absent state to put a page into.
+ *
+ * Mappings are always anonymous, private, and zero-filled. There is no
+ * file-backed mapping: map the range, then read() into it. */
+#define PROT_NONE       0x0
+#define PROT_READ       0x1
+#define PROT_WRITE      0x2
+#define PROT_EXEC       0x4
+
+#define MAP_PRIVATE     0x02
+#define MAP_FIXED       0x10
+#define MAP_ANONYMOUS   0x20
+#define MAP_ANON        MAP_ANONYMOUS
+
+#define MAP_FAILED      ((void *)-1)
+
+/* ---------------- File metadata (SYS_STAT / SYS_FSTAT) ------------------ */
+/* Byte-for-byte mirror of kernel struct stat_user. libc's POSIX struct
+ * stat is built from this in lib/stat.c. */
+#define STAT_TYPE_FILE 0
+#define STAT_TYPE_DIR  1
+
+struct stat_user {
+    uint64_t size;
+    uint64_t first_cluster;
+    uint32_t type;
+    uint32_t attr;
+};
+
+_Static_assert(sizeof(struct stat_user) == 24,
+               "stat_user must match kernel struct stat_user size");
 
 /* ---------------- Process inspection (SYS_PROC_LIST) -------------------- */
 /* Byte-for-byte mirror of kernel struct proc_info_user. */
@@ -141,7 +189,7 @@ _Static_assert(sizeof(struct msg) == 12,
  * Winman-specific IPC_WM_* type codes are declared in lib/wm.h alongside
  * the libwm client API. Codes 0x180..0x1FF are reserved for generic /
  * kernel-originated control messages; user-defined types start at 0x200. */
-#define IPC_PEER_EXITED        0x180
+#define IPC_PEER_EXITED				 0x180
 #define IPC_USER_FIRST         0x200
 
 struct ipc_msg {
@@ -180,7 +228,6 @@ long read(int fd, void *buf, size_t n);
 long open(const char *path, int flags);
 long close(int fd);
 long lseek(int fd, long off, int whence);
-void *mmap(size_t len);
 long readdir(unsigned *index, char *buf, size_t n);
 long readdir_path(const char *path, unsigned *index, char *buf, size_t n);
 long mkdir_path(const char *path);
@@ -189,6 +236,23 @@ void exit(int code);
 long yield(void);
 long chdir(const char *path);
 char *getcwd(char *buf, size_t size);
+
+/* Raw metadata straight from the kernel. POSIX stat()/fstat() in
+ * <sys/stat.h> wrap these. */
+long stat_raw(const char *path, struct stat_user *out);
+long fstat_raw(int fd, struct stat_user *out);
+
+/* Anonymous, private, zero-filled, eagerly backed.
+ *
+ * addr is a request, honoured only with MAP_FIXED — and MAP_FIXED fails
+ * rather than replacing an existing mapping. Returns MAP_FAILED on error.
+ *
+ * mprotect is all-or-nothing: it validates the whole range before
+ * touching a PTE, so a failure leaves permissions exactly as they were.
+ * Both addr arguments must be page-aligned. */
+void *mmap(void *addr, size_t len, int prot, int flags);
+int   mprotect(void *addr, size_t len, int prot);
+int   munmap(void *addr, size_t len);
 
 /* Input + windowing. */
 long msg_get(struct msg *out);

@@ -432,6 +432,33 @@ int fat_open(const char *path, struct fat_file *file) {
     return 0;
 }
 
+int fat_stat(const char *path, struct fat_stat *out) {
+    if (!out)
+        return -1;
+
+    /* The root has no directory entry of its own, so resolve_entry can't
+     * see it. Anything that resolves as a directory path with no leaf is
+     * the root: report it as an empty directory. */
+    struct fat_dir dir;
+    if (resolve_directory(path, &dir) == 0 && dir.root) {
+        out->size = 0;
+        out->first_cluster = 0;
+        out->attr = FAT_ATTR_DIRECTORY;
+        out->is_dir = 1;
+        return 0;
+    }
+
+    struct dir_entry *entry = resolve_entry(path, 0);
+    if (!entry)
+        return -1;
+
+    out->attr = entry->attr;
+    out->is_dir = (entry->attr & FAT_ATTR_DIRECTORY) ? 1 : 0;
+    out->first_cluster = entry->first_cluster_low;
+    out->size = out->is_dir ? 0 : entry->size;
+    return 0;
+}
+
 size_t fat_read(struct fat_file *file, void *buffer, size_t length) {
     if (!file || !buffer)
         return 0;

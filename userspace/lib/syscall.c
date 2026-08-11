@@ -38,11 +38,30 @@ char *getcwd(char *buf, size_t size) {
     return rc == 0 ? buf : 0;
 }
 
-/* Anonymous memory allocator. Returns 0 on failure, page-aligned va on
- * success — kernel decides the layout. */
-void *mmap(size_t len) {
-    long rc = syscall1(SYS_MMAP, (long)len);
-    return rc < 0 ? 0 : (void*)(uintptr_t)rc;
+long stat_raw(const char *path, struct stat_user *out) {
+    return syscall2(SYS_STAT, (long)(uintptr_t)path, (long)(uintptr_t)out);
+}
+
+long fstat_raw(int fd, struct stat_user *out) {
+    return syscall2(SYS_FSTAT, fd, (long)(uintptr_t)out);
+}
+
+/* --- Memory -------------------------------------------------------------
+ *
+ * MAP_FAILED rather than 0 on error: 0 is a legal-looking value for code
+ * that only checks `!= NULL`, and a fixed mapping at a low address would
+ * be indistinguishable from failure. */
+void *mmap(void *addr, size_t len, int prot, int flags) {
+    long rc = syscall4(SYS_MMAP, (long)(uintptr_t)addr, (long)len, prot, flags);
+    return rc < 0 ? MAP_FAILED : (void *)(uintptr_t)rc;
+}
+
+int mprotect(void *addr, size_t len, int prot) {
+    return (int)syscall3(SYS_MPROTECT, (long)(uintptr_t)addr, (long)len, prot);
+}
+
+int munmap(void *addr, size_t len) {
+    return (int)syscall2(SYS_MUNMAP, (long)(uintptr_t)addr, (long)len);
 }
 
 long readdir(unsigned *index, char *buf, size_t n) {
