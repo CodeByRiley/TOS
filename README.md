@@ -39,7 +39,6 @@ boot/x86_64/         Linker script and GRUB ISO staging tree
 rootfs/              Files copied into the FAT16 disk image
 tools/               Build and run scripts
 tests/               Host-side unit tests
-docs/                Notes and screenshots
 build/  dist/        Generated. Both are gitignored; `make clean` removes them.
 ```
 
