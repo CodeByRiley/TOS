@@ -1,9 +1,11 @@
-/* userspace/include/key_codes.h — PC keyboard scancodes.
+/* kernel/input/key_codes.h — PC keyboard scancodes.
  *
- * Subset of Linux's input-event-codes.h, used by apps that handle raw
- * keypresses (the shell, DOOM, the WM). Must stay in lockstep with the
- * kernel-side copy at kernel/input/key_codes.h — both ends compare
- * literal numeric values across the syscall boundary.
+ * Subset of Linux's input-event-codes.h, used by the kernel keyboard
+ * driver and forwarded to userspace. Values match Linux UAPI so ported
+ * code works unmodified. Must stay in lockstep with the userspace mirror
+ * at userspace/include/key_codes.h.
+ *
+ * Standard 104-key PC keyboard only — no media / gamepad / multimedia.
  */
 #ifndef KEY_CODES_H
 #define KEY_CODES_H

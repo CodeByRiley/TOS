@@ -32,7 +32,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
-/* In-band TTY control codes — must match src/intf/display/tty.h. Defined
+/* In-band TTY control codes — must match kernel/display/tty.h. Defined
  * inline rather than #include'd because that header also declares
  * tty_drain() with a `size_t` signature that conflicts with the userspace
  * `long` wrapper in lib/syscall.h. */

@@ -7,7 +7,7 @@
  *
  * The server lives in userspace/bin/winman/winman.c and includes this
  * same header so wire types and `struct ipc_msg` field layout stay
- * single-sourced. The kernel msg dispatcher (src/intf/msg/msg.h) only
+ * single-sourced. The kernel msg dispatcher (kernel/msg/msg.h) only
  * routes opaque ipc_msg payloads — IPC_WM_* codes are user-defined.
  */
 #ifndef USER_WM_H

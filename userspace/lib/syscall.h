@@ -4,12 +4,12 @@
  * that userspace apps call instead of writing `syscall0..6` directly.
  *
  * Sections:
- *   - SYS_* numbers           — must match kernel src/intf dispatch table.
+ *   - SYS_* numbers           — must match kernel/arch/syscall.h dispatch table.
  *   - proc_info / mem_stats   — mirrors of kernel structs returned by
  *                                SYS_PROC_LIST and SYS_MEM_STATS.
  *   - msg / ipc_msg           — input-event and cross-process message
  *                                layouts. ipc_msg must match
- *                                src/intf/msg/msg.h byte-for-byte.
+ *                                kernel/msg/msg.h byte-for-byte.
  *   - syscallN()              — raw register-passing trampolines.
  *   - libc-style wrappers     — typed helpers around the syscalls above.
  *
@@ -92,7 +92,7 @@ _Static_assert(offsetof(struct proc_info, pid) == 8,
 _Static_assert(offsetof(struct proc_info, name) == 20,
                "proc_info.name offset must match kernel");
 
-/* Process state codes — must match enum task_state in src/intf/sched/sched.h. */
+/* Process state codes — must match enum task_state in kernel/sched/sched.h. */
 #define PROC_STATE_RUNNING  0
 #define PROC_STATE_BLOCKED  1
 #define PROC_STATE_ZOMBIE   2
@@ -136,7 +136,7 @@ _Static_assert(sizeof(struct msg) == 12,
                "msg must match kernel struct msg size");
 
 /* ---------------- Cross-process IPC ------------------------------------- */
-/* Must match kernel src/intf/msg/msg.h.
+/* Must match kernel kernel/msg/msg.h.
  *
  * Winman-specific IPC_WM_* type codes are declared in lib/wm.h alongside
  * the libwm client API. Codes 0x180..0x1FF are reserved for generic /

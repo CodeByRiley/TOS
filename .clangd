@@ -1,6 +1,6 @@
 CompileFlags:
   Add:
-    - "-IE:/Projects/Weird/TOS/src/intf"
+    - "-IE:/Projects/Weird/TOS/kernel"
 
 Diagnostics:
   Suppress:

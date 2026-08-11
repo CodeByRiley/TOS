@@ -5,17 +5,14 @@
 *.elf
 
 # Generated boot media and ISO staging files
-/disk.img
-/targets/**/iso/boot/disk.img
-/targets/**/iso/boot/kernel.bin
-/targets/**/iso/boot/grub/eltorito.img
+/boot/**/iso/boot/disk.img
+/boot/**/iso/boot/kernel.bin
+/boot/**/iso/boot/grub/eltorito.img
 *.iso
 
 # Local game/resource payloads
-/games/**/*.wad
-/games/**/*.WAD
-/disk_root/**/*.wad*
-/disk_root/**/*.WAD*
+/rootfs/**/*.wad*
+/rootfs/**/*.WAD*
 
 # Local editor, language-server, and build-tool state
 .cache/

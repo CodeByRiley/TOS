@@ -3,7 +3,7 @@ USER_CC      := x86_64-elf-gcc
 USER_LD      := x86_64-elf-ld
 USER_AS      := nasm
 USER_CFLAGS  := -ffreestanding -nostdlib -fno-pie -mno-red-zone -static \
-                -I lib -I ../src/intf -O2 -Wall -Wextra
+                -I lib -I ../kernel -O2 -Wall -Wextra
 USER_LDFLAGS := -nostdlib -static -T lib/user.ld
 
 # string_extra carries strstr/strcpy/strcat/strrchr/strcasecmp, which
