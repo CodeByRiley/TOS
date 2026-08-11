@@ -48,7 +48,7 @@ PE_VARIANT_EXES := $(foreach b,$(PE_VARIANTS),bin/$(b)/$(b).exe)
 # syscalls now, so every binary should be able to call them.
 LIB_OBJS := lib/crt0.o lib/syscall_asm.o lib/syscall.o lib/wm.o \
             lib/printf.o lib/malloc.o lib/stdio.o lib/string.o lib/keymap.o lib/console.o \
-            lib/stdlib_extra.o lib/string_extra.o lib/stat.o
+            lib/stdlib_extra.o lib/string_extra.o lib/stat.o lib/bmp.o
 
 # C-source lib objects (.s sources have their own explicit rules below).
 LIB_C_OBJS := $(filter-out lib/crt0.o lib/syscall_asm.o, $(LIB_OBJS))

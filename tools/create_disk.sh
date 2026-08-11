@@ -11,6 +11,7 @@ mkdir -p "$(dirname "$IMG")"
 # (host_path::fat_dst_name) pairs
 payloads=(
 	"rootfs/readme.txt::README.TXT"
+	"rootfs/cursor.bmp::CURSOR.BMP"
 	"rootfs/games/doom/doom.wad::DOOM1.WAD"
 	"userspace/bin/hello/hello.elf::HELLO.ELF"
 	"userspace/bin/ls/ls.elf::LS.ELF"

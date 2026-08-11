@@ -27,6 +27,7 @@
 
 #include "../../lib/syscall.h"
 #include "../../lib/wm.h"
+#include "../../lib/bmp.h"
 #include "display/font8x8.h"
 #include "utilities/types.h"
 #include <stdint.h>
@@ -67,10 +68,25 @@ static void  titlebar_btn_rect(int win_x, int win_y, int outer_w,
 
 // #region CURSOR SPRITE
 
+/* The cursor comes from CURSOR_BMP_PATH when that file is present and
+ * decodes; the mask below is the fallback that ships in the binary.
+ *
+ * Keeping both is not belt-and-braces for its own sake: winman draws the
+ * pointer before anything else can report a problem, and a system whose
+ * only cursor lives on disk has no pointer at all if that file is missing
+ * or malformed. The built-in mask guarantees there is always something to
+ * point with.
+ *
+ * A loaded image may be any size; CURSOR_W/CURSOR_H describe the fallback
+ * only. Use cursor_w()/cursor_h() for whatever is actually in use. */
+#define CURSOR_BMP_PATH "/CURSOR.BMP"
+
 #define CURSOR_W 12
 #define CURSOR_H 12
 #define COLOR_BORDER 0x00000000u
 #define COLOR_FILL   0x00FFFFFFu
+
+static struct bmp_image cursor_img;   /* pixels == 0 until a load succeeds */
 
 static const uint8_t cursor_mask[CURSOR_H][CURSOR_W] = {
     {1,0,0,0,0,0,0,0,0,0,0,0},
@@ -87,6 +103,26 @@ static const uint8_t cursor_mask[CURSOR_H][CURSOR_W] = {
     {0,0,0,0,0,0,0,0,0,0,0,0},
 };
 
+
+static int cursor_w(void) {
+    return cursor_img.pixels ? cursor_img.width : CURSOR_W;
+}
+
+static int cursor_h(void) {
+    return cursor_img.pixels ? cursor_img.height : CURSOR_H;
+}
+
+/* Try the on-disk cursor once at startup. Failure is not an error worth
+ * stopping for — it just leaves the built-in mask in place. */
+static void cursor_load(void) {
+    if (bmp_load(CURSOR_BMP_PATH, &cursor_img) == 0) {
+        printf("winman: cursor %dx%d from %s\n",
+               cursor_img.width, cursor_img.height, CURSOR_BMP_PATH);
+    } else {
+        printf("winman: %s unavailable, using built-in cursor\n",
+               CURSOR_BMP_PATH);
+    }
+}
 
 // #endregion CURSOR SPRITE
 
@@ -1124,10 +1160,28 @@ static int cursor_scale(void) {
     return s;
 }
 
+/* Composite one source pixel over a destination. Fully opaque and fully
+ * transparent are the overwhelmingly common cases and skip the arithmetic
+ * entirely; anything between gets a per-channel blend. */
+static inline void blend_px(uint32_t *dst, uint32_t src) {
+    uint32_t a = src >> 24;
+    if (a == 0) return;
+    if (a == 255) { *dst = src & 0x00FFFFFFu; return; }
+
+    uint32_t d = *dst;
+    uint32_t inv = 255u - a;
+    uint32_t r = (((src >> 16) & 0xFF) * a + ((d >> 16) & 0xFF) * inv) / 255u;
+    uint32_t g = (((src >>  8) & 0xFF) * a + ((d >>  8) & 0xFF) * inv) / 255u;
+    uint32_t b = (( src        & 0xFF) * a + ( d        & 0xFF) * inv) / 255u;
+    *dst = (r << 16) | (g << 8) | b;
+}
+
 static void draw_cursor(int32_t x, int32_t y) {
     int scale = cursor_scale();
-    int draw_w = CURSOR_W * scale;
-    int draw_h = CURSOR_H * scale;
+    int src_w = cursor_w();
+    int src_h = cursor_h();
+    int draw_w = src_w * scale;
+    int draw_h = src_h * scale;
 
     int x0 = x < 0 ? 0 : (int)x;
     int y0 = y < 0 ? 0 : (int)y;
@@ -1145,10 +1199,15 @@ static void draw_cursor(int32_t x, int32_t y) {
 
         for (int xx = 0; xx < x1 - x0; xx++) {
             int src_x = (x0 + xx - (int)x) / scale;
-            uint8_t mv = cursor_mask[src_y][src_x];
 
-            if (mv == 1)      p[xx] = COLOR_BORDER;
-            else if (mv == 2) p[xx] = COLOR_FILL;
+            if (cursor_img.pixels) {
+                blend_px(&p[xx],
+                         cursor_img.pixels[(size_t)src_y * src_w + src_x]);
+            } else {
+                uint8_t mv = cursor_mask[src_y][src_x];
+                if (mv == 1)      p[xx] = COLOR_BORDER;
+                else if (mv == 2) p[xx] = COLOR_FILL;
+            }
         }
     }
     fb_damage((uint32_t)x0, (uint32_t)y0,
@@ -1699,6 +1758,8 @@ int main(int argc, char **argv) {
     if (!fb) { printf("winman: back buffer alloc failed\n"); return 4; }
     printf("winman: back buffer @%p pages=%d\n", (void*)fb, (int)back_pages);
 
+    cursor_load();
+
     memset(windows, 0, sizeof(windows));
     focused_handle = 0;
     con_alloc();
@@ -1778,7 +1839,7 @@ int main(int argc, char **argv) {
             }
             if (have_last) {
 	            int s = cursor_scale();
-	            present_rect(last_cx, last_cy, CURSOR_W * s, CURSOR_H * s);
+	            present_rect(last_cx, last_cy, cursor_w() * s, cursor_h() * s);
             }
             int gx, gy, gw, gh;
             compute_ghost((int)mx, (int)my, &gx, &gy, &gw, &gh);
@@ -1813,7 +1874,7 @@ int main(int argc, char **argv) {
         } else if (have_last) {
             /* erase cursor by restoring back buffer over its old rect */
             int s = cursor_scale();
-            present_rect(last_cx, last_cy, CURSOR_W * s, CURSOR_H * s);
+            present_rect(last_cx, last_cy, cursor_w() * s, cursor_h() * s);
         }
 
         draw_cursor(mx, my);
