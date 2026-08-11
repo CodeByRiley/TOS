@@ -594,6 +594,26 @@ static struct dir_entry *alloc_dir_entry(struct fat_dir dir) {
     return 0;
 }
 
+/* Drop an open file's contents while keeping its directory entry. The
+ * alternative — unlink then create — destroys the entry before knowing a
+ * replacement can be allocated, so a failure halfway leaves no file at
+ * all. This cannot fail: freeing a chain never allocates. */
+int fat_truncate(struct fat_file *file) {
+    if (!file || !file->dir_ent)
+        return -1;
+
+    if (file->first_cluster)
+        free_chain((uint16_t)file->first_cluster);
+
+    file->first_cluster = 0;
+    file->cur_cluster = 0;
+    file->size = 0;
+    file->pos = 0;
+    file->dir_ent->first_cluster_low = 0;
+    file->dir_ent->size = 0;
+    return 0;
+}
+
 int fat_create(const char *path, struct fat_file *file) {
     if (!file)
         return -1;

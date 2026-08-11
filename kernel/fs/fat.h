@@ -50,6 +50,11 @@ int    fat_open(const char *path, struct fat_file *f);
 
 int    fat_create(const char *path, struct fat_file *f);
 
+/* Discard an open file's contents, keeping its directory entry and this
+ * handle valid. Allocates nothing, so it cannot fail on a good handle —
+ * which is what makes it safe where unlink-then-create is not. */
+int    fat_truncate(struct fat_file *f);
+
 size_t fat_read(struct fat_file *f, void *buf, size_t len);
 size_t fat_write(struct fat_file *f, const void *buf, size_t len);
 int    fat_seek(struct fat_file *f, uint32_t pos);
