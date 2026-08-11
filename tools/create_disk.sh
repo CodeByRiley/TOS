@@ -26,6 +26,7 @@ payloads=(
 	"userspace/bin/fdchild/fdchild.elf::FDCHILD.ELF"
 	"userspace/bin/mtest/mtest.elf::MTEST.ELF"
 	"userspace/bin/vmtest/vmtest.elf::VMTEST.ELF"
+	"userspace/bin/uidemo/uidemo.elf::UIDEMO.ELF"
 	"userspace/bin/pe_test/pe_test.exe::PE_TEST.EXE"
 	"userspace/bin/hello/hello.exe::HELLO.EXE"
 	"userspace/bin/ls/ls.exe::LS.EXE"
