@@ -1,10 +1,25 @@
 SHELL := /usr/bin/bash
-USER_CC      := x86_64-elf-gcc
-USER_LD      := x86_64-elf-ld
+USER_ELF_CC  := x86_64-elf-gcc
+USER_ELF_LD  := x86_64-elf-ld
+USER_PE_CC   := x86_64-w64-mingw32-gcc
 USER_AS      := nasm
 USER_CFLAGS  := -ffreestanding -nostdlib -fno-pie -mno-red-zone -static \
                 -I lib -I ../kernel -O2 -Wall -Wextra
 USER_LDFLAGS := -nostdlib -static -T lib/user.ld
+
+# PE binaries share no objects with the ELF ones — mingw cannot link an ELF
+# .o into a PE image, so bin/pe_*/ sources carry their own syscall stubs and
+# entry point. Only the SYS_* numbers are shared, via -I lib.
+#
+# -fno-asynchronous-unwind-tables drops .pdata/.xdata: nothing unwinds, and
+# it keeps the section count down to what the loader has to walk.
+PE_CFLAGS := -ffreestanding -nostdlib -fno-pie -mno-red-zone -static \
+             -fno-asynchronous-unwind-tables \
+             -I lib -I ../kernel -O2 -Wall -Wextra
+
+PE_BINS := pe_test
+PE_BIN_OBJS := $(foreach b,$(PE_BINS),bin/$(b)/$(b).o)
+PE_BIN_EXES := $(foreach b,$(PE_BINS),bin/$(b)/$(b).exe)
 
 # string_extra carries strstr/strcpy/strcat/strrchr/strcasecmp, which
 # string.c does not define. Without it any tool calling one of those only
@@ -60,7 +75,7 @@ DOOM_CFLAGS := -ffreestanding -nostdlib -fno-pie -mno-red-zone -static \
 
 
 bin/doom/doom.elf: $(DOOM_OBJS) $(DOOM_PLATFORM_OBJS) $(LIB_OBJS) $(DOOM_EXTRA_OBJS)
-	$(USER_LD) $(USER_LDFLAGS) $^ -o $@
+	$(USER_ELF_LD) $(USER_LDFLAGS) $^ -o $@
 
 $(info DOOM_SRC_DIR = $(DOOM_SRC_DIR))
 $(info DOOM_SOURCES count = $(words $(DOOM_SOURCES)))
@@ -70,10 +85,10 @@ $(info DOOM_OBJS first = $(firstword $(DOOM_OBJS)))
 # rule). Uses DOOM_CFLAGS by design — anything compiled with USER_CFLAGS must
 # be in LIB_C_OBJS or SIMPLE_BIN_OBJS so the static patterns below claim it.
 %.o: %.c
-	$(USER_CC) $(DOOM_CFLAGS) -c $< -o $@
+	$(USER_ELF_CC) $(DOOM_CFLAGS) -c $< -o $@
 
 .PHONY: all clean
-all: $(SIMPLE_BIN_ELFS)  bin/doom/doom.elf
+all: $(SIMPLE_BIN_ELFS) bin/doom/doom.elf $(PE_BIN_EXES)
 
 # --- library objects -----------------------------------------------------
 
@@ -85,17 +100,38 @@ lib/syscall_asm.o: lib/syscall.s
 
 # Static pattern: every C-source lib object compiles with USER_CFLAGS.
 $(LIB_C_OBJS): %.o: %.c
-	$(USER_CC) $(USER_CFLAGS) -c $< -o $@
+	$(USER_ELF_CC) $(USER_CFLAGS) -c $< -o $@
 
 # --- simple binaries -----------------------------------------------------
 
 # Static pattern for the per-binary .o (USER_CFLAGS, not DOOM_CFLAGS).
 $(SIMPLE_BIN_OBJS): %.o: %.c
-	$(USER_CC) $(USER_CFLAGS) -c $< -o $@
+	$(USER_ELF_CC) $(USER_CFLAGS) -c $< -o $@
 
 # Static pattern for the link step. bin/foo/foo.elf <- bin/foo/foo.o + lib.
 $(SIMPLE_BIN_ELFS): bin/%.elf: bin/%.o $(LIB_OBJS)
-	$(USER_LD) $(USER_LDFLAGS) $^ -o $@
+	$(USER_ELF_LD) $(USER_LDFLAGS) $^ -o $@
+
+# --- PE binaries ---------------------------------------------------------
+
+# Compile PE source objects using MinGW
+$(PE_BIN_OBJS): %.o: %.c
+	$(USER_PE_CC) $(PE_CFLAGS) -c $< -o $@
+
+# Link PE executables using MinGW. No $(LIB_OBJS) here: those are ELF
+# objects and mingw's ld refuses to put them in a PE image.
+#
+# -e _start                    : no CRT, so name the entry point ourselves
+# -Wl,--image-base,0x140000000 : the default 64-bit PE ImageBase, 5 GiB, well
+#                                above every ELF arena — exactly the case
+#                                MAP_FIXED and the loader's fixed placement
+#                                need to handle
+# -Wl,--subsystem,console      : cosmetic here, but keeps the header honest
+$(PE_BIN_EXES): bin/%.exe: bin/%.o
+	$(USER_PE_CC) -nostdlib -static -e _start \
+	-Wl,--image-base,0x140000000 \
+	-Wl,--subsystem,console \
+	$^ -o $@
 
 clean:
-	rm -f lib/*.o bin/*/*.o bin/*/*.elf # $(DOOM_OBJS) $(DOOM_PLATFORM_OBJS) $(DOOM_EXTRA_OBJS)
+	rm -f lib/*.o bin/*/*.o bin/*/*.elf bin/*/*.exe
