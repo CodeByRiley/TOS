@@ -216,11 +216,11 @@ static struct firmware_choice select_firmware(uint32_t architecture,
     if (choice.family == NVIDIA_FW_FAMILY_TU10X
         || choice.family == NVIDIA_FW_FAMILY_TU11X
         || choice.family == NVIDIA_FW_FAMILY_GA100) {
-        choice.gsp_file = "GSPTU10X.BIN";
-        choice.ucode_file = "UCTU10X.BIN";
+        choice.gsp_file = "firmware/gsp_tu10x.bin";
+        choice.ucode_file = "firmware/ucodes_tu10x.bin";
     } else {
-        choice.gsp_file = "GSPGA10X.BIN";
-        choice.ucode_file = "UCGA10X.BIN";
+        choice.gsp_file = "firmware/gsp_ga10x.bin";
+        choice.ucode_file = "firmware/ucodes_ga10x.bin";
     }
     return choice;
 }

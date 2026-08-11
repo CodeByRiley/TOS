@@ -13,5 +13,6 @@
 void  heap_init(void);
 void *kmalloc(size_t size);
 void  kfree(void *ptr);
+void* large_alloc(size_t size);
 
 #endif

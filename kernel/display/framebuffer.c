@@ -35,17 +35,51 @@
 #define FB_MODE_MB2    1
 #define FB_MODE_VIRTIO 2
 
+#define FB_MAX_DAMAGE 8
+#define FB_DAMAGE_MERGE_SLACK 8192
+
+struct fb_damage_rect {
+    uint32_t x, y, w, h;
+};
+
 static uint32_t *fb       = 0;
 static uint32_t  fb_w     = 0;
 static uint32_t  fb_h     = 0;
 static uint32_t  fb_pitch = 0;       /* bytes per row */
 static uint32_t  fb_mode  = FB_MODE_NONE;
+static uint32_t  fb_resize_generation = 0;
 
-/* Damage rect: pending region to push to the host scanout on next present.
- * Coalesces by bounding box — cheap, slightly over-flushes when touches are
- * scattered. dirty=0 means "nothing to push" and present is a no-op. */
-static uint32_t  dmg_x = 0, dmg_y = 0, dmg_w = 0, dmg_h = 0;
-static int       dmg_dirty = 0;
+/* Damage rects: pending regions to push to the host scanout on next present.
+ * A small fixed set keeps thin, distant writes (cursor + drag ghost strips)
+ * from being flattened into one huge bounding box. Adjacent/overlapping
+ * damage still merges so normal drawing does not burn a slot per pixel. */
+static struct fb_damage_rect dmg[FB_MAX_DAMAGE];
+static int dmg_count = 0;
+
+static uint64_t damage_area(const struct fb_damage_rect *r) {
+    return (uint64_t)r->w * (uint64_t)r->h;
+}
+
+static void damage_union(struct fb_damage_rect *out,
+                         const struct fb_damage_rect *a,
+                         const struct fb_damage_rect *b) {
+    uint32_t x0  = a->x < b->x ? a->x : b->x;
+    uint32_t y0  = a->y < b->y ? a->y : b->y;
+    uint32_t x1a = a->x + a->w, x1b = b->x + b->w;
+    uint32_t y1a = a->y + a->h, y1b = b->y + b->h;
+    uint32_t x1  = x1a > x1b ? x1a : x1b;
+    uint32_t y1  = y1a > y1b ? y1a : y1b;
+    out->x = x0; out->y = y0; out->w = x1 - x0; out->h = y1 - y0;
+}
+
+static uint64_t damage_merge_waste(const struct fb_damage_rect *a,
+                                   const struct fb_damage_rect *b) {
+    struct fb_damage_rect u;
+    damage_union(&u, a, b);
+    uint64_t sum = damage_area(a) + damage_area(b);
+    uint64_t area = damage_area(&u);
+    return area > sum ? area - sum : 0;
+}
 
 void framebuffer_mark_damage(uint32_t x, uint32_t y, uint32_t w, uint32_t h) {
     if (fb_w == 0 || fb_h == 0) return;
@@ -53,21 +87,53 @@ void framebuffer_mark_damage(uint32_t x, uint32_t y, uint32_t w, uint32_t h) {
     if (x + w > fb_w) w = fb_w - x;
     if (y + h > fb_h) h = fb_h - y;
     if (w == 0 || h == 0) return;
-    if (!dmg_dirty) {
-        dmg_x = x; dmg_y = y; dmg_w = w; dmg_h = h; dmg_dirty = 1;
+
+    struct fb_damage_rect r = { x, y, w, h };
+
+    int best = -1;
+    uint64_t best_waste = 0;
+    for (int i = 0; i < dmg_count; i++) {
+        uint64_t waste = damage_merge_waste(&dmg[i], &r);
+        if (waste > FB_DAMAGE_MERGE_SLACK) continue;
+        if (best < 0 || waste < best_waste) {
+            best = i;
+            best_waste = waste;
+        }
+    }
+    if (best >= 0) {
+        damage_union(&dmg[best], &dmg[best], &r);
         return;
     }
-    uint32_t x0 = dmg_x < x ? dmg_x : x;
-    uint32_t y0 = dmg_y < y ? dmg_y : y;
-    uint32_t x1a = dmg_x + dmg_w, x1b = x + w;
-    uint32_t y1a = dmg_y + dmg_h, y1b = y + h;
-    uint32_t x1 = x1a > x1b ? x1a : x1b;
-    uint32_t y1 = y1a > y1b ? y1a : y1b;
-    dmg_x = x0; dmg_y = y0; dmg_w = x1 - x0; dmg_h = y1 - y0;
+
+    if (dmg_count < FB_MAX_DAMAGE) {
+        dmg[dmg_count++] = r;
+        return;
+    }
+
+    int ai = 0, bi = 1;
+    uint64_t least = damage_merge_waste(&dmg[0], &dmg[1]);
+    for (int i = 0; i < dmg_count; i++) {
+        for (int j = i + 1; j < dmg_count; j++) {
+            uint64_t waste = damage_merge_waste(&dmg[i], &dmg[j]);
+            if (waste < least) {
+                least = waste;
+                ai = i;
+                bi = j;
+            }
+        }
+    }
+    damage_union(&dmg[ai], &dmg[ai], &dmg[bi]);
+    dmg[bi] = dmg[dmg_count - 1];
+    dmg[dmg_count - 1] = r;
 }
 
 static void mark_full_damage(void) {
-    dmg_x = 0; dmg_y = 0; dmg_w = fb_w; dmg_h = fb_h; dmg_dirty = 1;
+    if (fb_w == 0 || fb_h == 0) {
+        dmg_count = 0;
+        return;
+    }
+    dmg[0] = (struct fb_damage_rect){ 0, 0, fb_w, fb_h };
+    dmg_count = 1;
 }
 
 /* Backing page list. In MB2 mode this is a synthetic enumeration of the
@@ -167,10 +233,10 @@ int framebuffer_init(uint64_t mb2_addr) {
 /* Tear down the current backing: unmap pages from FB_VIRT_BASE, and in virtio
  * mode also free the underlying PMM frames. MB2 frames are MMIO, not owned by
  * pmm, so leave them alone. */
-static void teardown_current(void) {
+static void teardown_current(int free_virtio_pages) {
     if (fb_n_pages == 0) return;
     unmap_pages_at_vbase(fb_n_pages);
-    if (fb_mode == FB_MODE_VIRTIO) {
+    if (free_virtio_pages && fb_mode == FB_MODE_VIRTIO) {
         for (uint32_t i = 0; i < fb_n_pages; i++) pmm_free_frame(fb_pages[i]);
     }
     fb_n_pages = 0;
@@ -210,7 +276,7 @@ int framebuffer_attach_virtio(void) {
     uint64_t bytes = (uint64_t)w * (uint64_t)h * 4;
     uint32_t pages = (uint32_t)((bytes + 4095) / 4096);
 
-    teardown_current();
+    teardown_current(/*free_virtio_pages=*/1);
     if (alloc_and_map_virtio(pages) != 0) return -1;
 
     if (virtio_gpu_set_scanout_2d(w, h, fb_pages, fb_n_pages) != 0) {
@@ -234,7 +300,10 @@ static int do_resize(uint32_t w, uint32_t h) {
     uint64_t bytes = (uint64_t)w * (uint64_t)h * 4;
     uint32_t pages = (uint32_t)((bytes + 4095) / 4096);
 
-    teardown_current();
+    /* Userspace may still have USER_FB_BASE mapped to the previous backing
+     * until its next fb_map() call. Keep old frames allocated so stale
+     * mappings cannot scribble over newly reused PMM pages. */
+    teardown_current(/*free_virtio_pages=*/0);
     if (alloc_and_map_virtio(pages) != 0) return -1;
     if (virtio_gpu_set_scanout_2d(w, h, fb_pages, fb_n_pages) != 0) {
         log_write("FB: virtio resize set_scanout failed", KERNEL, LOG_ERROR);
@@ -246,6 +315,7 @@ static int do_resize(uint32_t w, uint32_t h) {
     fb       = (uint32_t*)FB_VIRT_BASE;
     mouse_set_bounds(fb_w, fb_h);
     mark_full_damage();
+    fb_resize_generation++;
     log_write_hex("FB: resized, w =", fb_w, KERNEL, LOG_INFO);
     log_write_hex("FB: resized, h =", fb_h, KERNEL, LOG_INFO);
     return 0;
@@ -265,19 +335,29 @@ int framebuffer_check_resize(void) {
 
 void framebuffer_present(void) {
     if (fb_mode != FB_MODE_VIRTIO) return;
-    if (!dmg_dirty) return;
+    if (dmg_count == 0) return;
     /* Snapshot + clear before the (synchronous) flush so any writes that
      * happen concurrently re-mark damage cleanly. Producers only write
-     * dmg_*; consumer only reads then clears. Single-CPU kthread + no
+     * dmg[]; consumer only reads then clears. Single-CPU kthread + no
      * preemption mid-instruction = no torn reads here. */
-    uint32_t x = dmg_x, y = dmg_y, w = dmg_w, h = dmg_h;
-    dmg_dirty = 0;
-    dmg_x = dmg_y = dmg_w = dmg_h = 0;
-    virtio_gpu_flush_rect(x, y, w, h);
+    struct fb_damage_rect pending[FB_MAX_DAMAGE];
+    int count = dmg_count;
+    if (count > FB_MAX_DAMAGE) count = FB_MAX_DAMAGE;
+    for (int i = 0; i < count; i++) pending[i] = dmg[i];
+    dmg_count = 0;
+    for (int i = 0; i < count; i++) {
+        virtio_gpu_flush_rect(pending[i].x, pending[i].y,
+                              pending[i].w, pending[i].h);
+    }
+}
+
+uint32_t framebuffer_resize_generation(void) {
+    return fb_resize_generation;
 }
 
 void framebuffer_flush_thread_entry(void) {
     for (;;) {
+        framebuffer_check_resize();
         framebuffer_present();
         task_sleep_ticks(1);   /* 100 Hz upper bound on flush rate */
     }

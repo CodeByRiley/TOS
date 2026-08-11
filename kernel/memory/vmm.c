@@ -188,8 +188,47 @@ uint64_t vmm_translate(uint64_t virt) {
     return vmm_translate_in(current_pml4(), virt);
 }
 
+/* Give every kernel-half PML4 slot a PDPT up front.
+ *
+ * process_create copies kernel PML4 entries by value, so a kernel mapping
+ * whose top-level slot first appears *after* a process was spawned is
+ * invisible to that process: its copy of the slot is still empty. That is
+ * not hypothetical — large_alloc's arena at 0xFFFFA000_00000000 is a slot
+ * of its own, and the first call to it after winman started left winman
+ * unable to read the result, which an interrupt handler then did.
+ *
+ * Populating all 256 slots here makes them immutable from this point on.
+ * Later kernel mappings only ever write levels *below* the PML4, and every
+ * address space reaches those through the shared physical pointer it
+ * copied. Costs 256 frames (1 MiB) once, at boot. */
+static void reserve_kernel_pml4_entries(void) {
+    uint64_t created = 0;
+    for (int i = ENTRIES_PER_TABLE / 2; i < ENTRIES_PER_TABLE; i++) {
+        if (kernel_pml4[i] & VMM_PRESENT)
+            continue;
+
+        uint64_t phys = pmm_alloc_frame();
+        if (!phys) {
+            log_write("VMM: out of memory reserving kernel PML4", KERNEL,
+                      LOG_ERROR);
+            return;
+        }
+        memset(phys_to_virt(phys), 0, PAGE_SIZE);
+        /* Kernel-only: no VMM_USER. Nothing propagates VMM_USER up here
+         * either, because user virtual addresses live in the low half. */
+        kernel_pml4[i] = phys | VMM_PRESENT | VMM_WRITE;
+        created++;
+    }
+    log_write_hex("VMM: kernel PML4 slots reserved =", created, KERNEL,
+                  LOG_INFO);
+}
+
 void vmm_init(void) {
     /* Grab the boot PML4 from CR3 — that's the table set up by main.asm. */
     kernel_pml4 = phys_to_virt(read_cr3() & ADDR_MASK);
     log_write("VMM: using boot PML4", KERNEL, LOG_INFO);
+
+    /* Must happen before the first process is created, and after the PMM
+     * can hand out frames the HHDM already covers. */
+    reserve_kernel_pml4_entries();
 }

@@ -32,22 +32,6 @@
 
 // #endregion INCLUDES
 
-// #region CONSTANTS
-
-/* Arena bases come from loader/process.h — see the user address-space map. */
-#define INPUT_RING_SIZE_LOCAL 64
-#define IPC_RING_SIZE_LOCAL   16
-
-/* Cooperative-ish round-robin scheduler with a fixed 16-slot task table,
- * a singly-linked ready queue, and the optimism of a startup pitch deck.
- * No priorities, no time slicing, no SMP. The only thing keeping this
- * fair is that nobody's written a hostile kthread yet. */
-
-#define MAX_TASKS 16
-#define KSTACK_BYTES (16 * 1024)
-
-// #endregion CONSTANTS
-
 // #region TASK PATH RESOLUTION
 
 static void task_set_cwd_root(struct task *t) {
@@ -56,7 +40,7 @@ static void task_set_cwd_root(struct task *t) {
     t->cwd[1] = 0;
 }
 
-static void task_inherit_cwd(struct task *child, struct task *parent) {
+void task_inherit_cwd(struct task *child, struct task *parent) {
     if (!child) return;
     if (!parent || !parent->cwd[0]) {
         task_set_cwd_root(child);
@@ -112,6 +96,7 @@ static struct task *ready_tail = 0;
 static int n_sleeping = 0;
 
 // #endregion TASK TABLE
+
 
 // #region RING ALLOCATION
 
@@ -256,6 +241,7 @@ void sched_init(void) {
   t->kstack = 0;
   t->kthread_entry = 0;
   t->user_pml4 = 0;
+  t->pml4_ref_count = 0;
   /* The init task currently uses the boot SYSCALL kstack and the global
    * user_rsp_save scratch. After the very first context_switch out, both
    * will be re-staged for whatever task we switch to. */
@@ -351,6 +337,7 @@ struct task *task_spawn(void (*entry)(void)) {
   t->kstack = stack_base;
   t->kthread_entry = entry;
   t->user_pml4 = 0;
+  t->pml4_ref_count = 0;
   t->next = 0;
   task_set_cwd_root(t);
   alloc_rings_for(t);
@@ -388,6 +375,14 @@ struct task *task_spawn_user(uint64_t *user_pml4, uint64_t entry,
   t->kstack = stack_base;
   t->kthread_entry = 0;
   t->user_pml4 = user_pml4;
+  t->pml4_ref_count = (int *)kmalloc(sizeof(int));
+  if (!t->pml4_ref_count) {
+    kfree(stack_base);
+    memset(t, 0, sizeof(*t));
+    log_write("sched: pml4 refcount alloc failed", KERNEL, LOG_ERROR);
+    return 0;
+  }
+  *t->pml4_ref_count = 1;
   t->next = 0;
   task_inherit_cwd(t, task_current());
   alloc_rings_for(t);
@@ -395,6 +390,56 @@ struct task *task_spawn_user(uint64_t *user_pml4, uint64_t entry,
 
   ready_push(t);
   return t;
+}
+
+struct task *task_spawn_thread(uint64_t entry, uint64_t user_stack) {
+    struct task *parent = task_current();
+    if (!parent || !parent->user_pml4 || !parent->pml4_ref_count) return 0;
+
+    struct task *t = alloc_slot();
+    if (!t) {
+        log_write("thread: task table full", KERNEL, LOG_ERROR);
+        return 0;
+    }
+
+    void *stack_base = kmalloc(KSTACK_BYTES);
+    if (!stack_base) {
+        log_write("thread: kstack alloc failed", KERNEL, LOG_ERROR);
+        return 0;
+    }
+
+    // Use the static functions directly inside sched.c
+    t->saved_rsp = build_initial_frame(stack_base, user_task_trampoline);
+
+    // Share the address space
+    t->cr3 = parent->cr3;
+    t->user_pml4 = parent->user_pml4;
+
+    t->pml4_ref_count = parent->pml4_ref_count;
+    __atomic_add_fetch(t->pml4_ref_count, 1, __ATOMIC_ACQ_REL);
+
+    // Set up trampoline targets
+    t->syscall_kstack_top = (uint64_t)stack_base + KSTACK_BYTES;
+    t->user_rsp_saved = user_stack;
+    t->user_entry = entry;
+    t->user_rsp_initial = user_stack;
+
+    // Task metadata
+    t->state = TASK_READY;
+    t->pid = next_pid++;
+    t->parent_pid = parent->pid;
+    t->waiting_for_pid = 0;
+    t->exit_code = 0;
+    t->kstack = stack_base;
+    t->kthread_entry = 0;
+    t->next = 0;
+
+    task_inherit_cwd(t, parent);
+    alloc_rings_for(t);
+    fxstate_init(t->fxstate);
+
+    ready_push(t);
+    return t;
 }
 
 // #endregion TASK SPAWN
@@ -473,6 +518,18 @@ void task_wakeup(struct task *t) {
   ready_push(t);
 }
 
+int task_wake_futex(uint64_t phys) {
+  for (int i = 0; i < MAX_TASKS; i++) {
+    struct task *t = &tasks[i];
+    if (t->pid == 0) continue;
+    if (t->state == TASK_BLOCKED && t->futex_addr == phys) {
+      t->futex_addr = 0;
+      task_wakeup(t);
+      return 1; // Woke 1 thread
+    }
+  }
+  return 0;
+}
 
 // #endregion YIELD + BLOCK + WAKEUP
 
@@ -654,6 +711,37 @@ void task_exit(long code) {
   __builtin_unreachable();
 }
 
+void task_exit_thread(void) {
+    current->state = TASK_ZOMBIE;
+    current->unclaimed = 1; // Let the idle reaper clean it up
+
+    // NEW: Wake up any thread that is blocked waiting on our PID!
+    for (int i = 0; i < MAX_TASKS; i++) {
+        struct task *t = &tasks[i];
+        if (t->pid == 0) continue;
+        if (t->state == TASK_BLOCKED && t->waiting_for_pid == current->pid) {
+            task_wakeup(t);
+        }
+    }
+
+    struct task *next = ready_pop();
+    if (!next) {
+        log_write("sched: last thread exited, halting", KERNEL, LOG_ERROR);
+        for (;;)
+            __asm__ volatile("cli; hlt");
+    }
+
+    struct task *prev = current;
+    next->state = TASK_RUNNING;
+    current = next;
+    stage_for(next);
+
+    uint64_t throwaway;
+    context_switch(&throwaway, next->saved_rsp, next->cr3,
+                   prev->fxstate, next->fxstate);
+    __builtin_unreachable();
+}
+
 static void task_close_fds(struct task *t) {
     for (int i = 3; i < TASK_MAX_FDS; i++) {
         if (t->fds[i]) {
@@ -663,6 +751,33 @@ static void task_close_fds(struct task *t) {
     }
 }
 
+static void task_release_address_space(struct task *t) {
+  if (!t || !t->user_pml4)
+    return;
+
+  if (!t->pml4_ref_count) {
+    free_user_pml4(t->user_pml4);
+    t->user_pml4 = 0;
+    return;
+  }
+
+  int *refs = t->pml4_ref_count;
+
+  // Atomically decrement!
+  int new_count = __atomic_sub_fetch(refs, 1, __ATOMIC_ACQ_REL);
+  if (new_count < 0) {
+    log_write("sched: pml4 refcount underflow", KERNEL, LOG_ERROR);
+  }
+
+  if (new_count <= 0) {
+    free_user_pml4(t->user_pml4);
+    kfree(refs);
+  }
+
+  t->user_pml4 = 0;
+  t->pml4_ref_count = 0;
+}
+
 void task_reap(struct task *t) {
   if (!t || t->state != TASK_ZOMBIE) return;
 
@@ -670,7 +785,7 @@ void task_reap(struct task *t) {
   free_rings_for(t);
 
   if (t->kstack)    kfree(t->kstack);
-  if (t->user_pml4) free_user_pml4(t->user_pml4);
+  task_release_address_space(t);
 
   /* pid=0 marks the slot free for alloc_slot. */
   memset(t, 0, sizeof(*t));
@@ -713,9 +828,33 @@ int task_reap_unclaimed(void) {
  * Every constant in here (0x1B, 0x23, 0x202) is a GDT selector or an RFLAGS
  * value with IF=1. If they look like magic numbers it's because they are
  * magic numbers, and the x86 manual is the spell book. */
+// static void user_task_trampoline(void) {
+//   uint64_t entry = current->user_entry;
+//   uint64_t rsp   = current->user_rsp_initial;
+
+//   __asm__ volatile (
+//       "cli                  \n"
+//       "mov $0x1B, %%ax      \n"      /* user data | RPL=3 */
+//       "mov %%ax, %%ds       \n"
+//       "mov %%ax, %%es       \n"
+//       "mov %%ax, %%fs       \n"
+//       "mov %%ax, %%gs       \n"
+//       "pushq $0x1B          \n"      /* SS */
+//       "pushq %0             \n"      /* user RSP */
+//       "pushq $0x202         \n"      /* RFLAGS, IF=1 */
+//       "pushq $0x23          \n"      /* user CS | RPL=3 */
+//       "pushq %1             \n"      /* user RIP */
+//       "iretq                \n"
+//       :: "r"(rsp), "r"(entry)
+//       : "rax", "memory"
+//   );
+//   __builtin_unreachable();
+// }
+//
 static void user_task_trampoline(void) {
   uint64_t entry = current->user_entry;
   uint64_t rsp   = current->user_rsp_initial;
+  uint64_t arg   = current->user_arg;
 
   __asm__ volatile (
       "cli                  \n"
@@ -725,15 +864,14 @@ static void user_task_trampoline(void) {
       "mov %%ax, %%fs       \n"
       "mov %%ax, %%gs       \n"
       "pushq $0x1B          \n"      /* SS */
-      "pushq %0             \n"      /* user RSP */
-      "pushq $0x202         \n"      /* RFLAGS, IF=1 */
-      "pushq $0x23          \n"      /* user CS | RPL=3 */
-      "pushq %1             \n"      /* user RIP */
+      "pushq %1             \n"      /* user RSP */
+      "pushq $0x202         \n"      /* RFLAGS */
+      "pushq $0x23          \n"      /* user CS */
+      "pushq %2             \n"      /* user RIP */
       "iretq                \n"
-      :: "r"(rsp), "r"(entry)
+      :: "D"(arg), "r"(rsp), "r"(entry)  // "D" forces arg into RDI
       : "rax", "memory"
   );
   __builtin_unreachable();
 }
-
 // #endregion USER TRAMPOLINE

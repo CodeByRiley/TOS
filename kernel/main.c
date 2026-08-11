@@ -29,16 +29,22 @@
 #include "devices/lapic.h"
 #include "devices/pit.h"
 #include "devices/serial.h"
+#include "drivers/usb/uhci.h"
+#include "drivers/usb/ehci.h"
+#include "drivers/usb/xhci.h"
+#include "devices/usb.h"
 #include "display/framebuffer.h"
 #include "display/print.h"
 #include "display/tty.h"
 #include "drivers/driver.h"
+#include "drivers/sound/sb16.h"
 #include "drivers/video/nvidia.h"
 #include "fs/fat.h"
 #include "input/keyboard.h"
 #include "input/mouse.h"
 #include "interrupts/idt.h"
 #include "interrupts/pic.h"
+#include "isa/isa.h"
 #include "loader/elf.h"
 #include "loader/process.h"
 #include "memory/heap.h"
@@ -114,6 +120,11 @@ void kernel_main(uint64_t mb2_addr) {
   }
   pci_init();
   driver_probe_pci_devices();
+
+  isa_probe_devices();
+  sb16_driver_init();
+
+  usb_init();
 
   /* Pick who drives scanout. The test is whether a native driver has
    * actually taken the display, not whether its hardware merely exists:
@@ -193,13 +204,16 @@ void kernel_main(uint64_t mb2_addr) {
 
     log_write("kernel booted", KERNEL, LOG_INFO);
 
+    char *ls_argv[] = {(char *)"ls", 0};
+    long ls = process_exec("ls.elf", ls_argv);
+
     /* Launch the userspace window manager in the background — like DOS
      * starting WIN.COM, but here it runs as a sibling task alongside
-     * the shell rather than replacing it. If WINMAN.ELF is missing or
+     * the shell rather than replacing it. If winman.elf is missing or
      * fails to load we just don't have windows; the shell still boots
      * on the kernel TTY. */
     char *winman_argv[] = {(char *)"winman", 0};
-    long winman_pid = process_spawn_async("WINMAN.ELF", winman_argv);
+    long winman_pid = process_spawn_async("winman.elf", winman_argv);
     if (winman_pid < 0) {
       log_write("winman: launch failed — TTY-only mode",
                 USER, LOG_INFO);
@@ -207,9 +221,27 @@ void kernel_main(uint64_t mb2_addr) {
       log_write_hex("winman spawned pid =", winman_pid, USER, LOG_INFO);
     }
 
+    /* Boot chime. Missing or unreadable audio is not fatal: fall through
+     * to the shell rather than returning out of kernel_main, which would
+     * leave the machine with no console at all. */
+    // struct fat_file wav;
+    // if (fat_open("music/beethoven.wav", &wav) != 0 || wav.size <= 44) {
+    //   log_write("music/beethoven.wav: open failed", KERNEL, LOG_ERROR);
+    // } else {
+    //   log_write_hex("music/beethoven.wav: size =", wav.size, KERNEL, LOG_INFO);
+    //   uint8_t *data = large_alloc(wav.size);
+    //   if (!data) {
+    //     log_write("music/beethoven.wav: alloc failed", KERNEL, LOG_ERROR);
+    //   } else {
+    //     fat_read(&wav, data, wav.size);
+    //     sb16_play_wav(data + 44, wav.size - 44);
+    //     log_write("music/beethoven.wav: playback started", KERNEL, LOG_INFO);
+    //   }
+    // }
+
     char *sh_argv[] = {(char *)"sh", 0};
     while (1) {
-      long code = process_exec("SH.ELF", sh_argv);
+      long code = process_exec("sh.elf", sh_argv);
       log_write_hex("shell exited code =", code, USER, LOG_INFO);
     }
   }

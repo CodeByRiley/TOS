@@ -369,14 +369,43 @@ void pci_init(void) {
         scan_bus_range(0, 0, 255);
     }
 
-    // log_write_hex("PCI: devices found =", pci_count, KERNEL, LOG_INFO);
-    // for (uint32_t i = 0; i < pci_count; i++) {
-    //     struct pci_device *d = &pci_table[i];
-    //     uint32_t tag = ((uint32_t)d->vendor << 16) | d->device;
-    //     log_write_hex("PCI: vendor:device =", tag, KERNEL, LOG_INFO);
-    //     log_write_hex("PCI: class_code =", d->class_code, KERNEL, LOG_INFO);
-    //     log_write_hex("PCI: header_type =", d->header_type, KERNEL, LOG_INFO);
-    // }
+    log_write_hex("PCI: devices found =", pci_count, KERNEL, LOG_INFO);
+
+    for (uint32_t i = 0; i < pci_count; i++) {
+        struct pci_device *d = &pci_table[i];
+
+        // Combine Vendor and Device into a single 32-bit hex number for printing
+        uint32_t vendor_device = ((uint32_t)d->vendor << 16) | d->device;
+
+        // Combine Class, Subclass, and Prog IF
+        uint32_t class_info = ((uint32_t)d->class_code << 16) |
+                              ((uint32_t)d->subclass << 8) |
+                              d->prog_if;
+
+        log_write("------------------------", KERNEL, LOG_INFO);
+        log_write_hex("PCI: Vendor:Device =", vendor_device, KERNEL, LOG_INFO);
+        log_write_hex("PCI: Class:Sub:Prog =", class_info, KERNEL, LOG_INFO);
+
+        // Log Bus:Dev:Fn
+        uint32_t bdf = ((uint32_t)d->addr.bus << 16) |
+                       ((uint32_t)d->addr.dev << 8) |
+                       d->addr.fn;
+        log_write_hex("PCI: Bus:Dev:Fn    =", bdf, KERNEL, LOG_INFO);
+
+        // Log IRQ info
+        uint32_t irq_info = ((uint32_t)d->int_pin << 8) | d->int_line;
+        log_write_hex("PCI: IntPin:IntLine =", irq_info, KERNEL, LOG_INFO);
+
+        // Log the first valid BAR (usually MMIO or I/O base)
+        for (int b = 0; b < 6; b++) {
+            if (d->bar[b].valid) {
+                uint32_t bar_info = (d->bar[b].is_io << 24) | (uint32_t)d->bar[b].size;
+                log_write_hex("PCI: BAR (IO/Size) =", bar_info, KERNEL, LOG_INFO);
+                log_write_hex("PCI: BAR Base      =", d->bar[b].base, KERNEL, LOG_INFO);
+                break; // Just print the first one to avoid log spam
+            }
+        }
+    }
 }
 
 int pci_find_by_id(uint16_t vendor, uint16_t device, struct pci_device *out) {

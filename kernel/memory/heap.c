@@ -21,6 +21,9 @@
 #define HEAP_INITIAL_PAGES 256   /* 1 MiB */
 #define SPLIT_THRESHOLD    16    /* payload bytes below which we won't split */
 
+#define LARGE_ALLOC_VBASE 0xFFFFA00000000000ULL
+static uint64_t large_alloc_virt_offset = LARGE_ALLOC_VBASE;
+
 /* In-band header on every allocation. Doubly linked so kfree can fold
  * adjacent neighbours in O(1). */
 struct block {
@@ -119,6 +122,38 @@ void *kmalloc(size_t size) {
         if (mapped == 0) return 0;
         list_append(old_end, mapped * 4096);
     }
+}
+
+void* large_alloc(size_t size) {
+    if (size == 0) return 0;
+
+    // Calculate how many 4KB pages we need
+    size_t pages = (size + 4095) / 4096;
+
+    // Record the starting virtual address to return later
+    uint64_t virt_start = large_alloc_virt_offset;
+
+    // Map physical frames to our virtual address range one by one
+    for (size_t i = 0; i < pages; i++) {
+        uint64_t phys = pmm_alloc_frame();
+        if (!phys) {
+            log_write("LARGE_ALLOC: PMM Out of Memory!", KERNEL, LOG_ERROR);
+            return 0;
+        }
+
+        // Map the page with Present and Write flags
+        if (vmm_map(virt_start + (i * 4096), phys, VMM_PRESENT | VMM_WRITE) != 0) {
+            log_write("LARGE_ALLOC: VMM mapping failed!", KERNEL, LOG_ERROR);
+            // Note: We leak the already allocated physical frames here for simplicity,
+            // but in a production OS you would want to free them.
+            return 0;
+        }
+    }
+
+    // Advance the global offset for the next large allocation
+    large_alloc_virt_offset += pages * 4096;
+
+    return (void*)virt_start;
 }
 
 void kfree(void *ptr) {

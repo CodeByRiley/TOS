@@ -26,6 +26,9 @@
 #define PAGE_ADDR_MASK 0x000ffffffffff000ULL
 #define BOOT_HHDM_GIB 4ULL
 #define BOOT_HHDM_LIMIT (BOOT_HHDM_GIB * GIB)
+#define PMM_GENERAL_ALLOC_BASE 0x100000ULL
+#define PMM_ISA_DMA_START 0x10000ULL
+#define PMM_ISA_DMA_END 0xA0000ULL
 
 #define u8t uint8_t
 #define u16t uint16_t
@@ -222,7 +225,12 @@ void pmm_init(u64t mb2_addr) {
       mark_region_free(e->base, e->len);
   }
 
-  mark_region_used(0, 0x100000); /* first 1 MiB (BIOS) */
+  /* Mark standard low memory BIOS regions as used, but leave the
+   * 0x10000 - 0xA0000 range free for ISA DMA bounce buffers. Generic
+   * frame allocation starts at 1 MiB, so this pool stays intact. */
+  mark_region_used(0, PMM_ISA_DMA_START); /* Real mode IVT + BDA */
+  mark_region_used(PMM_ISA_DMA_END,
+                   PMM_GENERAL_ALLOC_BASE - PMM_ISA_DMA_END);
   mark_region_used((uintptr_t)_kernel_phys_start,
                    (uintptr_t)_kernel_phys_end - (uintptr_t)_kernel_phys_start);
   mark_region_used(bitmap_phys, bitmap_bytes); /* bitmap itself     */
@@ -254,7 +262,7 @@ void pmm_init(u64t mb2_addr) {
 
 /* First-fit linear scan. Returns the frame's physical base, or 0 on OOM. */
 u64t pmm_alloc_frame(void) {
-  for (u64t f = 0; f < bitmap_frames; f++) {
+  for (u64t f = PMM_GENERAL_ALLOC_BASE / FRAME_SIZE; f < bitmap_frames; f++) {
     if (!bitmap_test(f)) {
       bitmap_set(f);
       used_frames++;
@@ -270,7 +278,11 @@ u64t pmm_alloc_frame_below(u64t limit) {
   if (frames > bitmap_frames)
     frames = bitmap_frames;
 
-  for (u64t f = 0; f < frames; f++) {
+  u64t first_frame = 0;
+  if (limit > PMM_GENERAL_ALLOC_BASE)
+    first_frame = PMM_GENERAL_ALLOC_BASE / FRAME_SIZE;
+
+  for (u64t f = first_frame; f < frames; f++) {
     if (!bitmap_test(f)) {
       bitmap_set(f);
       used_frames++;
@@ -278,8 +290,58 @@ u64t pmm_alloc_frame_below(u64t limit) {
     }
   }
 
-  log_write("PMM: no free frame below HHDM limit", KERNEL, LOG_ERROR);
+  log_write("PMM: no free frame below limit", KERNEL, LOG_ERROR);
   return 0;
+}
+
+/* Finds N contiguous physical frames below a given physical address limit.
+ * Returns the physical base address, or 0 on failure. */
+u64t pmm_alloc_contiguous_below(u64t limit, u64t num_frames) {
+  if (num_frames == 0)
+    return 0;
+
+  u64t max_frames = limit / FRAME_SIZE;
+  if (max_frames > bitmap_frames)
+    max_frames = bitmap_frames;
+
+  /* Same rule as pmm_alloc_frame_below: only a caller whose limit sits at
+   * or below 1 MiB is asking for the ISA DMA pool. Anyone asking for more
+   * headroom gets general frames, so low memory is not handed out to
+   * callers that never needed it. */
+  u64t first_frame = 0;
+  if (limit > PMM_GENERAL_ALLOC_BASE)
+    first_frame = PMM_GENERAL_ALLOC_BASE / FRAME_SIZE;
+
+  u64t consecutive = 0;
+  u64t start_frame = 0;
+
+  for (u64t f = first_frame; f < max_frames; f++) {
+    if (!bitmap_test(f)) {
+      if (consecutive == 0)
+        start_frame = f;
+      consecutive++;
+
+      if (consecutive == num_frames) {
+        for (u64t i = start_frame; i < start_frame + num_frames; i++) {
+          bitmap_set(i);
+          used_frames++;
+        }
+        return start_frame * FRAME_SIZE;
+      }
+    } else {
+      consecutive = 0;
+    }
+  }
+
+  log_write("PMM: no contiguous frames below limit", KERNEL, LOG_ERROR);
+  return 0;
+}
+
+/* Counterpart to pmm_alloc_contiguous_below. `frame` is the base returned
+ * by that call and `num_frames` the same count that was requested. */
+void pmm_free_contiguous(u64t frame, u64t num_frames) {
+  for (u64t i = 0; i < num_frames; i++)
+    pmm_free_frame(frame + i * FRAME_SIZE);
 }
 
 void pmm_free_frame(u64t frame) {

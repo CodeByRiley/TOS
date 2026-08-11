@@ -48,8 +48,12 @@ uint64_t  framebuffer_phys_for_page(uint32_t idx);
 int       framebuffer_attach_virtio(void);
 
 /* Poll virtio-gpu for a host-side window resize. Returns 1 if rebound
- * to a new size, 0 otherwise. Safe to call from the kernel tty thread. */
+ * to a new size, 0 otherwise. Owned by the framebuffer flush thread. */
 int       framebuffer_check_resize(void);
+
+/* Increments after a successful virtio framebuffer resize. Consumers that
+ * cache screen dimensions can poll this without submitting GPU commands. */
+uint32_t  framebuffer_resize_generation(void);
 
 /* Push accumulated damage to the host scanout. No-op in MB2 mode (the
  * framebuffer IS the scanout). Called by the tty render loop every

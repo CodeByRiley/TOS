@@ -176,9 +176,11 @@ uint64_t *process_pml4_create(void) {
 
     pml4[0] = pdpt_phys | VMM_PRESENT | VMM_WRITE | VMM_USER;
 
-    /* Share the kernel-half entries that exist now. New mappings beneath
-     * those shared entries propagate; creating a new top-level entry later
-     * would still require synchronising existing process PML4s. */
+    /* Share the kernel-half entries by physical address, so mappings made
+     * beneath them later are visible here too. vmm_init pre-creates every
+     * one of these slots, which is what makes the copy safe: no kernel
+     * mapping can introduce a *new* top-level entry after this point and
+     * leave already-spawned processes behind. */
     for (int i = 256; i < 512; i++) {
         pml4[i] = kernel_pml4[i];
     }

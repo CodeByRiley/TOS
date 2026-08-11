@@ -20,6 +20,20 @@
 #define TASK_MAX_FDS 32
 #define TASK_CWD_MAX 256
 
+/* Arena bases come from loader/process.h — see the user address-space map. */
+#define INPUT_RING_SIZE_LOCAL 64
+#define IPC_RING_SIZE_LOCAL   16
+
+/* Cooperative-ish round-robin scheduler with a fixed 16-slot task table,
+ * a singly-linked ready queue, and the optimism of a startup pitch deck.
+ * No priorities, no time slicing, no SMP. The only thing keeping this
+ * fair is that nobody's written a hostile kthread yet. */
+
+#define MAX_TASKS 16
+#define KSTACK_BYTES (16 * 1024)
+
+
+
 /* Freed mmap ranges, kept for reuse. Small and fixed: the arena is a bump
  * allocator, and this list is what stops a load/unload cycle from walking
  * mmap_next_va to the top of the arena and never coming back. If it fills
@@ -54,6 +68,8 @@ struct task {
   uint64_t user_rsp_saved;        /* user rsp at last syscall entry        */
   uint64_t user_entry;            /* used by user-task first-run trampoline*/
   uint64_t user_rsp_initial;      /* used by user-task first-run trampoline*/
+  uint64_t user_arg;                 /* argument for user task                */
+
   enum task_state state;
   int pid;
   int parent_pid;                 /* 0 for kthreads / init                 */
@@ -68,6 +84,7 @@ struct task {
   void *kstack;                   /* base of allocation, for kfree on reap */
   void (*kthread_entry)(void);    /* entry for kthread tasks               */
   uint64_t *user_pml4;            /* owned PML4 for user tasks (else NULL) */
+  int *pml4_ref_count;         /* shared user_pml4 lifetime counter      */
   struct task *next;
   uint64_t wake_tick;             /* PIT tick to wake at (TASK_SLEEPING)   */
   struct fat_file *fds[TASK_MAX_FDS];
@@ -81,6 +98,8 @@ struct task {
   struct ipc_msg *ipc_ring;
   volatile int    ipc_head;
   volatile int    ipc_tail;
+
+  uint64_t futex_addr; 					  /* physical address of the futex lock for this task */
 
   /* Bump allocator for shmem regions mapped into this task by peers. */
   uint64_t shmem_next_va;
@@ -151,12 +170,18 @@ struct task *task_spawn(void (*entry)(void));
 struct task *task_spawn_user(uint64_t *user_pml4, uint64_t entry,
                              uint64_t user_rsp, int parent_pid);
 
+struct task *task_spawn_thread(uint64_t entry, uint64_t user_stack);
+
 void task_yield(void);
 void task_block(int waiting_for_pid);
 void task_wakeup(struct task *t);
+int task_wake_futex(uint64_t phys);
 void task_exit(long code) __attribute__((noreturn));
+void task_exit_thread(void) __attribute__((noreturn));
 int task_kill(int pid, long code);
 struct task *task_current(void);
+
+void task_inherit_cwd(struct task *child, struct task *parent);
 
 /* Park the current task off the ready queue until at least `ticks` PIT
  * ticks (100 Hz = 10 ms each) have elapsed. Called from PIT IRQ context

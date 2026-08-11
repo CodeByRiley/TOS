@@ -16,6 +16,7 @@ static int bind_device(struct device *device) {
     if (device->driver)
         return 1;
 
+    log_write("DRIVER: binding device", KERNEL, LOG_INFO);
     for (uint32_t i = 0; i < driver_count; i++) {
         const struct driver *driver = drivers[i];
         if (driver->bus != device->bus)
@@ -23,15 +24,15 @@ static int bind_device(struct device *device) {
         if (!driver->match(device))
             continue;
 
-        log_write_string("driver: probing", driver->name, KERNEL, LOG_INFO);
+        log_write_string("DRIVER: probing", driver->name, KERNEL, LOG_INFO);
         if (driver->probe(device) != 0) {
-            log_write_string("driver: probe failed", driver->name,
+            log_write_string("DRIVER: probe failed", driver->name,
                              KERNEL, LOG_WARN);
             continue;
         }
 
         device->driver = driver;
-        log_write_string("driver: bound", driver->name, KERNEL, LOG_INFO);
+        log_write_string("DRIVER: bound", driver->name, KERNEL, LOG_INFO);
         return 1;
     }
 
@@ -52,18 +53,36 @@ int driver_register(const struct driver *driver) {
     if (driver->bus == DEVICE_BUS_NONE)
         return -1;
     if (driver_count >= DRIVER_MAX_DRIVERS) {
-        log_write("driver: registry full", KERNEL, LOG_ERROR);
+        log_write("DRIVER: registry full", KERNEL, LOG_ERROR);
         return -1;
     }
 
     drivers[driver_count++] = driver;
-    log_write_string("driver: registered", driver->name, KERNEL, LOG_INFO);
+    log_write_string("DRIVER: registered", driver->name, KERNEL, LOG_INFO);
 
     /* Registration order is deliberately flexible: a driver registered after
      * bus enumeration still gets a chance to claim every unbound device. */
     for (uint32_t i = 0; i < device_count; i++)
         bind_device(&devices[i]);
 
+    return 0;
+}
+
+int driver_register_isa_device(uint16_t io_base, uint8_t irq) {
+    if (device_count >= DRIVER_MAX_DEVICES) return -1;
+    log_write("DRIVER: registering device", KERNEL, LOG_INFO);
+
+    struct device *device = &devices[device_count];
+    device->bus = DEVICE_BUS_ISA;
+    device->driver = 0;
+    device->driver_data = 0;
+    device->bus_info.isa.io_base = io_base;
+    device->bus_info.isa.irq = irq;
+
+    device_count++;
+    log_write_hex("DRIVER: device registered ", device_count, KERNEL, LOG_INFO);
+    // Try to bind a driver to it immediately
+    bind_device(device);
     return 0;
 }
 
@@ -77,7 +96,7 @@ int driver_probe_pci_devices(void) {
 
     for (uint32_t i = 0; i < count; i++) {
         if (device_count >= DRIVER_MAX_DEVICES) {
-            log_write("driver: device table full", KERNEL, LOG_ERROR);
+            log_write("DRIVER: device table full", KERNEL, LOG_ERROR);
             break;
         }
 
@@ -94,7 +113,7 @@ int driver_probe_pci_devices(void) {
         bind_device(device);
     }
 
-    log_write_hex("driver: PCI devices imported =", imported,
+    log_write_hex("DRIVER: PCI devices imported =", imported,
                   KERNEL, LOG_INFO);
     return (int)imported;
 }

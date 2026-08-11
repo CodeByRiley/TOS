@@ -18,6 +18,12 @@
 enum device_bus {
     DEVICE_BUS_NONE = 0,
     DEVICE_BUS_PCI  = 1,
+    DEVICE_BUS_ISA  = 2,
+};
+
+struct isa_device {
+	uint16_t io_base;
+	uint16_t irq;
 };
 
 struct device;
@@ -33,6 +39,7 @@ struct device {
     enum device_bus bus;
     union {
         struct pci_device pci;
+        struct isa_device isa;
     } bus_info;
 
     const struct driver *driver;
@@ -43,6 +50,7 @@ void driver_core_init(void);
 
 /* Register a driver and immediately try it against existing unbound devices. */
 int driver_register(const struct driver *driver);
+int driver_register_isa_device(uint16_t io_base, uint8_t irq);
 
 /* Import the PCI scan results into the device model and bind matching drivers.
  * Idempotent: each PCI function is imported once. */

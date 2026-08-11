@@ -18,8 +18,6 @@
  * trade-off is "trusted enough to not crash the kernel"; a real OS would
  * do per-page copy-in/copy-out into kernel buffers.
  */
-// #region INCLUDES
-
 #include "arch/syscall.h"
 #include "devices/io.h"
 #include "devices/pit.h"
@@ -41,23 +39,15 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// #endregion INCLUDES
-
-// #region CONSTANTS
 
 /* User VA boundaries (USER_FB_BASE, USER_MMAP_BASE, USER_MMAP_LIMIT,
  * USER_VA_MIN/MAX, stack) all come from loader/process.h. */
-
 #define MSR_EFER 0xC0000080
 #define MSR_STAR 0xC0000081
 #define MSR_LSTAR 0xC0000082
 #define MSR_FMASK 0xC0000084
 
 #define MAX_SHMEM_PAGES 4096 /* per-call cap; 16 MiB */
-
-// #endregion CONSTANTS
-
-// #region TYPES + EXTERNS
 
 struct fb_info {
   uint64_t width;
@@ -82,10 +72,6 @@ static int fd_alloc_for(struct task *t, struct fat_file *f) {
   }
   return -1;
 }
-
-// #endregion TYPES + EXTERNS
-
-// #region FRAMEBUFFER
 
 static long sys_fb_info(struct fb_info *out) {
   if (!out)
@@ -125,10 +111,6 @@ static long sys_fb_map(void) {
   }
   return USER_FB_BASE;
 }
-
-// #endregion FRAMEBUFFER
-
-// #region MMAP
 
 static void sys_mmap_rollback(struct task *t, uint64_t base, uint64_t pages) {
   for (uint64_t i = 0; i < pages; i++) {
@@ -362,10 +344,6 @@ static long sys_munmap(uint64_t addr, long len) {
   return 0;
 }
 
-// #endregion MMAP
-
-// #region INPUT + TIME
-
 static long sys_kbd_poll(int *pressed, uint16_t *key) {
   if (!pressed || !key)
     return -1;
@@ -402,10 +380,6 @@ void syscall_init(uint64_t kernel_stack_top) {
 
   log_write("syscalls enabled", KERNEL, LOG_INFO);
 }
-
-// #endregion MSR + INIT
-
-// #region FILE I/O HANDLERS
 
 static long sys_write(long fd, const void *buf, long n) {
   if (fd == 1 || fd == 2) {
@@ -474,10 +448,6 @@ static long sys_yield(void) {
   return 0;
 }
 
-// #endregion PROCESS HANDLERS
-
-// #region MESSAGE + MOUSE HANDLERS
-
 static long sys_msg_get(struct msg *out) {
   if (!out)
     return -1;
@@ -499,10 +469,6 @@ static long sys_mouse_pos(int32_t *x, int32_t *y, uint8_t *buttons) {
     *buttons = mouse_buttons();
   return 0;
 }
-
-// #endregion MESSAGE + MOUSE HANDLERS
-
-// #region CONSOLE + SLEEP + PID
 
 static long sys_con_write(const char *buf, long n) {
   if (!buf || n < 0)
@@ -555,16 +521,16 @@ static long sys_ipc_recv(struct ipc_msg *out) {
   return ipc_recv(out) ? 1 : 0;
 }
 
-/* Share `npages` worth of the caller's pages starting at `my_va` (page-
+/* Share `npages` worth of the caller's pages starting at `in_va` (page-
  * aligned) into the target process's address space. Kernel picks the
  * target VA via the target task's bump allocator. */
-static long sys_shmem_share(long target_pid, uint64_t my_va, long npages,
+static long sys_shmem_share(long target_pid, uint64_t in_va, long npages,
                             uint64_t *out_target_va) {
   if (!out_target_va || target_pid <= 0 || npages <= 0)
     return -1;
   if (npages > MAX_SHMEM_PAGES)
     return -1;
-  if (my_va & 0xFFFULL)
+  if (in_va & 0xFFFULL)
     return -1;
 
   struct task *me = task_current();
@@ -583,7 +549,7 @@ static long sys_shmem_share(long target_pid, uint64_t my_va, long npages,
   uint64_t flags = VMM_PRESENT | VMM_WRITE | VMM_USER | VMM_SHARED;
 
   for (long i = 0; i < npages; i++) {
-    uint64_t phys = vmm_translate_in(me->user_pml4, my_va + (uint64_t)i * 4096);
+    uint64_t phys = vmm_translate_in(me->user_pml4, in_va + (uint64_t)i * 4096);
     if (!phys)
       return -1;
     if (vmm_map_in(target->user_pml4, target_va + (uint64_t)i * 4096, phys,
@@ -687,10 +653,6 @@ static long sys_tty_drain(char *out, long max) {
   return (long)tty_drain(out, (size_t)max);
 }
 
-// #endregion IPC + SHMEM + WINMAN
-
-// #region SHUTDOWN + REBOOT
-
 /* Block-wait `seconds` using PIT ticks (10ms each at 100Hz). */
 static void delay_seconds(long seconds) {
   if (seconds <= 0)
@@ -757,10 +719,6 @@ static long sys_reboot(long time) {
   hw_reboot();
   return 0; /* unreachable */
 }
-
-// #endregion SHUTDOWN + REBOOT
-
-// #region FAT HANDLERS
 
 /* O_CREAT = 0x40, O_TRUNC = 0x200, O_WRONLY = 1 (match fcntl.h) */
 #define O_CREAT 0x40
@@ -996,10 +954,11 @@ static long sys_chdir(const char *path) {
   if (resolve_path(path, resolved, sizeof(resolved)) != 0)
     return -1;
 
-  unsigned idx = 0;
-  char tmp[16];
-  long n = fat_read_dir(resolved, &idx, tmp, sizeof(tmp));
-  if (n < 0)
+  /* Existence check by stat rather than by reading an entry: a directory
+   * whose first name is long would not fit in a probe buffer, and an
+   * empty directory has no entry to read at all. */
+  struct fat_stat st;
+  if (fat_stat(resolved, &st) != 0 || !st.is_dir)
     return -1;
 
   size_t i = 0;
@@ -1029,9 +988,6 @@ static long sys_getcwd(char *buf, size_t size) {
   return 0;
 }
 
-// #endregion FAT HANDLERS
-
-// #region INTROSPECTION HANDLERS
 
 /* Userspace-visible proc_info layout. MUST match struct proc_info in
  * userspace/lib/syscall.h byte-for-byte. */
@@ -1090,9 +1046,87 @@ static long sys_mem_stats(struct mem_stats_user *out) {
   return 0;
 }
 
-// #endregion INTROSPECTION HANDLERS
+static long sys_thread_create(uint64_t entry, uint64_t user_stack, uint64_t u_arg) {
+    struct task *t = task_spawn_thread(entry, user_stack);
+    if (!t) return -1;
+    t->user_arg = u_arg;
+    return t->pid;
+}
 
-// #region DISPATCH
+static long sys_thread_exit(void) {
+    struct task *t = task_current();
+    if (!t) return -1;
+
+    // Atomically decrement the shared counter!
+    int new_count = __atomic_sub_fetch(t->pml4_ref_count, 1, __ATOMIC_ACQ_REL);
+
+    if (new_count <= 0) {
+        // Last thread! Safe to free the PML4 and the counter itself.
+        kfree(t->pml4_ref_count);
+        t->pml4_ref_count = 0;
+        task_exit(0);
+    } else {
+        // Just kill this thread.
+        t->user_pml4 = 0;
+        t->pml4_ref_count = 0;
+        task_exit_thread();
+    }
+
+    return 0;
+}
+
+static long sys_thread_join(long tid) {
+    struct task *target = task_find((int)tid);
+    if (!target) return -1;
+
+    // If it's already dead, we don't need to wait
+    if (target->state == TASK_ZOMBIE) {
+        return 0;
+    }
+
+    // Block until the target thread exits.
+    // task_block takes the PID we are waiting for.
+    task_block((int)tid);
+    return 0;
+}
+
+// Sleep on a futex if *addr == expected
+static long sys_futex_wait(uint32_t *addr, uint32_t expected) {
+    struct task *t = task_current();
+    if (!t || !t->user_pml4) return -1;
+    if (!addr) return -1;
+
+    // Validate pointer is in user range
+    if ((uint64_t)addr >= USER_VA_MAX) return -1;
+
+    // Translate to physical address (ignoring the NX bit at bit 63)
+    uint64_t phys = vmm_translate_in(t->user_pml4, (uint64_t)addr);
+    if (!phys) return -1;
+    phys &= 0x000FFFFFFFFFF000ULL;
+
+    // CRITICAL: Check the value atomically before blocking
+    // If it changed, return immediately so userspace can retry
+    if (*addr != expected) {
+        return -1;
+    }
+
+    t->futex_addr = phys;
+    task_block(0); // 0 means indefinite wait
+    return 0;
+}
+
+// Wake up ONE thread waiting on this address
+static long sys_futex_wake(uint32_t *addr) {
+    struct task *me = task_current();
+    if (!me || !me->user_pml4) return -1;
+    if (!addr) return -1;
+
+    uint64_t phys = vmm_translate_in(me->user_pml4, (uint64_t)addr);
+    if (!phys) return -1;
+    phys &= 0x000FFFFFFFFFF000ULL;
+
+    return task_wake_futex(phys);
+}
 
 long syscall_dispatch(struct syscall_frame *f) {
   long num = (long)f->rax;
@@ -1260,11 +1294,24 @@ long syscall_dispatch(struct syscall_frame *f) {
   case SYS_CON_POP:
     ret = sys_con_pop();
     break;
+  case SYS_THREAD_CREATE:
+    ret = sys_thread_create((uintptr_t)a1, (uintptr_t)a2, (uintptr_t)a3);
+    break;
+  case SYS_THREAD_EXIT:
+    ret = sys_thread_exit();
+    break;
+  case SYS_THREAD_JOIN:
+    ret = sys_thread_join((uintptr_t)a1);
+    break;
+  case SYS_FUTEX_WAIT:
+    ret = sys_futex_wait((uint32_t *)(uintptr_t)a1, (uint32_t)a2);
+    break;
+  case SYS_FUTEX_WAKE:
+    ret = sys_futex_wake((uint32_t *)(uintptr_t)a1);
+    break;
   default:
     log_write_hex("unknown syscall =", num, KERNEL, LOG_ERROR);
   }
   f->rax = (uint64_t)ret;
   return ret;
 }
-
-// #endregion DISPATCH

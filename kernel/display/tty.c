@@ -355,8 +355,13 @@ size_t tty_drain(char *out, size_t max) {
  * the backbuffer to the scanout when we drew something. In MB2 mode both
  * calls degrade to no-ops, so the thread behaves identically there. */
 void tty_thread_entry(void) {
+    uint32_t seen_resize_generation = framebuffer_resize_generation();
     for (;;) {
-        if (framebuffer_check_resize()) tty_resize();
+        uint32_t resize_generation = framebuffer_resize_generation();
+        if (resize_generation != seen_resize_generation) {
+            seen_resize_generation = resize_generation;
+            tty_resize();
+        }
 
         int owner = msg_input_owner();
         int want_active = (owner == 0);

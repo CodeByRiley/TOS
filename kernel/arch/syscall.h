@@ -13,7 +13,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* --- File / I/O surface ------------------------------------------------
+/* File / I/O surface
  *
  * Numbers follow Linux x86_64 wherever the call means the same thing, so
  * a future Linux personality doesn't need a translation table. TOS-only
@@ -38,7 +38,7 @@
 #define SYS_READDIR        217   /* Linux getdents64 slot                  */
 #define SYS_READDIR_PATH   218   /* TOS extension: enumerate by path       */
 
-/* --- mmap / mprotect ---------------------------------------------------
+/* mmap / mprotect
  *
  * PROT_* and MAP_* use the Linux values. Deviations from Linux, both
  * deliberate:
@@ -59,7 +59,7 @@
 #define MAP_FIXED       0x10
 #define MAP_ANONYMOUS   0x20
 
-/* --- stat --------------------------------------------------------------
+/* stat
  * Compact kernel-side metadata. Userspace libc expands this into the
  * POSIX struct stat; keeping the ABI struct small means adding a POSIX
  * field later doesn't change the syscall boundary. */
@@ -76,11 +76,11 @@ struct stat_user {
 _Static_assert(sizeof(struct stat_user) == 24,
                "stat_user must match the userspace mirror");
 
-/* --- Process control -------------------------------------------------- */
+/* Process control */
 #define SYS_YIELD   24
 #define SYS_EXIT    60
 
-/* --- Display + input -------------------------------------------------- */
+/* Display + input */
 #define SYS_FB_INFO    100
 #define SYS_FB_MAP     101
 #define SYS_FB_DAMAGE  108
@@ -91,13 +91,13 @@ _Static_assert(sizeof(struct stat_user) == 24,
 #define SYS_MSG_PEEK   106
 #define SYS_MOUSE_POS  107
 
-/* --- Console (TTY) --------------------------------------------------- */
+/* Console (TTY) */
 #define SYS_CON_WRITE      120
 #define SYS_CON_CLEAR      121
 #define SYS_SLEEP_TICKS    122
 #define SYS_GET_PID        123
 
-/* --- IPC / shmem / WM registry --------------------------------------- */
+/* IPC / shmem / WM registry */
 /* Used by userspace winman to compose windows owned by other processes.
  * The kernel mediates cross-PML4 page mapping; the WM protocol itself
  * lives entirely in userspace. */
@@ -109,24 +109,31 @@ _Static_assert(sizeof(struct stat_user) == 24,
 #define SYS_WM_PID         135
 #define SYS_TTY_DRAIN      136
 
-/* --- Diagnostics ------------------------------------------------------ */
+/* Diagnostics */
 /* Consumed by userspace btop. */
 #define SYS_PROC_LIST      140
 #define SYS_MEM_STATS      141
 
-/* --- Console alt-screen (single-level stack) ------------------------- */
+/* Console alt-screen (single-level stack) */
 /* Snapshot grid + cursor on push; restore on pop. Used by fullscreen
  * console apps so the shell's previous output reappears on exit. */
 #define SYS_CON_PUSH       142
 #define SYS_CON_POP        143
 
-/* --- Process management --------------------------------------------------- */
+/* Process management */
 /* Fire-and-forget: returns child pid, never waits. */
 #define SYS_SPAWN          144
 #define SYS_KILL           145
 #define SYS_CON_ZOOM       146
 
-/* --- Power management ------------------------------------------------- */
+/* Thread management. */
+#define SYS_THREAD_CREATE  200
+#define SYS_THREAD_EXIT    201
+#define SYS_THREAD_JOIN	   202
+#define SYS_FUTEX_WAIT     203
+#define SYS_FUTEX_WAKE	   204
+
+/* Power management */
 #define SYS_SHUTDOWN   888
 #define SYS_REBOOT     887
 
