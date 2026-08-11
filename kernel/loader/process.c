@@ -16,11 +16,13 @@
 #include "utilities/log.h"
 #include "loader/process.h"
 #include "loader/elf.h"
+#include "loader/pe.h"
 #include "memory/heap.h"
 #include "memory/hhdm.h"
 #include "memory/pmm.h"
 #include "memory/vmm.h"
 #include "sched/sched.h"
+#include "fs/stdio.h"
 #include <stdint.h>
 
 #define ARGV_MAX 16
@@ -231,9 +233,31 @@ static int process_spawn_common(const char *path, char *const argv[]) {
         return -1;
     }
 
-    uint64_t entry = elf_load(saved_path, child_pml4);
+    uint8_t magic[16];
+    FILE *sniff = fopen(saved_path, "r");
+    if (!sniff) {
+        log_write("process_spawn: fopen failed", KERNEL, LOG_ERROR);
+        free_user_pml4(child_pml4);
+        for (int i = 0; i < argc; i++) kfree(saved[i]);
+        return -1;
+    }
+    size_t read = fread(magic, 1, 16, sniff);
+    uint64_t entry;
+    // Check for PE magic
+    if(read == 16) {
+    	if(magic[0] == 'M' && magic[1] == 'Z') {
+    		log_write("process_spawn: PE magic found", KERNEL, LOG_INFO);
+      	entry = pe_load(saved_path, child_pml4);
+    	} else if (magic[0] == 0x7F && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F') {
+    		log_write("process_spawn: ELF magic found", KERNEL, LOG_INFO);
+      	entry = elf_load(saved_path, child_pml4);
+    	} else {
+    		log_write("process_spawn: unknown magic", KERNEL, LOG_ERROR);
+    	}
+    }
+    fclose(sniff);
     if (!entry) {
-        log_write("process_spawn: elf load failed", KERNEL, LOG_ERROR);
+        log_write("process_spawn: load failed", KERNEL, LOG_ERROR);
         free_user_pml4(child_pml4);
         for (int i = 0; i < argc; i++) kfree(saved[i]);
         return -1;

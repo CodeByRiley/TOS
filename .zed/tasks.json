@@ -1,0 +1,20 @@
+[
+  {
+    "label": "Build",
+    "command": "./tools/build.bat",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "shell": "system",
+    "show_summary": true,
+    "show_command": true,
+  },
+  {
+    "label": "Run",
+    "command": "./tools/run.bat",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "shell": "system",
+    "show_summary": true,
+    "show_command": true,
+  }
+]
