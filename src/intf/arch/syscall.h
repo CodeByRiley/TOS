@@ -14,14 +14,18 @@
 #include <stdint.h>
 
 /* --- File / I/O surface ------------------------------------------------ */
-#define SYS_READ    0
-#define SYS_WRITE   1
-#define SYS_OPEN    2
-#define SYS_CLOSE   3
-#define SYS_LSEEK   8
-#define SYS_MMAP    9
-#define SYS_READDIR 10
-#define SYS_UNLINK  87
+#define SYS_READ    		 0
+#define SYS_WRITE   		 1
+#define SYS_OPEN    		 2
+#define SYS_CLOSE   		 3
+#define SYS_LSEEK   		 8
+#define SYS_MMAP    		 9
+#define SYS_READDIR 		 10
+#define SYS_READDIR_PATH 11
+#define SYS_CHDIR        12
+#define SYS_GETCWD       13
+#define SYS_MKDIR   		 83
+#define SYS_UNLINK  		 87
 
 /* --- Process control -------------------------------------------------- */
 #define SYS_YIELD   24
@@ -66,9 +70,11 @@
 #define SYS_CON_PUSH       142
 #define SYS_CON_POP        143
 
-/* --- Process spawn --------------------------------------------------- */
+/* --- Process management --------------------------------------------------- */
 /* Fire-and-forget: returns child pid, never waits. */
 #define SYS_SPAWN          144
+#define SYS_KILL           145
+#define SYS_CON_ZOOM       146
 
 /* --- Power management ------------------------------------------------- */
 #define SYS_SHUTDOWN   888

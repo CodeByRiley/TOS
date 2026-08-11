@@ -28,20 +28,34 @@ static struct idt_ptr idtr;
 
 extern uint64_t isr_stub_table[48];
 
-static void idt_set(int vec, uint64_t handler) {
+/* IST index 1 is the double-fault stack installed by gdt_install_tss. Any
+ * other vector uses ist=0, meaning "keep the current stack". */
+#define IST_DOUBLE_FAULT 1
+#define VEC_DOUBLE_FAULT 8
+
+static void idt_set_ist(int vec, uint64_t handler, uint8_t ist) {
     idt[vec].offset_low  = handler & 0xFFFF;
     idt[vec].selector    = 0x08;
-    idt[vec].ist         = 0;
+    idt[vec].ist         = ist;
     idt[vec].type_attr   = 0x8E;
     idt[vec].offset_mid  = (handler >> 16) & 0xFFFF;
     idt[vec].offset_high = (handler >> 32) & 0xFFFFFFFF;
     idt[vec].zero        = 0;
 }
 
+static void idt_set(int vec, uint64_t handler) {
+    idt_set_ist(vec, handler, 0);
+}
+
 void idt_init(void) {
     for (int i = 0; i < 48; i++) {
         idt_set(i, isr_stub_table[i]);
     }
+    /* #DF is the last chance to say anything before a triple fault resets
+     * the machine. Give it a stack that cannot itself be the problem —
+     * a stack overflow or a bad rsp0 otherwise reboots with no output. */
+    idt_set_ist(VEC_DOUBLE_FAULT, isr_stub_table[VEC_DOUBLE_FAULT],
+                IST_DOUBLE_FAULT);
     idtr.limit = sizeof(idt) - 1;
     idtr.base  = (uint64_t)&idt;
     __asm__ volatile ("lidt %0" : : "m"(idtr));

@@ -90,6 +90,17 @@ static struct tss tss_table[MAX_CPUS] __attribute__((aligned(16)));
 static struct gdtr gdtr;
 static uint8_t  bsp_kernel_stack[16384] __attribute__((aligned(16)));
 
+/* Dedicated per-CPU double-fault stacks, wired to IST1.
+ *
+ * Without these a #DF is delivered on whatever stack was already broken —
+ * so the CPU cannot push the exception frame, and a triple fault reboots
+ * the machine with no output at all. An IST entry makes the CPU switch to
+ * a known-good stack unconditionally, which turns a silent reset into a
+ * printable report. Kept small: the handler logs and halts, it does not
+ * return or recurse. */
+#define DF_STACK_BYTES 4096
+static uint8_t df_stacks[MAX_CPUS][DF_STACK_BYTES] __attribute__((aligned(16)));
+
 static void set_entry(uint16_t selector, uint8_t access, uint8_t flags) {
     struct gdt_entry *e = (struct gdt_entry*)&gdt_table[selector];
     e->limit_low   = 0xFFFF;
@@ -166,6 +177,10 @@ void gdt_install_tss(int cpu_id, uint64_t kstack_top) {
     memset(t, 0, sizeof(*t));
     t->iomap_base = sizeof(*t);     // no I/O permission map
     t->rsp0       = kstack_top;
+    /* IST1 = double fault. The IDT points vector 8 at this slot, so #DF is
+     * always delivered on a stack that is known good even when rsp0 is the
+     * thing that broke. */
+    t->ist1       = (uint64_t)(df_stacks[cpu_id] + DF_STACK_BYTES);
     set_tss((uint16_t)GDT_TSS_FOR(cpu_id), (uint64_t)t, sizeof(*t) - 1);
 }
 

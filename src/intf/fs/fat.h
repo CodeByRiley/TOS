@@ -1,8 +1,8 @@
 /* src/intf/fs/fat.h — minimal FAT filesystem driver.
  *
  * Read/write FAT16 over an in-memory image (loaded from the GRUB module
- * payload). Flat root directory only — no subdirs. Supports create,
- * read, write (overwriting), seek, unlink, and root enumeration.
+ * payload). Supports root-relative 8.3 paths, cluster-backed directories,
+ * create, read, write, seek, unlink, mkdir, and enumeration.
  *
  * Implementation: src/impl/kernel/fs/fat.c.
  */
@@ -30,18 +30,19 @@ struct fat_file {
 /* Bind the driver to an in-memory FAT16 image. */
 int    fat_init(uint8_t *image, size_t size);
 
-/* Open an existing file by name (8.3 form). */
-int    fat_open(const char *name, struct fat_file *f);
+/* Open an existing file by root-relative 8.3 path. */
+int    fat_open(const char *path, struct fat_file *f);
 
-/* Create a new file in the root directory. */
-int    fat_create(const char *name, struct fat_file *f);
+int    fat_create(const char *path, struct fat_file *f);
 
 size_t fat_read(struct fat_file *f, void *buf, size_t len);
 size_t fat_write(struct fat_file *f, const void *buf, size_t len);
 int    fat_seek(struct fat_file *f, uint32_t pos);
-int    fat_unlink(const char *name);
+int    fat_unlink(const char *path);
+int    fat_mkdir(const char *path);
 
-/* Enumerate root entries. *index advances; returns bytes in buf or -1. */
+/* Enumerate packed NUL-terminated names. Directories end in '/'. */
+long   fat_read_dir(const char *path, uint32_t *index, char *buf, size_t len);
 long   fat_read_root_dir(uint32_t *index, char *buf, size_t len);
 
 #endif

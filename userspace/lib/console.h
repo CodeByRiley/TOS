@@ -17,6 +17,12 @@ void console_init(void);
 /* Erase the visible TTY (SYS_CON_CLEAR). */
 void console_clear(void);
 
+/* Increase the console glyph scale by one step (SYS_CON_ZOOM). */
+void console_zoom_in(void);
+
+/* Decrease the console glyph scale by one step (SYS_CON_ZOOM). */
+void console_zoom_out(void);
+
 /* Emit a single character to the TTY. */
 void console_putc(char c);
 

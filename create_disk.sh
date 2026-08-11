@@ -13,6 +13,9 @@ payloads=(
 	"userspace/bin/sh/sh.elf::SH.ELF"
 	"userspace/bin/shutdown/shutdown.elf::SHUTDOWN.ELF"
 	"userspace/bin/reboot/reboot.elf::REBOOT.ELF"
+	"userspace/bin/pkill/pkill.elf::PKILL.ELF"
+	"userspace/bin/plist/plist.elf::PLIST.ELF"
+	"userspace/bin/fdchild/fdchild.elf::FDCHILD.ELF"
 	"userspace/bin/mtest/mtest.elf::MTEST.ELF"
 	"userspace/bin/winman/winman.elf::WINMAN.ELF"
 	"userspace/bin/btop/btop.elf::BTOP.ELF"
@@ -57,9 +60,32 @@ fi
 dd if=/dev/zero of=disk.img bs=1M count="$DISK_SIZE_MIB" status=none
 mkfs.fat -F 16 disk.img >/dev/null
 
+ensure_fat_parent_dirs() {
+	local fat_path="${1#/}"
+	local parent="${fat_path%/*}"
+	if [[ "$parent" == "$fat_path" ]]; then
+		return
+	fi
+
+	local current=""
+	IFS='/' read -r -a components <<< "$parent"
+	for component in "${components[@]}"; do
+		[[ -z "$component" ]] && continue
+		if [[ -z "$current" ]]; then
+			current="$component"
+		else
+			current="$current/$component"
+		fi
+		if ! mdir -i disk.img "::${current}" >/dev/null 2>&1; then
+			mmd -i disk.img "::${current}"
+		fi
+	done
+}
+
 for entry in "${payloads[@]}"; do
 	host_path="${entry%%::*}"
 	fat_name="${entry##*::}"
+	ensure_fat_parent_dirs "$fat_name"
 	mcopy -i disk.img "$host_path" "::${fat_name}"
 done
 

@@ -22,29 +22,33 @@
 #include <stdint.h>
 
 /* ---------------- System-call numbers ----------------------------------- */
-#define SYS_READ    0
-#define SYS_WRITE   1
-#define SYS_OPEN    2
-#define SYS_CLOSE   3
-#define SYS_LSEEK   8
-#define SYS_MMAP    9
-#define SYS_READDIR 10
-#define SYS_YIELD   24
-#define SYS_EXIT    60
-#define SYS_FB_INFO    100
-#define SYS_FB_MAP     101
-#define SYS_FB_DAMAGE  108
-#define SYS_KBD_POLL   102
-#define SYS_GET_TICKS  103
-#define SYS_EXEC       104
-#define SYS_MSG_GET    105
-#define SYS_MSG_PEEK   106
-#define SYS_MOUSE_POS  107
-#define SYS_CON_WRITE  120
-#define SYS_CON_CLEAR  121
+#define SYS_READ    		 0
+#define SYS_WRITE   		 1
+#define SYS_OPEN    		 2
+#define SYS_CLOSE   		 3
+#define SYS_LSEEK   		 8
+#define SYS_MMAP    		 9
+#define SYS_READDIR 		 10
+#define SYS_READDIR_PATH 11
+#define SYS_CHDIR 			 12
+#define SYS_GETCWD	 		 13
+
+
+#define SYS_YIELD   	  24
+#define SYS_EXIT    	  60
+#define SYS_FB_INFO     100
+#define SYS_FB_MAP      101
+#define SYS_FB_DAMAGE   108
+#define SYS_KBD_POLL    102
+#define SYS_GET_TICKS   103
+#define SYS_EXEC        104
+#define SYS_MSG_GET     105
+#define SYS_MSG_PEEK    106
+#define SYS_MOUSE_POS   107
+#define SYS_CON_WRITE   120
+#define SYS_CON_CLEAR   121
 #define SYS_SLEEP_TICKS 122
 #define SYS_GET_PID     123
-
 #define SYS_IPC_SEND    130
 #define SYS_IPC_RECV    131
 #define SYS_SHMEM_SHARE 132
@@ -52,12 +56,16 @@
 #define SYS_WM_PID      134
 #define SYS_TTY_DRAIN   135
 
+
 #define SYS_PROC_LIST   140
 #define SYS_MEM_STATS   141
 #define SYS_CON_PUSH    142
 #define SYS_CON_POP     143
 #define SYS_SPAWN       144
+#define SYS_KILL        145
+#define SYS_CON_ZOOM    146
 
+#define SYS_MKDIR      83
 #define SYS_UNLINK     87
 #define SYS_SHUTDOWN   888
 #define SYS_REBOOT     887
@@ -174,9 +182,13 @@ long close(int fd);
 long lseek(int fd, long off, int whence);
 void *mmap(size_t len);
 long readdir(unsigned *index, char *buf, size_t n);
+long readdir_path(const char *path, unsigned *index, char *buf, size_t n);
+long mkdir_path(const char *path);
 long unlink(const char *path);
 void exit(int code);
 long yield(void);
+long chdir(const char *path);
+char *getcwd(char *buf, size_t size);
 
 /* Input + windowing. */
 long msg_get(struct msg *out);
@@ -192,6 +204,7 @@ long  get_ticks(void);
  * child's pid immediately so the caller (e.g., the shell) stays free. */
 long  exec(const char *path, char *const argv[]);
 long  spawn(const char *path, char *const argv[]);
+long  kill(long pid, int signal);
 long  sys_shutdown(int time, const char *reason);
 long  sys_reboot(int time);
 
@@ -200,6 +213,7 @@ long  con_write(const char *buf, size_t n);
 long  con_clear(void);
 long  con_push(void);
 long  con_pop(void);
+long  con_zoom(long delta);
 long  sleep_ticks(unsigned long n);
 long  get_pid(void);
 

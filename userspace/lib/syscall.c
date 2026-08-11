@@ -29,6 +29,15 @@ long lseek(int fd, long off, int whence) {
     return syscall3(SYS_LSEEK, fd, off, whence);
 }
 
+long chdir(const char *path) {
+    return syscall1(SYS_CHDIR, (long)(uintptr_t)path);
+}
+
+char *getcwd(char *buf, size_t size) {
+    long rc = syscall2(SYS_GETCWD, (long)(uintptr_t)buf, (long)size);
+    return rc == 0 ? buf : 0;
+}
+
 /* Anonymous memory allocator. Returns 0 on failure, page-aligned va on
  * success — kernel decides the layout. */
 void *mmap(size_t len) {
@@ -38,6 +47,15 @@ void *mmap(size_t len) {
 
 long readdir(unsigned *index, char *buf, size_t n) {
     return syscall3(SYS_READDIR, (long)(uintptr_t)index, (long)(uintptr_t)buf, (long)n);
+}
+
+long readdir_path(const char *path, unsigned *index, char *buf, size_t n) {
+    return syscall4(SYS_READDIR_PATH, (long)(uintptr_t)path,
+                    (long)(uintptr_t)index, (long)(uintptr_t)buf, (long)n);
+}
+
+long mkdir_path(const char *path) {
+    return syscall1(SYS_MKDIR, (long)(uintptr_t)path);
 }
 
 long unlink(const char *path) {
@@ -102,6 +120,10 @@ long spawn(const char *path, char *const argv[]) {
     return syscall2(SYS_SPAWN, (long)(uintptr_t)path, (long)(uintptr_t)argv);
 }
 
+long kill(long pid, int signal) {
+    return syscall2(SYS_KILL, pid, signal);
+}
+
 long sys_shutdown(int time, const char *reason) {
     return syscall2(SYS_SHUTDOWN, time, (long)(uintptr_t)reason);
 }
@@ -121,6 +143,10 @@ long con_clear(void) {
 
 long con_push(void) {
     return syscall0(SYS_CON_PUSH);
+}
+
+long con_zoom(long delta) {
+    return syscall1(SYS_CON_ZOOM, delta);
 }
 
 long con_pop(void) {

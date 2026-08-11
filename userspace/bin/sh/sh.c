@@ -1,8 +1,8 @@
 /* userspace/bin/sh/sh.c — tsh: toy interactive shell.
  *
- * Reads a line, tokenises it, dispatches a small set of built-ins
- * (ls/cat/echo/write/rm/clear/help/exit), and falls through to a
- * filesystem ELF lookup so `btop` runs BTOP.ELF without a `run` prefix.
+ * Reads a line, tokenises it, dispatches shell-owned built-ins through a
+ * table, and falls through to a filesystem ELF lookup so `btop` runs
+ * BTOP.ELF without a `run` prefix.
  * Foreground execs block on exec(); a trailing `&` token launches via
  * spawn() so windowed apps don't pin the prompt.
  *
@@ -16,6 +16,7 @@
 #include "../../lib/keymap.h"
 #include "../../lib/console.h"
 #include "../../include/key_codes.h"
+#include "utilities/types.h"
 #include <stdarg.h>
 // #endregion INCLUDES
 
@@ -73,6 +74,16 @@ static char read_char(void) {
             continue;
         }
         if (!pressed) continue;       /* only act on press */
+
+        if (ctrl_held && k == KEY_MINUS) {
+            console_zoom_out();
+            continue;
+        }
+
+        if (ctrl_held && k == KEY_EQUAL) {
+            console_zoom_in();
+            continue;
+        }
 
         char c = keymap_to_ascii(k, shift_held);
         if (c) return c;
@@ -244,111 +255,256 @@ static int tokenize(char *line, char **argv, int max) {
 
 // #region BUILT-INS
 
-static void builtin_help(void) {
-    printf("commands:\n");
-    printf("  help          this message\n");
-    printf("  ls            list files\n");
-    printf("  cat FILE      print file contents\n");
-    printf("  echo TEXT...  print arguments\n");
-    printf("  write FILE T  write text T to FILE (overwrite)\n");
-    printf("  rm FILE       delete file\n");
-    printf("  run PATH.ELF  spawn child ELF, return when it exits\n");
-    printf("  clear         clear screen\n");
-    printf("  reboot   -t TIME    reboot the system\n");
-    printf("  shutdown -t TIME -r REASON shutdown the system\n");
-    printf("  exit          quit shell\n");
-}
+struct builtin {
+    const char *name;
+    const char *usage;
+    int (*fn)(int argc, char **argv);
+};
 
-static void builtin_ls(void) {
-    char     buf[512];
-    unsigned idx = 0;
-    while (1) {
-        long n = readdir(&idx, buf, sizeof(buf));
-        if (n <= 0) break;
-        long off = 0;
-        while (off < n) {
-            const char *name = buf + off;
-            printf("  %s\n", name);
-            off += strlen(name) + 1;
-        }
+static int builtin_help(int argc, char **argv);
+static int builtin_mkdir(int argc, char **argv);
+static int builtin_echo(int argc, char **argv);
+static int builtin_write(int argc, char **argv);
+static int builtin_rm(int argc, char **argv);
+static int builtin_clear(int argc, char **argv);
+static int builtin_run(int argc, char **argv);
+static int builtin_test(int argc, char **argv);
+static int builtin_fdnstest(int argc, char **argv);
+static int builtin_exit(int argc, char **argv);
+static int builtin_cd(int argc, char **argv);
+static int builtin_pwd(int argc, char **argv);
+
+static const struct builtin builtins[] = {
+    { "help",     "help",                       builtin_help },
+    { "clear",    "clear",                      builtin_clear },
+    { "exit",     "exit",                       builtin_exit },
+    { "run",      "run PATH[.ELF] [ARG...] [&]", builtin_run },
+    { "mkdir",    "mkdir DIR",                  builtin_mkdir },
+    { "rm",       "rm FILE",                    builtin_rm },
+    { "echo",     "echo TEXT...",               builtin_echo },
+    { "write",    "write FILE TEXT...",         builtin_write },
+    { "test",     "test",                       builtin_test },
+    { "fdnstest", "fdnstest",                   builtin_fdnstest },
+    { "cd",  "cd DIR", builtin_cd },
+    { "pwd", "pwd",    builtin_pwd },
+    { 0, 0, 0 },
+};
+
+static int shell_should_exit = 0;
+
+static const struct builtin *find_builtin(const char *name) {
+    for (int i = 0; builtins[i].name; i++) {
+        if (strcmp(name, builtins[i].name) == 0)
+            return &builtins[i];
     }
+    return 0;
 }
 
-static void builtin_cat(int argc, char **argv) {
-    if (argc < 2) { printf("usage: cat FILE\n"); return; }
-    void *fp = fopen(argv[1], "r");
-    if (!fp) { printf("cat: %s: open failed\n", argv[1]); return; }
-    char buf[256];
-    size_t n;
-    while ((n = fread(buf, 1, sizeof(buf), fp)) > 0) {
-        console_write(buf, n);
-    }
-    fclose(fp);
+static int builtin_help(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+
+    printf("builtins:\n");
+    for (int i = 0; builtins[i].name; i++)
+        printf("  %s\n", builtins[i].usage);
+    printf("external programs: type an ELF basename or path\n");
+    return 0;
 }
 
-static void builtin_echo(int argc, char **argv) {
+static int builtin_mkdir(int argc, char **argv) {
+    if (argc < 2) { printf("usage: mkdir DIR\n"); return 1; }
+    if (mkdir_path(argv[1]) != 0)
+        printf("mkdir: %s: failed\n", argv[1]);
+    return 0;
+}
+
+static int builtin_echo(int argc, char **argv) {
     for (int i = 1; i < argc; i++) {
         if (i > 1) console_putc(' ');
         console_puts(argv[i]);
     }
     console_putc('\n');
+    return 0;
 }
 
-static void builtin_write(int argc, char **argv) {
-    if (argc < 3) { printf("usage: write FILE TEXT...\n"); return; }
+static int builtin_write(int argc, char **argv) {
+    if (argc < 3) { printf("usage: write FILE TEXT...\n"); return 1; }
     void *fp = fopen(argv[1], "w");
-    if (!fp) { printf("write: %s: open failed\n", argv[1]); return; }
+    if (!fp) { printf("write: %s: open failed\n", argv[1]); return 1; }
     for (int i = 2; i < argc; i++) {
         if (i > 2) fwrite(" ", 1, 1, fp);
         fwrite(argv[i], 1, strlen(argv[i]), fp);
     }
     fwrite("\n", 1, 1, fp);
     fclose(fp);
+    return 0;
 }
 
-static void builtin_rm(int argc, char **argv) {
-    if (argc < 2) { printf("usage: rm FILE\n"); return; }
+static int builtin_rm(int argc, char **argv) {
+    if (argc < 2) { printf("usage: rm FILE\n"); return 1; }
     if (unlink(argv[1]) != 0) {
         printf("rm: %s: not found\n", argv[1]);
+        return 1;
     }
+    return 0;
 }
 
-static void builtin_clear(void) {
+static int builtin_clear(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
     console_clear();
+    return 0;
+}
+
+static int builtin_exit(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+    shell_should_exit = 1;
+    return 0;
+}
+
+static int builtin_cd(int argc, char **argv) {
+    const char *path = argc > 1 ? argv[1] : "/";
+    if (chdir(path) != 0) {
+        printf("cd: %s: failed\n", path);
+        return 1;
+    }
+    return 0;
+}
+
+static int builtin_pwd(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+
+    char buf[256];
+    if (!getcwd(buf, sizeof(buf))) {
+        printf("pwd: failed\n");
+        return 1;
+    }
+
+    printf("%s\n", buf);
+    return 0;
 }
 
 // #endregion BUILT-INS
 
 // #region EXEC
 
-/* exec a sibling ELF, passing args through. `prog_name` becomes child argv[0]
- * (display-friendly lowercase basename). */
-static void run_elf(const char *path, const char *prog_name,
-                    int argc, char **argv) {
-    static char *child[16];
-    int n = 0;
-    child[n++] = (char *)prog_name;
-    for (int i = 1; i < argc && n < 15; i++) {
-        child[n++] = argv[i];
+static const char *exec_search_paths[] = {
+    "",
+    "/",
+    "BIN",
+    "GAMES",
+    0,
+};
+
+static int append_char(char *out, int *n, int max, char c) {
+    if (*n + 1 >= max)
+        return -1;
+    out[(*n)++] = c;
+    out[*n] = 0;
+    return 0;
+}
+
+static int append_str(char *out, int *n, int max, const char *s) {
+    while (*s) {
+        if (append_char(out, n, max, *s++) != 0)
+            return -1;
     }
-    child[n] = 0;
-    long code = exec(path, child);
-    console_clear();
-    printf("[%s exited %ld]\n", prog_name, code);
+    return 0;
 }
 
-static void builtin_reboot(int argc, char **argv) {
-    run_elf("REBOOT.ELF", "reboot", argc, argv);
+static int has_path_separator(const char *s) {
+    while (*s) {
+        if (*s == '/' || *s == '\\')
+            return 1;
+        s++;
+    }
+    return 0;
 }
 
-static void builtin_shutdown(int argc, char **argv) {
-    run_elf("SHUTDOWN.ELF", "shutdown", argc, argv);
+static int final_component_has_dot(const char *s) {
+    int has_dot = 0;
+    while (*s) {
+        if (*s == '/' || *s == '\\')
+            has_dot = 0;
+        else if (*s == '.')
+            has_dot = 1;
+        s++;
+    }
+    return has_dot;
 }
 
-/* Resolve argv[0] as a path to an ELF on the root FS and run it.
+static int build_exec_candidate(const char *prefix, const char *raw,
+                                char *out, int max) {
+    int n = 0;
+    out[0] = 0;
+
+    if (prefix && prefix[0] && strcmp(prefix, ".") != 0) {
+        if (append_str(out, &n, max, prefix) != 0)
+            return -1;
+
+        if (out[n - 1] != '/') {
+            if (append_char(out, &n, max, '/') != 0)
+                return -1;
+        }
+    }
+
+    if (append_str(out, &n, max, raw) != 0)
+        return -1;
+
+    if (!final_component_has_dot(raw)) {
+        if (append_str(out, &n, max, ".ELF") != 0)
+            return -1;
+    }
+
+    return 0;
+}
+
+static int probe_exec_candidate(const char *path) {
+    long fd = open(path, 0);
+    if (fd < 0)
+        return 0;
+    close((int)fd);
+    return 1;
+}
+
+/* Resolve a user command to an ELF path. The filesystem is the command
+ * registry: names without a slash are searched in a tiny PATH list, while
+ * explicit paths are used as-is after optional .ELF suffixing. */
+static int resolve_exec_path(const char *raw, char *out, int max) {
+    if (!raw || !raw[0])
+        return -1;
+
+    if (has_path_separator(raw)) {
+        if (build_exec_candidate("", raw, out, max) != 0)
+            return -1;
+        return probe_exec_candidate(out) ? 0 : -1;
+    }
+
+    for (int i = 0; exec_search_paths[i]; i++) {
+        if (build_exec_candidate(exec_search_paths[i], raw, out, max) != 0)
+            continue;
+        if (probe_exec_candidate(out))
+            return 0;
+    }
+    return -1;
+}
+
+static const char *path_basename(const char *path) {
+    const char *base = path;
+    for (const char *p = path; *p; p++) {
+        if (*p == '/' || *p == '\\')
+            base = p + 1;
+    }
+    return base;
+}
+
+/* Resolve argv[0] as an ELF path and run it.
  *
- *   - Strips directory components (FAT16 here is flat root only).
- *   - Uppercases the basename and appends ".ELF" if there's no extension.
+ *   - Searches a small PATH for bare names.
+ *   - Preserves explicit directory components.
+ *   - Appends ".ELF" to the final component if it has no extension.
  *   - Probes existence via open() so typos surface as a clean error
  *     rather than the kernel's "[X.ELF exited -1]" message.
  *
@@ -357,37 +513,12 @@ static void builtin_shutdown(int argc, char **argv) {
  * bg upstream. */
 static int exec_argv(int argc, char **argv, int bg) {
     if (argc < 1 || !argv[0] || !argv[0][0]) return -1;
-    const char *raw = argv[0];
-
-    const char *base = raw;
-    for (const char *p = raw; *p; p++) {
-        if (*p == '/' || *p == '\\') base = p + 1;
-    }
-    if (!*base) return -1;
-
-    /* Uppercase base into fixed[]; track if extension already present. */
-    static char fixed[16];
-    int  fl = 0;
-    int  has_dot = 0;
-    while (fl < (int)sizeof(fixed) - 5 && base[fl]) {
-        char c = base[fl];
-        if (c == '.') has_dot = 1;
-        if (c >= 'a' && c <= 'z') c -= 32;
-        fixed[fl++] = c;
-    }
-    if (!has_dot) {
-        fixed[fl++] = '.';
-        fixed[fl++] = 'E';
-        fixed[fl++] = 'L';
-        fixed[fl++] = 'F';
-    }
-    fixed[fl] = 0;
-
-    long probe = open(fixed, 0);
-    if (probe < 0) return -1;
-    close((int)probe);
+    static char fixed[256];
+    if (resolve_exec_path(argv[0], fixed, sizeof(fixed)) != 0)
+        return -1;
 
     /* Lowercase base (sans extension) for child's argv[0]. */
+    const char *base = path_basename(fixed);
     static char prog_name[16];
     int  pn = 0;
     while (pn < (int)sizeof(prog_name) - 1 && base[pn] && base[pn] != '.') {
@@ -416,21 +547,76 @@ static int exec_argv(int argc, char **argv, int bg) {
         return 0;
     }
     long code = exec(fixed, child_argv);
-    console_clear();
+    //console_clear();
     printf("[%s exited %d]\n", fixed, (int)code);
     return 0;
 }
 
 /* `run PATH[.ELF] [ARGS...] [&]` — explicit form. Strips the leading
  * "run" token and forwards the rest to exec_argv. */
-static void builtin_run(int argc, char **argv) {
-    if (argc < 2) { printf("usage: run PATH[.ELF] [ARG...] [&]\n"); return; }
+static int builtin_run(int argc, char **argv) {
+    if (argc < 2) { printf("usage: run PATH[.ELF] [ARG...] [&]\n"); return 1; }
     int bg = 0;
     if (argc >= 2 && argv[argc - 1] && strcmp(argv[argc - 1], "&") == 0) {
         bg = 1;
         argc--;
     }
-    exec_argv(argc - 1, argv + 1, bg);
+    return exec_argv(argc - 1, argv + 1, bg);
+}
+
+static int builtin_test(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+
+    char a_buf[5] = {0};
+    char b_buf[5] = {0};
+
+    int a = (int)open("README.TXT", 0);
+    int b = (int)open("README.TXT", 0);
+
+    if (a < 0 || b < 0) {
+        printf("fdtest: open failed a=%d b=%d\n", a, b);
+        if (a >= 0) close(a);
+        if (b >= 0) close(b);
+        return 1;
+    }
+
+    long ar = read(a, a_buf, 4);
+    long br = read(b, b_buf, 4);
+
+    printf("fdtest: a='%s' b='%s'\n", a_buf, b_buf);
+
+    if (ar == 4 && br == 4 && strcmp(a_buf, b_buf) == 0) {
+
+        sh_printf("fdtest: PASS independent open offsets\n");
+    }
+    else {
+        sh_printf("fdtest: FAIL ar=%d br=%d\n", (int)ar, (int)br);
+    }
+
+    close(a);
+    close(b);
+    return (ar == 4 && br == 4 && strcmp(a_buf, b_buf) == 0) ? 0 : 1;
+}
+
+static int builtin_fdnstest(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+
+    int parent_fd = (int)open("README.TXT", 0);
+    if (parent_fd < 0) {
+        printf("fdnstest: parent open failed\n");
+        return 1;
+    }
+
+    printf("fdnstest: parent fd=%d\n", parent_fd);
+
+    char *child_argv[] = { "fdchild", 0 };
+    long code = exec("FDCHILD.ELF", child_argv);
+
+    printf("fdnstest: child exited %d\n", (int)code);
+    close(parent_fd);
+    return code == 0 ? 0 : 1;
 }
 
 // #endregion EXEC
@@ -454,18 +640,14 @@ int main(int argc, char **argv) {
         if (ac == 0) continue;
         char *cmd = targs[0];
 
-        if (strcmp(cmd, "ls")    == 0)         { printf("running command ls\n");        builtin_ls(); }
-        else if (strcmp(cmd, "help")  == 0)    { printf("running command help\n");      builtin_help(); }
-        else if (strcmp(cmd, "clear") == 0)    { printf("running command clear\n");     builtin_clear(); }
-        else if (strcmp(cmd, "rm")    == 0)    { printf("running command rm\n");        builtin_rm(ac, targs); }
-        else if (strcmp(cmd, "run")   == 0)    { printf("running command run\n");       builtin_run(ac, targs); }
-        else if (strcmp(cmd, "cat")   == 0)    { printf("running command cat\n");       builtin_cat(ac, targs); }
-        else if (strcmp(cmd, "echo")  == 0)    { printf("running command echo\n");      builtin_echo(ac, targs); }
-        else if (strcmp(cmd, "write") == 0)    { printf("running command write\n");     builtin_write(ac, targs); }
-        else if (strcmp(cmd, "reboot") == 0)   { printf("running command reboot\n");    builtin_reboot(ac, targs); }
-        else if (strcmp(cmd, "shutdown") == 0) { printf("running command shutdown\n");  builtin_shutdown(ac, targs); }
-        else if (strcmp(cmd, "exit")  == 0)    { printf("exitting SHELF"); return 0; }
-        else {
+        const struct builtin *builtin = find_builtin(cmd);
+        if (builtin) {
+            builtin->fn(ac, targs);
+            if (shell_should_exit) {
+                printf("exiting SHELF\n");
+                return 0;
+            }
+        } else {
             /* No built-in matched — try filesystem lookup. A trailing
              * `&` token means launch backgrounded via spawn(). */
             int bg = 0;

@@ -36,9 +36,11 @@
  * inline rather than #include'd because that header also declares
  * tty_drain() with a `size_t` signature that conflicts with the userspace
  * `long` wrapper in lib/syscall.h. */
-#define TTY_CTRL_CLEAR  0x0C
-#define TTY_CTRL_PUSH   0x1C
-#define TTY_CTRL_POP    0x1D
+#define TTY_CTRL_CLEAR    0x0C
+#define TTY_CTRL_PUSH     0x1C
+#define TTY_CTRL_POP      0x1D
+#define TTY_CTRL_ZOOM_IN  0x1E
+#define TTY_CTRL_ZOOM_OUT 0x1F
 
 extern void *memcpy(void *, const void *, size_t);
 extern void *memset(void *, int, size_t);
@@ -56,6 +58,7 @@ static void *aligned_page_alloc(size_t npages, void **out_raw);
 static int   window_count(void);
 static int   is_minimized(int handle);
 static struct window *find_handle(int handle);
+static void  con_redraw(void);
 static void  titlebar_btn_rect(int win_x, int win_y, int outer_w,
                                int idx_from_right,
                                int *bx, int *by, int *bw, int *bh);
@@ -119,6 +122,8 @@ static const uint8_t cursor_mask[CURSOR_H][CURSOR_W] = {
 #define RESIZE_GRIP   12
 #define MIN_CLIENT_W  64
 #define MIN_CLIENT_H  40
+#define CON_SCALE_MIN 1
+#define CON_SCALE_MAX 4
 
 /* Hit-test region codes returned by hit_test_at. */
 #define HIT_NONE       0
@@ -292,12 +297,14 @@ static void z_bring_to_front(int handle) {
 struct console {
     uint32_t *surface;
     void     *raw;
+    char     *cells;
 
     int       enabled;
     int       x, y;
     int       client_w, client_h;
     int       cols, rows;
     int       cx, cy;
+    int       scale;
 
     char      title[48];
 };
@@ -309,6 +316,7 @@ static struct console con;
  * a spurious pop without a prior push is a no-op. */
 static uint32_t *con_backing       = 0;
 static void     *con_backing_raw   = 0;
+static char     *con_saved_cells   = 0;
 static int       con_saved_cx      = 0;
 static int       con_saved_cy      = 0;
 static int       con_saved_valid   = 0;
@@ -431,8 +439,10 @@ static void clamp_to_desktop(int *x, int *y, int cw, int ch) {
 static void console_resize(int new_cw, int new_ch) {
     if (!con.enabled) return;
     /* Snap to glyph grid so cells line up without trailing fractional row. */
-    new_cw = (new_cw / FONT_GLYPH_W) * FONT_GLYPH_W;
-    new_ch = (new_ch / FONT_GLYPH_H) * FONT_GLYPH_H;
+    int cell_w = FONT_GLYPH_W * con.scale;
+    int cell_h = FONT_GLYPH_H * con.scale;
+    new_cw = (new_cw / cell_w) * cell_w;
+    new_ch = (new_ch / cell_h) * cell_h;
     if (new_cw < MIN_CLIENT_W) new_cw = MIN_CLIENT_W;
     if (new_ch < MIN_CLIENT_H) new_ch = MIN_CLIENT_H;
     if (new_cw == con.client_w && new_ch == con.client_h) return;
@@ -449,34 +459,51 @@ static void console_resize(int new_cw, int new_ch) {
     uint32_t *new_back = (uint32_t*)aligned_page_alloc(pages, &new_back_raw);
     if (!new_back) { free(new_raw); return; }
 
-    /* Copy the upper-left intersection of old and new surfaces, row-by-row,
-     * so the user keeps their scrollback visible while the window grows
-     * or shrinks. Anything past the intersection stays at CONSOLE_BG. */
-    if (con.surface) {
-        int copy_w = con.client_w < new_cw ? con.client_w : new_cw;
-        int copy_h = con.client_h < new_ch ? con.client_h : new_ch;
-        for (int y = 0; y < copy_h; y++) {
-            memcpy(new_surf   + (size_t)y * (size_t)new_cw,
-                   con.surface + (size_t)y * (size_t)con.client_w,
-                   (size_t)copy_w * 4);
+    int new_cols = new_cw / cell_w;
+    int new_rows = new_ch / cell_h;
+    char *new_cells = (char*)malloc((size_t)new_cols * (size_t)new_rows);
+    char *new_saved = (char*)malloc((size_t)new_cols * (size_t)new_rows);
+    if (!new_cells || !new_saved) {
+        if (new_cells) free(new_cells);
+        if (new_saved) free(new_saved);
+        free(new_back_raw);
+        free(new_raw);
+        return;
+    }
+    memset(new_cells, 0, (size_t)new_cols * (size_t)new_rows);
+    memset(new_saved, 0, (size_t)new_cols * (size_t)new_rows);
+
+    /* Preserve the upper-left character-cell intersection. The surface is
+     * then regenerated, avoiding partial glyphs at the resized edge. */
+    if (con.cells) {
+        int copy_cols = con.cols < new_cols ? con.cols : new_cols;
+        int copy_rows = con.rows < new_rows ? con.rows : new_rows;
+        for (int y = 0; y < copy_rows; y++) {
+            memcpy(new_cells + y * new_cols,
+                   con.cells + y * con.cols,
+                   (size_t)copy_cols);
         }
     }
 
     if (con.raw)         free(con.raw);
     if (con_backing_raw) free(con_backing_raw);
+    if (con.cells)       free(con.cells);
+    if (con_saved_cells) free(con_saved_cells);
 
     con.surface      = new_surf;
     con.raw          = new_raw;
+    con.cells        = new_cells;
     con_backing      = new_back;
     con_backing_raw  = new_back_raw;
+    con_saved_cells  = new_saved;
     con.client_w     = new_cw;
     con.client_h     = new_ch;
-    con.cols         = new_cw / FONT_GLYPH_W;
-    con.rows         = new_ch / FONT_GLYPH_H;
+    con.cols         = new_cols;
+    con.rows         = new_rows;
     if (con.cx >= con.cols) con.cx = con.cols - 1;
     if (con.cy >= con.rows) con.cy = con.rows - 1;
     con_saved_valid  = 0;
-    desktop_dirty    = 1;
+    con_redraw();
 }
 
 /* Client window resize: allocate a fresh surface, copy the old visible
@@ -790,36 +817,112 @@ static int hit_taskbar(int mx, int my, int *out_handle) {
 // #region CONSOLE (TTY DRAIN)
 
 static void con_draw_glyph(int gx, int gy, char c) {
-    int px = gx * FONT_GLYPH_W;
-    int py = gy * FONT_GLYPH_H;
-    if (px + FONT_GLYPH_W > con.client_w) return;
-    if (py + FONT_GLYPH_H > con.client_h) return;
+    int cell_w = FONT_GLYPH_W * con.scale;
+    int cell_h = FONT_GLYPH_H * con.scale;
+    int px = gx * cell_w;
+    int py = gy * cell_h;
+    if (px + cell_w > con.client_w) return;
+    if (py + cell_h > con.client_h) return;
     const uint8_t *glyph;
     static const uint8_t blank[FONT_GLYPH_H] = {0};
     if (c < FONT_FIRST || c > FONT_LAST) glyph = blank;
     else                                 glyph = font8x8[(int)c - FONT_FIRST];
-    uint32_t *line = con.surface + (size_t)py * (size_t)con.client_w + (size_t)px;
+
+    if (con.scale == 1) {
+        uint32_t *line = con.surface +
+                         (size_t)py * (size_t)con.client_w + (size_t)px;
+        for (int r = 0; r < FONT_GLYPH_H; r++) {
+            memcpy(line, con_glyph_lut[glyph[r]],
+                   FONT_GLYPH_W * sizeof(uint32_t));
+            line += con.client_w;
+        }
+        return;
+    }
+
     for (int r = 0; r < FONT_GLYPH_H; r++) {
-        memcpy(line, con_glyph_lut[glyph[r]], FONT_GLYPH_W * sizeof(uint32_t));
-        line += con.client_w;
+        for (int sy = 0; sy < con.scale; sy++) {
+            int y = py + r * con.scale + sy;
+            uint32_t *line = con.surface +
+                             (size_t)y * (size_t)con.client_w + (size_t)px;
+            for (int col = 0; col < FONT_GLYPH_W; col++) {
+                uint32_t color = ((glyph[r] >> col) & 1) ?
+                                 CONSOLE_FG : CONSOLE_BG;
+                for (int sx = 0; sx < con.scale; sx++)
+                    line[col * con.scale + sx] = color;
+            }
+        }
     }
 }
 
+static void con_redraw(void) {
+    if (!con.enabled || !con.surface || !con.cells) return;
+    fill_dwords(con.surface,
+                (size_t)con.client_w * (size_t)con.client_h,
+                CONSOLE_BG);
+    for (int y = 0; y < con.rows; y++) {
+        for (int x = 0; x < con.cols; x++) {
+            char c = con.cells[y * con.cols + x];
+            if (c) con_draw_glyph(x, y, c);
+        }
+    }
+    desktop_dirty = 1;
+}
+
+static int con_set_scale(int new_scale) {
+    if (!con.enabled) return -1;
+    if (new_scale < CON_SCALE_MIN) new_scale = CON_SCALE_MIN;
+    if (new_scale > CON_SCALE_MAX) new_scale = CON_SCALE_MAX;
+    if (new_scale == con.scale) return con.scale;
+
+    int new_cols = con.client_w / (FONT_GLYPH_W * new_scale);
+    int new_rows = con.client_h / (FONT_GLYPH_H * new_scale);
+    if (new_cols <= 0 || new_rows <= 0) return -1;
+
+    char *new_cells = (char*)malloc((size_t)new_cols * (size_t)new_rows);
+    char *new_saved = (char*)malloc((size_t)new_cols * (size_t)new_rows);
+    if (!new_cells || !new_saved) {
+        if (new_cells) free(new_cells);
+        if (new_saved) free(new_saved);
+        return -1;
+    }
+    memset(new_cells, 0, (size_t)new_cols * (size_t)new_rows);
+    memset(new_saved, 0, (size_t)new_cols * (size_t)new_rows);
+
+    int copy_cols = con.cols < new_cols ? con.cols : new_cols;
+    int copy_rows = con.rows < new_rows ? con.rows : new_rows;
+    int src_y0 = con.cy >= copy_rows ? con.cy - copy_rows + 1 : 0;
+    int dst_y0 = 0;
+    for (int y = 0; y < copy_rows; y++) {
+        memcpy(new_cells + (dst_y0 + y) * new_cols,
+               con.cells + (src_y0 + y) * con.cols,
+               (size_t)copy_cols);
+    }
+
+    int new_cx = con.cx < new_cols ? con.cx : new_cols - 1;
+    int new_cy = con.cy - src_y0 + dst_y0;
+    if (new_cy < 0) new_cy = 0;
+    if (new_cy >= new_rows) new_cy = new_rows - 1;
+
+    free(con.cells);
+    if (con_saved_cells) free(con_saved_cells);
+    con.cells = new_cells;
+    con_saved_cells = new_saved;
+    con.cols = new_cols;
+    con.rows = new_rows;
+    con.cx = new_cx;
+    con.cy = new_cy;
+    con.scale = new_scale;
+    con_saved_valid = 0;
+    con_redraw();
+    return con.scale;
+}
+
 static void con_scroll(void) {
-    size_t row_pixels = (size_t)con.client_w;
-    int    shift      = FONT_GLYPH_H;
-    int    copy_rows  = con.client_h - shift;
-    if (copy_rows > 0) {
-        memmove(con.surface,
-                con.surface + (size_t)shift * row_pixels,
-                (size_t)copy_rows * row_pixels * 4);
-    }
-    int blank_first = copy_rows > 0 ? copy_rows : 0;
-    uint32_t *line = con.surface + (size_t)blank_first * row_pixels;
-    for (int y = blank_first; y < con.client_h; y++) {
-        fill_dwords(line, row_pixels, CONSOLE_BG);
-        line += row_pixels;
-    }
+    if (con.rows <= 1) return;
+    memmove(con.cells, con.cells + con.cols,
+            (size_t)(con.rows - 1) * (size_t)con.cols);
+    memset(con.cells + (con.rows - 1) * con.cols, 0, (size_t)con.cols);
+    con_redraw();
 }
 
 static void con_newline(void) {
@@ -835,6 +938,8 @@ static void con_wipe(void) {
     fill_dwords(con.surface,
                 (size_t)con.client_w * (size_t)con.client_h,
                 CONSOLE_BG);
+    if (con.cells)
+        memset(con.cells, 0, (size_t)con.cols * (size_t)con.rows);
     con.cx = con.cy = 0;
     desktop_dirty = 1;
 }
@@ -843,6 +948,9 @@ static void con_save(void) {
     if (!con.enabled || !con.surface || !con_backing) return;
     size_t pixels = (size_t)con.client_w * (size_t)con.client_h;
     memcpy(con_backing, con.surface, pixels * 4);
+    if (con.cells && con_saved_cells)
+        memcpy(con_saved_cells, con.cells,
+               (size_t)con.cols * (size_t)con.rows);
     con_saved_cx = con.cx;
     con_saved_cy = con.cy;
     con_saved_valid = 1;
@@ -852,6 +960,9 @@ static void con_restore(void) {
     if (!con.enabled || !con.surface || !con_backing || !con_saved_valid) return;
     size_t pixels = (size_t)con.client_w * (size_t)con.client_h;
     memcpy(con.surface, con_backing, pixels * 4);
+    if (con.cells && con_saved_cells)
+        memcpy(con.cells, con_saved_cells,
+               (size_t)con.cols * (size_t)con.rows);
     con.cx = con_saved_cx;
     con.cy = con_saved_cy;
     con_saved_valid = 0;
@@ -864,7 +975,11 @@ static void con_putc(char c) {
     if (c == '\n') { con_newline(); return; }
     if (c == '\r') { con.cx = 0; return; }
     if (c == '\b') {
-        if (con.cx > 0) { con.cx--; con_draw_glyph(con.cx, con.cy, ' '); }
+        if (con.cx > 0) {
+            con.cx--;
+            con.cells[con.cy * con.cols + con.cx] = 0;
+            con_draw_glyph(con.cx, con.cy, ' ');
+        }
         return;
     }
     if (c == '\t') {
@@ -874,7 +989,17 @@ static void con_putc(char c) {
     if (c == TTY_CTRL_CLEAR) { con_wipe(); return; }
     if (c == TTY_CTRL_PUSH)  { con_save(); con_wipe(); return; }
     if (c == TTY_CTRL_POP)   { con_restore(); return; }
+    if (c == TTY_CTRL_ZOOM_IN) {
+        con_set_scale(con.scale + 1);
+        return;
+    }
+
+    if (c == TTY_CTRL_ZOOM_OUT) {
+        con_set_scale(con.scale - 1);
+        return;
+    }
     if (con.cx >= con.cols) con_newline();
+    con.cells[con.cy * con.cols + con.cx] = c;
     con_draw_glyph(con.cx, con.cy, c);
     con.cx++;
 }
@@ -884,8 +1009,11 @@ static void con_alloc(void) {
     int cw = fb_w - 2 * margin - 2 * BORDER_PX;
     int ch = fb_h - 2 * margin - TITLEBAR_PX - BORDER_PX - TASKBAR_PX;
     if (cw < 64 || ch < 64) return;
-    cw = (cw / FONT_GLYPH_W) * FONT_GLYPH_W;
-    ch = (ch / FONT_GLYPH_H) * FONT_GLYPH_H;
+    con.scale = CON_SCALE_MIN;
+    int cell_w = FONT_GLYPH_W * con.scale;
+    int cell_h = FONT_GLYPH_H * con.scale;
+    cw = (cw / cell_w) * cell_w;
+    ch = (ch / cell_h) * cell_h;
 
     size_t pixel_bytes = (size_t)cw * (size_t)ch * 4;
     size_t pages = (pixel_bytes + 4095) / 4096;
@@ -897,12 +1025,35 @@ static void con_alloc(void) {
     /* Alt-screen backing buffer — same dimensions as the live surface so
      * memcpy push/pop is unconditional. Allocated once; never freed. */
     con_backing = (uint32_t*)aligned_page_alloc(pages, &con_backing_raw);
+    if (!con_backing) {
+        free(con.raw);
+        con.raw = 0;
+        con.surface = 0;
+        return;
+    }
 
     build_con_glyph_lut();
     con.client_w = cw;
     con.client_h = ch;
-    con.cols     = cw / FONT_GLYPH_W;
-    con.rows     = ch / FONT_GLYPH_H;
+    con.cols     = cw / cell_w;
+    con.rows     = ch / cell_h;
+    con.cells = (char*)malloc((size_t)con.cols * (size_t)con.rows);
+    con_saved_cells = (char*)malloc((size_t)con.cols * (size_t)con.rows);
+    if (!con.cells || !con_saved_cells) {
+        if (con.cells) free(con.cells);
+        if (con_saved_cells) free(con_saved_cells);
+        free(con_backing_raw);
+        free(con.raw);
+        con.cells = 0;
+        con_saved_cells = 0;
+        con_backing = 0;
+        con_backing_raw = 0;
+        con.surface = 0;
+        con.raw = 0;
+        return;
+    }
+    memset(con.cells, 0, (size_t)con.cols * (size_t)con.rows);
+    memset(con_saved_cells, 0, (size_t)con.cols * (size_t)con.rows);
     con.x = margin;
     con.y = margin;
     con.cx = con.cy = 0;
@@ -1559,7 +1710,6 @@ int main(int argc, char **argv) {
     int32_t last_cx = 0, last_cy = 0;
     int     have_last = 0;
 
-    int loops_logged = 0;
     for (;;) {
         if ((int)wm_pid() != self_pid) {
             have_last = 0;
@@ -1599,6 +1749,13 @@ int main(int argc, char **argv) {
         pump_ipc();
         pump_input();
         drain_tty_into_console();
+
+        /* Advance once per iteration, not once per repaint. This used to
+         * live inside the `desktop_dirty && (++tick % 2)` test below, where
+         * short-circuit evaluation froze it on an idle desktop — turning
+         * the reap check into a constant that either fired every frame or
+         * never fired at all, depending on where it stopped. */
+        tick++;
 
         /* Reap windows whose owners have died without sending DESTROY_REQ.
          * Hot path runs the syscall (proc_list) ~every 64 ticks so the
@@ -1645,18 +1802,12 @@ int main(int argc, char **argv) {
             drag.have_ghost = 0;
         }
 
-        int recompose = desktop_dirty && (++tick % 2 == 0);
-        if (loops_logged < 5) {
-            printf("winman: loop dirty=%d tick=%d recomp=%d\n",
-                   desktop_dirty, tick, recompose);
-            loops_logged++;
-        }
+        /* Halve the repaint rate: a dirty desktop composites on even ticks. */
+        int recompose = desktop_dirty && (tick % 2 == 0);
         if (recompose) {
             compose();
-            if (loops_logged <= 7) { printf("winman: composed\n"); loops_logged++; }
             memcpy(fb_hw, fb, fb_bytes);
             fb_damage(0, 0, (uint32_t)fb_w, (uint32_t)fb_h);
-            if (loops_logged <= 8) { printf("winman: presented\n"); loops_logged++; }
             desktop_dirty = 0;
             have_last = 0;        /* cursor was clobbered by present */
         } else if (have_last) {
@@ -1670,9 +1821,7 @@ int main(int argc, char **argv) {
         last_cy = my;
         have_last = 1;
 
-        if (loops_logged < 12) { printf("winman: pre-yield\n"); loops_logged++; }
         yield();
-        if (loops_logged < 13) { printf("winman: post-yield\n"); loops_logged++; }
     }
     return 0;
 }

@@ -1,7 +1,7 @@
 /* userspace/include/sys/stat.h — file-metadata structs + mode bits.
  *
- * stat()/fstat()/mkdir() are currently stubbed in lib/stat_stub.c (return
- * -1). The struct still has to exist because DOOM and friends declare
+ * stat()/fstat() are currently stubbed in lib/stat_stub.c. mkdir() is
+ * backed by the FAT directory syscall. The struct still has to exist because DOOM and friends declare
  * variables of type `struct stat`. Mode bits follow the standard Unix
  * octal encoding so ported code works unchanged.
  */

@@ -22,6 +22,8 @@
 #define TTY_CTRL_CLEAR  0x0C   /* form-feed: wipe surface, home cursor   */
 #define TTY_CTRL_PUSH   0x1C   /* save+clear (alt-screen enter)          */
 #define TTY_CTRL_POP    0x1D   /* restore (alt-screen exit)              */
+#define TTY_CTRL_ZOOM_IN  0x1E /* increase glyph scale by one step       */
+#define TTY_CTRL_ZOOM_OUT 0x1F /* decrease glyph scale by one step       */
 
 void tty_init(void);
 void tty_putc(char c);
@@ -44,6 +46,10 @@ size_t tty_drain(char *out, size_t max);
  * or restore already happened. */
 int  tty_push(void);
 int  tty_pop(void);
+
+/* Change the glyph scale by one step in the sign of delta. Returns the
+ * resulting scale (1..4), or -1 when the grid cannot be reallocated. */
+int  tty_zoom(int delta);
 
 void tty_thread_entry(void);
 

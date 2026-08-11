@@ -6,16 +6,20 @@ USER_CFLAGS  := -ffreestanding -nostdlib -fno-pie -mno-red-zone -static \
                 -I lib -I ../src/intf -O2 -Wall -Wextra
 USER_LDFLAGS := -nostdlib -static -T lib/user.ld
 
+# string_extra carries strstr/strcpy/strcat/strrchr/strcasecmp, which
+# string.c does not define. Without it any tool calling one of those only
+# links while the call is optimised away — which is how plist and pkill
+# built despite referencing strstr.
 LIB_OBJS := lib/crt0.o lib/syscall_asm.o lib/syscall.o lib/wm.o \
             lib/printf.o lib/malloc.o lib/stdio.o lib/string.o lib/keymap.o lib/console.o \
-            lib/stdlib_extra.o
+            lib/stdlib_extra.o lib/string_extra.o
 
 # C-source lib objects (.s sources have their own explicit rules below).
 LIB_C_OBJS := $(filter-out lib/crt0.o lib/syscall_asm.o, $(LIB_OBJS))
 
 # One binary per directory under bin/, named after the directory.
 # Doom is special (multi-source) and gets its own rules.
-SIMPLE_BINS := hello cat gfx ls sh shutdown reboot mtest winman btop
+SIMPLE_BINS := hello cat gfx ls sh shutdown reboot mtest winman btop pkill plist fdchild
 SIMPLE_BIN_OBJS := $(foreach b,$(SIMPLE_BINS),bin/$(b)/$(b).o)
 SIMPLE_BIN_ELFS := $(foreach b,$(SIMPLE_BINS),bin/$(b)/$(b).elf)
 

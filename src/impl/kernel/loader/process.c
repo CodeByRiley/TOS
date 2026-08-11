@@ -331,3 +331,9 @@ long process_exec(const char *path, char *const argv[]) {
 long process_spawn_async(const char *path, char *const argv[]) {
     return process_spawn_common(path, argv);
 }
+
+long process_kill(long pid, int signal) {
+    if (pid <= 0 || signal <= 0 || signal > 64)
+        return -1;
+    return task_kill((int)pid, 128 + signal);
+}

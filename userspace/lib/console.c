@@ -18,6 +18,16 @@ void console_clear(void) {
     con_clear();
 }
 
+/* Zoom the console in. */
+void console_zoom_in(void) {
+	con_zoom(1);
+}
+
+/* Zoom the console out. */
+void console_zoom_out(void) {
+	con_zoom(-1);
+}
+
 /* Color is a kernel concern — stub kept so apps can call it portably. */
 void console_set_color(uint32_t fg, uint32_t bg) {
     (void)fg;

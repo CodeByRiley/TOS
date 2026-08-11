@@ -13,10 +13,6 @@
 /* TTY detection — currently always returns 0 (no isatty support). */
 int    isatty(int fd);
 
-/* CWD ops — no concept of cwd yet, both return failure / empty. */
-int    chdir(const char *path);
-char  *getcwd(char *buf, size_t size);
-
 /* Busy-wait sleeps against the tick counter. */
 unsigned int sleep(unsigned int seconds);
 int    usleep(unsigned int us);

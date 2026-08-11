@@ -29,9 +29,10 @@
 #include "fs/fat.h"
 #include "input/keyboard.h"
 #include "input/mouse.h"
+#include "loader/process.h"
 #include "memory/heap.h"
-#include "memory/pmm.h"
 #include "memory/hhdm.h"
+#include "memory/pmm.h"
 #include "memory/vmm.h"
 #include "msg/msg.h"
 #include "sched/sched.h"
@@ -50,9 +51,8 @@
 #define MSR_STAR 0xC0000081
 #define MSR_LSTAR 0xC0000082
 #define MSR_FMASK 0xC0000084
-#define MAX_FDS 32
 
-#define MAX_SHMEM_PAGES 4096   /* per-call cap; 16 MiB */
+#define MAX_SHMEM_PAGES 4096 /* per-call cap; 16 MiB */
 #define USER_MMAP_LIMIT 0x0000000080000000ULL
 
 // #endregion CONSTANTS
@@ -69,12 +69,14 @@ struct fb_info {
 extern void syscall_entry(void);
 extern uint64_t kernel_rsp_top;
 
-static struct fat_file *fd_table[MAX_FDS] = {0};
+static int resolve_path(const char *path, char *out, size_t max);
 
-static int fd_alloc(struct fat_file *f) {
-  for (int i = 3; i < MAX_FDS; i++) { // 0,1,2 reserved (stdin/out/err)
-    if (!fd_table[i]) {
-      fd_table[i] = f;
+static int fd_alloc_for(struct task *t, struct fat_file *f) {
+  if (!t || !f)
+    return -1;
+  for (int i = 3; i < TASK_MAX_FDS; i++) {
+    if (!t->fds[i]) {
+      t->fds[i] = f;
       return i;
     }
   }
@@ -114,7 +116,8 @@ static long sys_fb_map(void) {
   uint32_t pages = framebuffer_num_pages();
   for (uint32_t i = 0; i < pages; i++) {
     uint64_t phys = framebuffer_phys_for_page(i);
-    if (!phys) return -1;
+    if (!phys)
+      return -1;
     if (vmm_map(USER_FB_BASE + (uint64_t)i * 4096, phys,
                 VMM_PRESENT | VMM_WRITE | VMM_USER) != 0) {
       return -1;
@@ -131,17 +134,20 @@ static void sys_mmap_rollback(struct task *t, uint64_t base, uint64_t pages) {
   for (uint64_t i = 0; i < pages; i++) {
     uint64_t va = base + i * 4096;
     uint64_t phys = vmm_translate_in(t->user_pml4, va);
-    if (!phys) continue;
+    if (!phys)
+      continue;
     vmm_unmap_in(t->user_pml4, va);
     pmm_free_frame(phys & ~4095ULL);
   }
 }
 
 static long sys_mmap(long len) {
-  if (len <= 0) return -1;
+  if (len <= 0)
+    return -1;
 
   struct task *t = task_current();
-  if (!t || !t->user_pml4) return -1;
+  if (!t || !t->user_pml4)
+    return -1;
 
   uint64_t bytes = ((uint64_t)len + 4095) & ~4095ULL;
   uint64_t base = t->mmap_next_va;
@@ -216,36 +222,59 @@ void syscall_init(uint64_t kernel_stack_top) {
 // #region FILE I/O HANDLERS
 
 static long sys_write(long fd, const void *buf, long n) {
-  if (fd == 1 || fd == 2) { // stdout/stderr -> serial
+  if (fd == 1 || fd == 2) {
+    if (!buf || n < 0)
+      return -1;
+
+    tty_write((const char *)buf, (size_t)n);
+
     const char *p = (const char *)buf;
     for (long i = 0; i < n; i++)
       serial_write_char(p[i]);
+
     return n;
   }
-  if (fd >= 3 && fd < MAX_FDS && fd_table[fd]) {
-    return (long)fat_write(fd_table[fd], buf, (size_t)n);
-  }
-  return -1;
+
+  struct task *t = task_current();
+  if (!t || fd < 3 || fd >= TASK_MAX_FDS || !t->fds[fd])
+    return -1;
+
+  return (long)fat_write(t->fds[fd], buf, (size_t)n);
 }
 
 // #endregion FILE I/O HANDLERS
 
 // #region PROCESS HANDLERS
 
-extern long process_exec(const char *path, char *const argv[]);
-extern long process_spawn_async(const char *path, char *const argv[]);
-
 static long sys_exec(const char *path, char *const argv[]) {
-    if (!path) return -1;
-    return process_exec(path, argv);
+  if (!path)
+    return -1;
+
+  char resolved[TASK_CWD_MAX];
+  if (resolve_path(path, resolved, sizeof(resolved)) != 0)
+    return -1;
+
+  return process_exec(resolved, argv);
 }
 
 /* Fire-and-forget: returns child pid without blocking on its exit code.
  * Used by the shell to launch windowed apps that should keep running while
  * the user types more commands. */
 static long sys_spawn(const char *path, char *const argv[]) {
-    if (!path) return -1;
-    return process_spawn_async(path, argv);
+  if (!path)
+    return -1;
+
+  char resolved[TASK_CWD_MAX];
+  if (resolve_path(path, resolved, sizeof(resolved)) != 0)
+    return -1;
+
+  return process_spawn_async(resolved, argv);
+}
+
+static long sys_kill(long pid, int signal) {
+  if (pid < 1)
+    return -1;
+  return process_kill(pid, signal);
 }
 
 static long sys_exit(long code) {
@@ -264,19 +293,24 @@ static long sys_yield(void) {
 // #region MESSAGE + MOUSE HANDLERS
 
 static long sys_msg_get(struct msg *out) {
-  if (!out) return -1;
+  if (!out)
+    return -1;
   return msg_get(out) ? 1 : 0;
 }
 
 static long sys_msg_peek(struct msg *out) {
-  if (!out) return -1;
+  if (!out)
+    return -1;
   return msg_peek(out) ? 1 : 0;
 }
 
 static long sys_mouse_pos(int32_t *x, int32_t *y, uint8_t *buttons) {
-  if (x)       *x       = mouse_x();
-  if (y)       *y       = mouse_y();
-  if (buttons) *buttons = mouse_buttons();
+  if (x)
+    *x = mouse_x();
+  if (y)
+    *y = mouse_y();
+  if (buttons)
+    *buttons = mouse_buttons();
   return 0;
 }
 
@@ -285,7 +319,8 @@ static long sys_mouse_pos(int32_t *x, int32_t *y, uint8_t *buttons) {
 // #region CONSOLE + SLEEP + PID
 
 static long sys_con_write(const char *buf, long n) {
-  if (!buf || n < 0) return -1;
+  if (!buf || n < 0)
+    return -1;
   tty_write(buf, (size_t)n);
   return n;
 }
@@ -295,16 +330,17 @@ static long sys_con_clear(void) {
   return 0;
 }
 
-static long sys_con_push(void) {
-  return tty_push();
-}
+static long sys_con_push(void) { return tty_push(); }
 
-static long sys_con_pop(void) {
-  return tty_pop();
-}
+static long sys_con_pop(void) { return tty_pop(); }
+
+static long sys_con_zoom(long delta) { return tty_zoom((int)delta); }
 
 static long sys_sleep_ticks(long n) {
-  if (n <= 0) { task_yield(); return 0; }
+  if (n <= 0) {
+    task_yield();
+    return 0;
+  }
   task_sleep_ticks((uint64_t)n);
   return 0;
 }
@@ -319,14 +355,17 @@ static long sys_get_pid(void) {
 // #region IPC + SHMEM + WINMAN
 
 static long sys_ipc_send(long target_pid, const struct ipc_msg *m) {
-  if (!m) return -1;
+  if (!m)
+    return -1;
   struct task *t = task_current();
-  if (!t) return -1;
+  if (!t)
+    return -1;
   return ipc_send((int)target_pid, m, t->pid);
 }
 
 static long sys_ipc_recv(struct ipc_msg *out) {
-  if (!out) return -1;
+  if (!out)
+    return -1;
   return ipc_recv(out) ? 1 : 0;
 }
 
@@ -335,17 +374,22 @@ static long sys_ipc_recv(struct ipc_msg *out) {
  * target VA via the target task's bump allocator. */
 static long sys_shmem_share(long target_pid, uint64_t my_va, long npages,
                             uint64_t *out_target_va) {
-  if (!out_target_va || target_pid <= 0 || npages <= 0) return -1;
-  if (npages > MAX_SHMEM_PAGES)                          return -1;
-  if (my_va & 0xFFFULL)                                  return -1;
+  if (!out_target_va || target_pid <= 0 || npages <= 0)
+    return -1;
+  if (npages > MAX_SHMEM_PAGES)
+    return -1;
+  if (my_va & 0xFFFULL)
+    return -1;
 
   struct task *me = task_current();
-  if (!me || !me->user_pml4) return -1;
+  if (!me || !me->user_pml4)
+    return -1;
 
   struct task *target = task_find((int)target_pid);
-  if (!target || !target->user_pml4) return -1;
+  if (!target || !target->user_pml4)
+    return -1;
   if (target->shmem_next_va == 0)
-      target->shmem_next_va = 0x0000000080000000ULL;     /* defensive */
+    target->shmem_next_va = 0x0000000080000000ULL; /* defensive */
 
   uint64_t target_va = target->shmem_next_va;
   /* VMM_SHARED marks the PTE so the target's exit cleanup (free_user_pml4)
@@ -354,33 +398,38 @@ static long sys_shmem_share(long target_pid, uint64_t my_va, long npages,
 
   for (long i = 0; i < npages; i++) {
     uint64_t phys = vmm_translate_in(me->user_pml4, my_va + (uint64_t)i * 4096);
-    if (!phys) return -1;
-    if (vmm_map_in(target->user_pml4,
-                   target_va + (uint64_t)i * 4096,
-                   phys, flags) != 0) {
+    if (!phys)
+      return -1;
+    if (vmm_map_in(target->user_pml4, target_va + (uint64_t)i * 4096, phys,
+                   flags) != 0) {
       return -1;
     }
   }
 
   target->shmem_next_va = target_va + (uint64_t)npages * 4096;
+  /* These frames are now co-mapped by a task that will not free them.
+   * Recording that keeps the automatic reaper from releasing our address
+   * space underneath the receiver. */
+  me->shmem_shared_out += (int)npages;
   *out_target_va = target_va;
   return 0;
 }
 
 static long sys_wm_register(void) {
   struct task *t = task_current();
-  if (!t) return -1;
+  if (!t)
+    return -1;
   int rc = msg_input_owner_register(t->pid);
-  if (rc == 0) tty_set_active(0);
+  if (rc == 0)
+    tty_set_active(0);
   return rc;
 }
 
-static long sys_wm_pid(void) {
-  return msg_input_owner();
-}
+static long sys_wm_pid(void) { return msg_input_owner(); }
 
 static long sys_tty_drain(char *out, long max) {
-  if (!out || max <= 0) return 0;
+  if (!out || max <= 0)
+    return 0;
   return (long)tty_drain(out, (size_t)max);
 }
 
@@ -390,59 +439,69 @@ static long sys_tty_drain(char *out, long max) {
 
 /* Block-wait `seconds` using PIT ticks (10ms each at 100Hz). */
 static void delay_seconds(long seconds) {
-    if (seconds <= 0) return;
-    extern uint64_t pit_ticks(void);
-    uint64_t target = pit_ticks() + (uint64_t)seconds * 100;
-    while (pit_ticks() < target) __asm__ volatile ("hlt");
+  if (seconds <= 0)
+    return;
+  extern uint64_t pit_ticks(void);
+  uint64_t target = pit_ticks() + (uint64_t)seconds * 100;
+  while (pit_ticks() < target)
+    __asm__ volatile("hlt");
 }
 
 /* Try several poweroff mechanisms; halt if all fail. */
 static void hw_shutdown(void) {
-    log_write("powering off...", KERNEL, LOG_INFO);
-    outw(0x604,  0x2000);     /* QEMU >= 2.0 (PIIX ACPI) */
-    outw(0xB004, 0x2000);     /* Bochs / old QEMU */
-    outw(0x4004, 0x3400);     /* VirtualBox */
-    outw(0x600,  0x34);       /* Cloud Hypervisor */
-    __asm__ volatile ("cli");
-    for (;;) __asm__ volatile ("hlt");
+  log_write("powering off...", KERNEL, LOG_INFO);
+  outw(0x604, 0x2000);  /* QEMU >= 2.0 (PIIX ACPI) */
+  outw(0xB004, 0x2000); /* Bochs / old QEMU */
+  outw(0x4004, 0x3400); /* VirtualBox */
+  outw(0x600, 0x34);    /* Cloud Hypervisor */
+  __asm__ volatile("cli");
+  for (;;)
+    __asm__ volatile("hlt");
 }
 
 /* Reboot via 8042, then ACPI reset, then triple fault. */
 static void hw_reboot(void) {
-    log_write("rebooting...", KERNEL, LOG_INFO);
-    /* drain 8042 input buffer */
-    while (inb(0x64) & 0x02) { (void)inb(0x60); }
-    outb(0x64, 0xFE);                                   /* keyboard controller pulse */
-    outb(0xCF9, 0x06);                                  /* PIIX/q35 reset */
-    /* triple-fault: null IDT + INT3 */
-    struct __attribute__((packed)) { uint16_t limit; uint64_t base; } idtr = { 0, 0 };
-    __asm__ volatile ("lidt %0" : : "m"(idtr));
-    __asm__ volatile ("int3");
-    for (;;) __asm__ volatile ("hlt");
+  log_write("rebooting...", KERNEL, LOG_INFO);
+  /* drain 8042 input buffer */
+  while (inb(0x64) & 0x02) {
+    (void)inb(0x60);
+  }
+  outb(0x64, 0xFE);  /* keyboard controller pulse */
+  outb(0xCF9, 0x06); /* PIIX/q35 reset */
+  /* triple-fault: null IDT + INT3 */
+  struct __attribute__((packed)) {
+    uint16_t limit;
+    uint64_t base;
+  } idtr = {0, 0};
+  __asm__ volatile("lidt %0" : : "m"(idtr));
+  __asm__ volatile("int3");
+  for (;;)
+    __asm__ volatile("hlt");
 }
 
 static long sys_shutdown(long time, const char *reason) {
-    log_write_hex("shutdown in (s) =", time, KERNEL, LOG_INFO);
-    if (reason && *reason) {
-        char buf[80];
-        const size_t prefix = 8;
-        memcpy(buf, "reason: ", prefix);
-        size_t rl = strlen(reason);
-        if (rl > sizeof(buf) - prefix - 1) rl = sizeof(buf) - prefix - 1;
-        memcpy(buf + prefix, reason, rl);
-        buf[prefix + rl] = 0;
-        log_write(buf, KERNEL, LOG_INFO);
-    }
-    delay_seconds(time);
-    hw_shutdown();
-    return 0;     /* unreachable */
+  log_write_hex("shutdown in (s) =", time, KERNEL, LOG_INFO);
+  if (reason && *reason) {
+    char buf[80];
+    const size_t prefix = 8;
+    memcpy(buf, "reason: ", prefix);
+    size_t rl = strlen(reason);
+    if (rl > sizeof(buf) - prefix - 1)
+      rl = sizeof(buf) - prefix - 1;
+    memcpy(buf + prefix, reason, rl);
+    buf[prefix + rl] = 0;
+    log_write(buf, KERNEL, LOG_INFO);
+  }
+  delay_seconds(time);
+  hw_shutdown();
+  return 0; /* unreachable */
 }
 
 static long sys_reboot(long time) {
-    log_write_hex("reboot in (s) =", time, KERNEL, LOG_INFO);
-    delay_seconds(time);
-    hw_reboot();
-    return 0;     /* unreachable */
+  log_write_hex("reboot in (s) =", time, KERNEL, LOG_INFO);
+  delay_seconds(time);
+  hw_reboot();
+  return 0; /* unreachable */
 }
 
 // #endregion SHUTDOWN + REBOOT
@@ -450,52 +509,147 @@ static long sys_reboot(long time) {
 // #region FAT HANDLERS
 
 /* O_CREAT = 0x40, O_TRUNC = 0x200, O_WRONLY = 1 (match fcntl.h) */
-#define O_CREAT  0x40
-#define O_TRUNC  0x200
+#define O_CREAT 0x40
+#define O_TRUNC 0x200
+
+static int path_is_absolute(const char *path) { return path && path[0] == '/'; }
+
+static int path_append_component(char *out, size_t *len, size_t max,
+                                 const char *start, size_t n) {
+  if (n == 0 || (n == 1 && start[0] == '.'))
+    return 0;
+
+  if (n == 2 && start[0] == '.' && start[1] == '.') {
+    if (*len <= 1) {
+      out[0] = '/';
+      out[1] = 0;
+      *len = 1;
+      return 0;
+    }
+
+    while (*len > 1 && out[*len - 1] != '/')
+      (*len)--;
+    if (*len > 1)
+      (*len)--;
+    out[*len] = 0;
+    return 0;
+  }
+
+  if (*len > 1) {
+    if (*len + 1 >= max)
+      return -1;
+    out[(*len)++] = '/';
+  }
+
+  if (*len + n >= max)
+    return -1;
+  for (size_t i = 0; i < n; i++)
+    out[(*len)++] = start[i];
+  out[*len] = 0;
+  return 0;
+}
+
+static int resolve_path(const char *path, char *out, size_t max) {
+  if (!path || !out || max < 2)
+    return -1;
+
+  struct task *t = task_current();
+  if (!t)
+    return -1;
+
+  size_t len = 0;
+  out[0] = '/';
+  out[1] = 0;
+  len = 1;
+
+  if (!path_is_absolute(path)) {
+    len = 0;
+    while (len < max - 1 && t->cwd[len]) {
+      out[len] = t->cwd[len];
+      len++;
+    }
+    out[len] = 0;
+    if (len == 0) {
+      out[0] = '/';
+      out[1] = 0;
+      len = 1;
+    }
+  }
+
+  const char *p = path;
+  while (*p) {
+    while (*p == '/' || *p == '\\')
+      p++;
+
+    const char *start = p;
+    while (*p && *p != '/' && *p != '\\')
+      p++;
+
+    if (path_append_component(out, &len, max, start, (size_t)(p - start)) != 0)
+      return -1;
+  }
+
+  return 0;
+}
 
 static long sys_open(const char *path, int flags) {
-  struct fat_file *f = (struct fat_file *)kmalloc(sizeof(*f));
-  if (!f) return -1;
+  struct task *t = task_current();
+  if (!t)
+    return -1;
 
-  int rc = fat_open(path, f);
+  char resolved[TASK_CWD_MAX];
+  if (resolve_path(path, resolved, sizeof(resolved)) != 0)
+    return -1;
+
+  struct fat_file *f = (struct fat_file *)kmalloc(sizeof(*f));
+  if (!f)
+    return -1;
+
+  int rc = fat_open(resolved, f);
   if (rc != 0 && (flags & O_CREAT)) {
-    rc = fat_create(path, f);
+    rc = fat_create(resolved, f);
   } else if (rc == 0 && (flags & O_TRUNC)) {
-    /* truncate: drop existing chain, reset size */
-    extern int fat_unlink(const char *);   /* not exposed but symmetrical */
-    /* simplest truncate: unlink + create */
     kfree(f);
-    fat_unlink(path);
+    fat_unlink(resolved);
     f = (struct fat_file *)kmalloc(sizeof(*f));
-    if (!f) return -1;
-    rc = fat_create(path, f);
+    if (!f)
+      return -1;
+    rc = fat_create(resolved, f);
   }
+
   if (rc != 0) {
     kfree(f);
     return -1;
   }
-  int fd = fd_alloc(f);
+
+  int fd = fd_alloc_for(t, f);
   if (fd < 0) {
     kfree(f);
     return -1;
   }
+
   return fd;
 }
 
 static long sys_unlink(const char *path) {
-  return fat_unlink(path);
+  char resolved[TASK_CWD_MAX];
+  if (resolve_path(path, resolved, sizeof(resolved)) != 0)
+    return -1;
+  return fat_unlink(resolved);
 }
 
 static long sys_read(int fd, void *buf, size_t n) {
-  if (fd < 0 || fd >= MAX_FDS || !fd_table[fd])
+  struct task *t = task_current();
+  if (!t || fd < 3 || fd >= TASK_MAX_FDS || !t->fds[fd])
     return -1;
-  return (long)fat_read(fd_table[fd], buf, n);
+  return (long)fat_read(t->fds[fd], buf, n);
 }
 
 static long sys_lseek(int fd, long off, int whence) {
-  if (fd < 0 || fd >= MAX_FDS || !fd_table[fd])
+  struct task *t = task_current();
+  if (!t || fd < 3 || fd >= TASK_MAX_FDS || !t->fds[fd])
     return -1;
-  struct fat_file *f = fd_table[fd];
+  struct fat_file *f = t->fds[fd];
   uint32_t target;
   if (whence == 0)
     target = (uint32_t)off;
@@ -510,15 +664,76 @@ static long sys_lseek(int fd, long off, int whence) {
 }
 
 static long sys_close(int fd) {
-  if (fd < 0 || fd >= MAX_FDS || !fd_table[fd])
+  struct task *t = task_current();
+  if (!t || fd < 3 || fd >= TASK_MAX_FDS || !t->fds[fd])
     return -1;
-  kfree(fd_table[fd]);
-  fd_table[fd] = 0;
+  kfree(t->fds[fd]);
+  t->fds[fd] = 0;
   return 0;
 }
 
 static long sys_readdir(uint32_t *index, char *buf, size_t n) {
-  return fat_read_root_dir(index, buf, n);
+  struct task *t = task_current();
+  if (!t)
+    return -1;
+  return fat_read_dir(t->cwd, index, buf, n);
+}
+
+static long sys_readdir_path(const char *path, uint32_t *index, char *buf,
+                             size_t n) {
+  char resolved[TASK_CWD_MAX];
+  if (resolve_path(path, resolved, sizeof(resolved)) != 0)
+    return -1;
+  return fat_read_dir(resolved, index, buf, n);
+}
+
+static long sys_mkdir(const char *path) {
+  char resolved[TASK_CWD_MAX];
+  if (resolve_path(path, resolved, sizeof(resolved)) != 0)
+    return -1;
+  return fat_mkdir(resolved);
+}
+
+static long sys_chdir(const char *path) {
+  struct task *t = task_current();
+  if (!t || !path)
+    return -1;
+
+  char resolved[TASK_CWD_MAX];
+  if (resolve_path(path, resolved, sizeof(resolved)) != 0)
+    return -1;
+
+  unsigned idx = 0;
+  char tmp[16];
+  long n = fat_read_dir(resolved, &idx, tmp, sizeof(tmp));
+  if (n < 0)
+    return -1;
+
+  size_t i = 0;
+  while (i < TASK_CWD_MAX - 1 && resolved[i]) {
+    t->cwd[i] = resolved[i];
+    i++;
+  }
+  t->cwd[i] = 0;
+  return 0;
+}
+
+static long sys_getcwd(char *buf, size_t size) {
+  struct task *t = task_current();
+  if (!t || !buf || size == 0)
+    return -1;
+
+  size_t i = 0;
+  while (i + 1 < size && t->cwd[i]) {
+    buf[i] = t->cwd[i];
+    i++;
+  }
+  buf[i] = 0;
+
+  if (t->cwd[i])
+    return -1;
+
+  return 0;
 }
 
 // #endregion FAT HANDLERS
@@ -529,10 +744,10 @@ static long sys_readdir(uint32_t *index, char *buf, size_t n) {
  * userspace/lib/syscall.h byte-for-byte. */
 struct proc_info_user {
   uint64_t ticks_run;
-  int      pid;
-  int      parent_pid;
-  int      state;
-  char     name[16];
+  int pid;
+  int parent_pid;
+  int state;
+  char name[16];
 };
 
 struct mem_stats_user {
@@ -555,15 +770,17 @@ _Static_assert(sizeof(struct mem_stats_user) == 24,
                "mem_stats_user userspace ABI must be three u64 fields");
 
 static long sys_proc_list(struct proc_info_user *out, long max) {
-  if (!out || max <= 0) return -1;
-  if (max > 64) max = 64;     /* hard cap to bound stack snap below */
+  if (!out || max <= 0)
+    return -1;
+  if (max > 64)
+    max = 64; /* hard cap to bound stack snap below */
   struct task_snap snap[64];
   int n = sched_snapshot(snap, (int)max);
   for (int i = 0; i < n; i++) {
-    out[i].ticks_run  = snap[i].ticks_run;
-    out[i].pid        = snap[i].pid;
+    out[i].ticks_run = snap[i].ticks_run;
+    out[i].pid = snap[i].pid;
     out[i].parent_pid = snap[i].parent_pid;
-    out[i].state      = snap[i].state;
+    out[i].state = snap[i].state;
     for (size_t k = 0; k < sizeof(out[i].name); k++) {
       out[i].name[k] = snap[i].name[k];
     }
@@ -572,10 +789,11 @@ static long sys_proc_list(struct proc_info_user *out, long max) {
 }
 
 static long sys_mem_stats(struct mem_stats_user *out) {
-  if (!out) return -1;
+  if (!out)
+    return -1;
   out->total_frames = pmm_usable_frames();
-  out->used_frames  = pmm_used_frames();
-  out->frame_size   = 4096;
+  out->used_frames = pmm_used_frames();
+  out->frame_size = 4096;
   return 0;
 }
 
@@ -594,8 +812,8 @@ long syscall_dispatch(struct syscall_frame *f) {
   // static int trace_count = 0;
   // if (trace_count < 60) {
   //   log_write_hex("sysenter num=", num, KERNEL, LOG_INFO);
-  //   log_write_hex("sysenter pid=", task_current() ? task_current()->pid : -1, KERNEL, LOG_INFO);
-  //   trace_count++;
+  //   log_write_hex("sysenter pid=", task_current() ? task_current()->pid : -1,
+  //   KERNEL, LOG_INFO); trace_count++;
   // }
 
   long ret = -1;
@@ -619,7 +837,19 @@ long syscall_dispatch(struct syscall_frame *f) {
     ret = sys_mmap((uintptr_t)a1);
     break;
   case SYS_READDIR:
-  	ret = sys_readdir((uint32_t *)(uintptr_t)a1, (char *)(uintptr_t)a2, a3);
+    ret = sys_readdir((uint32_t *)(uintptr_t)a1, (char *)(uintptr_t)a2, a3);
+    break;
+  case SYS_READDIR_PATH:
+    ret =
+        sys_readdir_path((const char *)(uintptr_t)a1, (uint32_t *)(uintptr_t)a2,
+                         (char *)(uintptr_t)a3, (size_t)a4);
+    break;
+  case SYS_CHDIR:
+    ret = sys_chdir((const char *)(uintptr_t)a1);
+    break;
+
+  case SYS_GETCWD:
+    ret = sys_getcwd((char *)(uintptr_t)a1, (size_t)a2);
     break;
   case SYS_EXIT:
     ret = sys_exit((uintptr_t)a1);
@@ -628,16 +858,20 @@ long syscall_dispatch(struct syscall_frame *f) {
     ret = sys_yield();
     break;
   case SYS_MSG_GET:
-  ret = sys_msg_get((struct msg *)(uintptr_t)a1);
+    ret = sys_msg_get((struct msg *)(uintptr_t)a1);
     break;
   case SYS_MSG_PEEK:
     ret = sys_msg_peek((struct msg *)(uintptr_t)a1);
     break;
   case SYS_MOUSE_POS:
-    ret = sys_mouse_pos((int32_t *)(uintptr_t)a1, (int32_t *)(uintptr_t)a2, (uint8_t *)(uintptr_t)a3);
+    ret = sys_mouse_pos((int32_t *)(uintptr_t)a1, (int32_t *)(uintptr_t)a2,
+                        (uint8_t *)(uintptr_t)a3);
     break;
   case SYS_CON_WRITE:
     ret = sys_con_write((const char *)(uintptr_t)a1, (uintptr_t)a2);
+    break;
+  case SYS_CON_ZOOM:
+    ret = sys_con_zoom(a1);
     break;
   case SYS_CON_CLEAR:
     ret = sys_con_clear();
@@ -649,13 +883,14 @@ long syscall_dispatch(struct syscall_frame *f) {
     ret = sys_get_pid();
     break;
   case SYS_IPC_SEND:
-  	ret = sys_ipc_send((uintptr_t)a1, (const struct ipc_msg *)(uintptr_t)a2);
+    ret = sys_ipc_send((uintptr_t)a1, (const struct ipc_msg *)(uintptr_t)a2);
     break;
   case SYS_IPC_RECV:
     ret = sys_ipc_recv((struct ipc_msg *)(uintptr_t)a1);
     break;
   case SYS_SHMEM_SHARE:
-    ret = sys_shmem_share((uintptr_t)a1, (uint64_t)(uintptr_t)a2, (uintptr_t)a3, (uint64_t *)(uintptr_t)a4);
+    ret = sys_shmem_share((uintptr_t)a1, (uint64_t)(uintptr_t)a2, (uintptr_t)a3,
+                          (uint64_t *)(uintptr_t)a4);
     break;
   case SYS_WM_REGISTER:
     ret = sys_wm_register();
@@ -673,8 +908,8 @@ long syscall_dispatch(struct syscall_frame *f) {
     ret = sys_fb_map();
     break;
   case SYS_FB_DAMAGE:
-    framebuffer_mark_damage((uint32_t)a1, (uint32_t)a2,
-                            (uint32_t)a3, (uint32_t)a4);
+    framebuffer_mark_damage((uint32_t)a1, (uint32_t)a2, (uint32_t)a3,
+                            (uint32_t)a4);
     ret = 0;
     break;
   case SYS_KBD_POLL:
@@ -686,11 +921,17 @@ long syscall_dispatch(struct syscall_frame *f) {
   case SYS_UNLINK:
     ret = sys_unlink((const char *)(uintptr_t)a1);
     break;
+  case SYS_MKDIR:
+    ret = sys_mkdir((const char *)(uintptr_t)a1);
+    break;
   case SYS_EXEC:
     ret = sys_exec((const char *)(uintptr_t)a1, (char *const *)(uintptr_t)a2);
     break;
   case SYS_SPAWN:
     ret = sys_spawn((const char *)(uintptr_t)a1, (char *const *)(uintptr_t)a2);
+    break;
+  case SYS_KILL:
+    ret = sys_kill((uintptr_t)a1, (uintptr_t)a2);
     break;
   case SYS_SHUTDOWN:
     ret = sys_shutdown((uintptr_t)a1, (const char *)(uintptr_t)a2);

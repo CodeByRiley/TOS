@@ -1,9 +1,4 @@
-/* userspace/bin/cat/cat.c — dump a known file to stdout.
- *
- * Hard-coded to README.TXT today because there's no argv-driven open path
- * exercised in this binary yet. Doubles as an integration smoke test for
- * fopen/fread/fclose + printf.
- */
+/* userspace/bin/cat/cat.c — dump one or more files to stdout. */
 #include "../../lib/syscall.h"
 #include <stddef.h>
 
@@ -12,9 +7,12 @@ extern size_t fread(void *, size_t, size_t, void *);
 extern int    fclose(void *);
 extern int    printf(const char *, ...);
 
-int main(void) {
-    void *fp = fopen("README.TXT", "rb");
-    if (!fp) { printf("cat: open failed\n"); return 1; }
+static int cat_one(const char *path) {
+    void *fp = fopen(path, "rb");
+    if (!fp) {
+        printf("cat: %s: open failed\n", path);
+        return 1;
+    }
 
     char buf[256];
     size_t n;
@@ -22,6 +20,17 @@ int main(void) {
         write(1, buf, n);
     }
     fclose(fp);
-    printf("[cat done, malloc/printf/fread work]\n");
     return 0;
+}
+
+int main(int argc, char **argv) {
+    if (argc < 2) {
+        printf("usage: cat FILE...\n");
+        return 1;
+    }
+
+    int failed = 0;
+    for (int i = 1; i < argc; i++)
+        failed |= cat_one(argv[i]);
+    return failed ? 1 : 0;
 }

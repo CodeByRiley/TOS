@@ -2,8 +2,13 @@
  *
  * Maps the kernel framebuffer with fb_map() and paints an animated
  * gradient until the user presses ESC. Used to sanity-check the FB
- * syscalls (fb_info, fb_map) and kbd_poll. No WM involvement — writes
- * straight to physical pixels.
+ * syscalls (fb_info, fb_map, fb_damage) and kbd_poll. No WM involvement.
+ *
+ * fb_map does NOT hand back the scanout. Under virtio-gpu it returns the
+ * RAM backbuffer, and the kernel flush thread only transfers rectangles
+ * that were marked with fb_damage. Painting without marking damage draws
+ * into memory nobody ever pushes to the host — the program runs, responds
+ * to keys, exits cleanly, and is invisible the whole time.
  */
 #include "../../lib/syscall.h"
 #include "../../include/key_codes.h"
@@ -45,8 +50,14 @@ int main(void) {
         row[x] = (r << 16) | (g << 8) | b;
       }
     }
-  }
 
-  printf("gfx done\n");
-  return 0;
+    /* Hand the frame to the flush thread. Without this the pixels above
+     * never leave the backbuffer. */
+    fb_damage(0, 0, (uint32_t)info.width, (uint32_t)info.height);
+
+    /* Full-screen repaint every iteration is already more than the flush
+     * thread can consume at PIT rate; yielding keeps this from starving
+     * the rest of the system between frames. */
+    yield();
+  }
 }

@@ -48,6 +48,31 @@
 
 // #endregion CONSTANTS
 
+// #region TASK PATH RESOLUTION
+
+static void task_set_cwd_root(struct task *t) {
+    if (!t) return;
+    t->cwd[0] = '/';
+    t->cwd[1] = 0;
+}
+
+static void task_inherit_cwd(struct task *child, struct task *parent) {
+    if (!child) return;
+    if (!parent || !parent->cwd[0]) {
+        task_set_cwd_root(child);
+        return;
+    }
+
+    size_t i = 0;
+    while (i < TASK_CWD_MAX - 1 && parent->cwd[i]) {
+        child->cwd[i] = parent->cwd[i];
+        i++;
+    }
+    child->cwd[i] = 0;
+}
+
+// #endregion TASK PATH RESOLUTION
+
 // #region EXTERNS + FXSTATE
 
 extern void context_switch(uint64_t *old_rsp_ptr, uint64_t new_rsp,
@@ -151,6 +176,25 @@ static struct task *ready_pop(void) {
   return t;
 }
 
+static int ready_remove(struct task *target) {
+  struct task *previous = 0;
+  for (struct task *task = ready_head; task; task = task->next) {
+    if (task != target) {
+      previous = task;
+      continue;
+    }
+    if (previous)
+      previous->next = task->next;
+    else
+      ready_head = task->next;
+    if (ready_tail == task)
+      ready_tail = previous;
+    task->next = 0;
+    return 0;
+  }
+  return -1;
+}
+
 // #endregion READY QUEUE
 
 // #region SLOT + TRAMPOLINE
@@ -159,6 +203,17 @@ static struct task *alloc_slot(void) {
   for (int i = 0; i < MAX_TASKS; i++) {
     if (tasks[i].pid == 0)
       return &tasks[i];
+  }
+
+  /* Table full. Unclaimed zombies are holding slots nobody will ever come
+   * back for — reclaim them and retry once. This is the path that makes
+   * reaping correct under load: a system busy enough never to reach the
+   * idle thread still frees exactly when it needs to. */
+  if (task_reap_unclaimed() > 0) {
+    for (int i = 0; i < MAX_TASKS; i++) {
+      if (tasks[i].pid == 0)
+        return &tasks[i];
+    }
   }
   return 0;
 }
@@ -207,6 +262,7 @@ void sched_init(void) {
   t->syscall_kstack_top = kernel_rsp_top;
   t->user_rsp_saved = 0;
   alloc_rings_for(t);
+  task_set_cwd_root(t);
   fxstate_init(t->fxstate);
   task_set_name(t, "init");
   current = t;
@@ -296,6 +352,7 @@ struct task *task_spawn(void (*entry)(void)) {
   t->kthread_entry = entry;
   t->user_pml4 = 0;
   t->next = 0;
+  task_set_cwd_root(t);
   alloc_rings_for(t);
   fxstate_init(t->fxstate);
 
@@ -332,6 +389,7 @@ struct task *task_spawn_user(uint64_t *user_pml4, uint64_t entry,
   t->kthread_entry = 0;
   t->user_pml4 = user_pml4;
   t->next = 0;
+  task_inherit_cwd(t, task_current());
   alloc_rings_for(t);
   fxstate_init(t->fxstate);
 
@@ -415,6 +473,7 @@ void task_wakeup(struct task *t) {
   ready_push(t);
 }
 
+
 // #endregion YIELD + BLOCK + WAKEUP
 
 // #region SLEEP + WAKE SLEEPERS
@@ -482,6 +541,11 @@ void sched_wake_sleepers(void) {
  * we halt. */
 static void idle_thread(void) {
   for (;;) {
+    /* Steady-state reaper. Reaching idle means no task is mid-syscall on a
+     * kstack we might free, and the table walk is only paid when the system
+     * has nothing better to do. alloc_slot covers the case where we never
+     * get here. */
+    task_reap_unclaimed();
     __asm__ volatile ("sti; hlt");
     task_yield();
   }
@@ -491,41 +555,83 @@ static void idle_thread(void) {
 
 // #region TASK EXIT + REAP
 
-void task_exit(long code) {
+static void mark_task_exited(struct task *task, long code) {
   /* A direct framebuffer process can temporarily take ownership from winman.
    * When it exits, hand ownership back to the saved owner if it still exists. */
-  if (msg_input_owner() == current->pid) {
-    int restore_pid = current->input_owner_restore_pid;
+  if (msg_input_owner() == task->pid) {
+    int restore_pid = task->input_owner_restore_pid;
     struct task *restore = task_find(restore_pid);
     if (restore_pid > 0 && restore && restore->state != TASK_ZOMBIE) {
       msg_input_owner_force(restore_pid);
     } else {
-      msg_input_owner_clear(current->pid);
+      msg_input_owner_clear(task->pid);
     }
   }
 
   int wm_pid = msg_input_owner();
-  if (wm_pid > 0 && wm_pid != current->pid) {
+  if (wm_pid > 0 && wm_pid != task->pid) {
     struct ipc_msg note;
     memset(&note, 0, sizeof(note));
     note.type = IPC_PEER_EXITED;
-    note.a = current->pid;
+    note.a = task->pid;
     ipc_send(wm_pid, &note, 0);
   }
 
-  current->state = TASK_ZOMBIE;
-  current->exit_code = code;
+  /* Dying while blocked on a child means that child's exit code will never
+   * be read. Release it, or it sits as a claimed zombie forever with no
+   * waiter left to claim it. Must run before we overwrite our own state. */
+  if (task->state == TASK_BLOCKED && task->waiting_for_pid > 0) {
+    struct task *awaited = task_find(task->waiting_for_pid);
+    if (awaited && awaited->state == TASK_ZOMBIE)
+      awaited->unclaimed = 1;
+  }
+
+  task->state = TASK_ZOMBIE;
+  task->exit_code = code;
 
   /* Wake any task that was waiting on us via task_block(self.pid). O(MAX_TASKS)
    * because we don't have a wait-list per pid; with 16 slots this is cheaper
-   * than maintaining a real data structure to be cheaper. */
+   * than maintaining a real data structure to be cheaper.
+   *
+   * The same sweep answers whether anyone can still claim our exit code. A
+   * woken waiter reaps us itself; if nobody was waiting, nobody ever will
+   * — process_spawn_async children and task_kill victims both land here —
+   * so the slot is up for grabs. Without this the slot, the kstack and the
+   * whole user PML4 leak, which at MAX_TASKS = 16 is a short road. */
+  int claimed = 0;
   for (int i = 0; i < MAX_TASKS; i++) {
     struct task *t = &tasks[i];
     if (t->pid == 0) continue;
-    if (t->state == TASK_BLOCKED && t->waiting_for_pid == current->pid) {
+    if (t->state == TASK_BLOCKED && t->waiting_for_pid == task->pid) {
       task_wakeup(t);
+      claimed = 1;
     }
   }
+  task->unclaimed = !claimed;
+}
+
+int task_kill(int pid, long code) {
+  struct task *target = task_find(pid);
+  /* Kernel threads and already-dead tasks are not killable from userspace. */
+  if (!target || !target->user_pml4 || target->state == TASK_ZOMBIE
+      || target->state == TASK_DEAD)
+    return -1;
+
+  if (target == current)
+    task_exit(code);
+  if (target->state == TASK_RUNNING)
+    return -1;
+  if (target->state == TASK_READY && ready_remove(target) != 0)
+    return -1;
+  if (target->state == TASK_SLEEPING && n_sleeping > 0)
+    n_sleeping--;
+
+  mark_task_exited(target, code);
+  return 0;
+}
+
+void task_exit(long code) {
+  mark_task_exited(current, code);
 
   struct task *next = ready_pop();
   if (!next) {
@@ -548,15 +654,52 @@ void task_exit(long code) {
   __builtin_unreachable();
 }
 
+static void task_close_fds(struct task *t) {
+    for (int i = 3; i < TASK_MAX_FDS; i++) {
+        if (t->fds[i]) {
+            kfree(t->fds[i]);
+            t->fds[i] = 0;
+        }
+    }
+}
+
 void task_reap(struct task *t) {
   if (!t || t->state != TASK_ZOMBIE) return;
 
+  task_close_fds(t);
+  free_rings_for(t);
+
   if (t->kstack)    kfree(t->kstack);
   if (t->user_pml4) free_user_pml4(t->user_pml4);
-  free_rings_for(t);
 
   /* pid=0 marks the slot free for alloc_slot. */
   memset(t, 0, sizeof(*t));
+}
+
+int task_reap_unclaimed(void) {
+  int reaped = 0;
+  for (int i = 0; i < MAX_TASKS; i++) {
+    struct task *t = &tasks[i];
+    if (t->pid == 0 || t->state != TASK_ZOMBIE || !t->unclaimed)
+      continue;
+    /* task_exit runs on the dying task's kstack until it switches away, so
+     * the current task is never safe to free from here. It cannot actually
+     * be a zombie while running, but the guard costs nothing and documents
+     * why this is not called from task_exit directly. */
+    if (t == current)
+      continue;
+    /* Shared frames have exactly one owner: receivers carry VMM_SHARED so
+     * their cleanup skips the frame (sys_shmem_share). Freeing this PML4
+     * would hand those frames back to the PMM while the receiver is still
+     * writing through them, and the next allocation would reuse them.
+     * Leaking the slot is the lesser bug until shared frames are
+     * refcounted; process_exec's explicit reap is unaffected. */
+    if (t->shmem_shared_out > 0)
+      continue;
+    task_reap(t);
+    reaped++;
+  }
+  return reaped;
 }
 
 // #endregion TASK EXIT + REAP

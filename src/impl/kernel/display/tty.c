@@ -24,13 +24,18 @@
 #define TTY_BG 0x00008080u   /* teal — matches the old WM desktop colour */
 
 #define TTY_PAD 4
+#define TTY_SCALE_MIN 1
+#define TTY_SCALE_MAX 4
 #define DRAIN_RING_SIZE 4096
 #define DRAIN_RING_MASK (DRAIN_RING_SIZE - 1)
 _Static_assert((DRAIN_RING_SIZE & DRAIN_RING_MASK) == 0, "ring must be pow2");
 
 static int     cols, rows;
 static int     cx, cy;
+static int     scale = TTY_SCALE_MIN;
 static char   *grid;          /* cols * rows */
+static char   *saved_grid;
+static int     saved_cx, saved_cy;
 static int     dirty;
 static int     active = 1;
 static int     ready  = 0;
@@ -49,6 +54,9 @@ static char    drain_buf[DRAIN_RING_SIZE];
 static volatile int drain_head = 0;
 static volatile int drain_tail = 0;
 
+static int cell_width(void)  { return FONT_GLYPH_W * scale; }
+static int cell_height(void) { return FONT_GLYPH_H * scale; }
+
 static void build_glyph_lut(void) {
     for (int b = 0; b < 256; b++) {
         for (int c = 0; c < FONT_GLYPH_W; c++) {
@@ -59,20 +67,38 @@ static void build_glyph_lut(void) {
 
 static void draw_glyph(int gx, int gy, char c) {
     if (gx < 0 || gy < 0 || gx >= cols || gy >= rows) return;
-    int px = TTY_PAD + gx * FONT_GLYPH_W;
-    int py = TTY_PAD + gy * FONT_GLYPH_H;
-    if (px + FONT_GLYPH_W > px_w || py + FONT_GLYPH_H > px_h) return;
+    int cw = cell_width();
+    int ch = cell_height();
+    int px = TTY_PAD + gx * cw;
+    int py = TTY_PAD + gy * ch;
+    if (px + cw > px_w || py + ch > px_h) return;
 
     const uint8_t *glyph;
     static const uint8_t blank[FONT_GLYPH_H] = {0};
     if (c < FONT_FIRST || c > FONT_LAST) glyph = blank;
     else                                 glyph = font8x8[(int)c - FONT_FIRST];
 
-    uint8_t *fbp = (uint8_t*)fb + (uint32_t)py * (uint32_t)stride;
+    if (scale == 1) {
+        uint8_t *fbp = (uint8_t*)fb + (uint32_t)py * (uint32_t)stride;
+        for (int r = 0; r < FONT_GLYPH_H; r++) {
+            uint32_t *row = (uint32_t*)fbp + px;
+            memcpy(row, glyph_lut[glyph[r]], FONT_GLYPH_W * sizeof(uint32_t));
+            fbp += stride;
+        }
+        return;
+    }
+
     for (int r = 0; r < FONT_GLYPH_H; r++) {
-        uint32_t *row = (uint32_t*)fbp + px;
-        memcpy(row, glyph_lut[glyph[r]], FONT_GLYPH_W * sizeof(uint32_t));
-        fbp += stride;
+        for (int sy = 0; sy < scale; sy++) {
+            int y = py + r * scale + sy;
+            uint32_t *row = (uint32_t*)((uint8_t*)fb +
+                                       (uint32_t)y * (uint32_t)stride) + px;
+            for (int cidx = 0; cidx < FONT_GLYPH_W; cidx++) {
+                uint32_t color = ((glyph[r] >> cidx) & 1) ? TTY_FG : TTY_BG;
+                for (int sx = 0; sx < scale; sx++)
+                    row[cidx * scale + sx] = color;
+            }
+        }
     }
 }
 
@@ -110,14 +136,64 @@ static void drain_push(char c) {
     drain_head = next;
 }
 
+static void discard_saved_grid(void) {
+    if (saved_grid) {
+        kfree(saved_grid);
+        saved_grid = 0;
+    }
+}
+
+/* Replace the character grid while preserving the row window containing
+ * the cursor. This keeps top-of-screen content during early zooms and the
+ * newest rows after the terminal has filled and scrolled. */
+static int reflow_grid(int new_cols, int new_rows) {
+    if (new_cols <= 0 || new_rows <= 0) return -1;
+    if (new_cols == cols && new_rows == rows) return 0;
+
+    char *new_grid = (char*)kmalloc((size_t)new_cols * (size_t)new_rows);
+    if (!new_grid) return -1;
+    memset(new_grid, 0, (size_t)new_cols * (size_t)new_rows);
+
+    int new_cx = 0;
+    int new_cy = 0;
+    if (grid) {
+        int copy_cols = cols < new_cols ? cols : new_cols;
+        int copy_rows = rows < new_rows ? rows : new_rows;
+        int src_y0 = cy >= copy_rows ? cy - copy_rows + 1 : 0;
+        int dst_y0 = 0;
+        for (int r = 0; r < copy_rows; r++) {
+            memcpy(new_grid + (dst_y0 + r) * new_cols,
+                   grid     + (src_y0 + r) * cols,
+                   (size_t)copy_cols);
+        }
+        new_cx = cx < new_cols ? cx : new_cols - 1;
+        new_cy = cy - src_y0 + dst_y0;
+        if (new_cy < 0) new_cy = 0;
+        if (new_cy >= new_rows) new_cy = new_rows - 1;
+        kfree(grid);
+    }
+
+    grid = new_grid;
+    cols = new_cols;
+    rows = new_rows;
+    cx = new_cx;
+    cy = new_cy;
+
+    /* A saved grid uses the old dimensions. Discarding it is safer than
+     * allowing tty_pop() to copy a differently sized allocation. */
+    discard_saved_grid();
+    return 0;
+}
+
 void tty_init(void) {
     px_w   = (int)framebuffer_width();
     px_h   = (int)framebuffer_height();
     stride = (int)framebuffer_pitch();
     fb     = framebuffer_buffer();
 
-    cols = (px_w - 2 * TTY_PAD) / FONT_GLYPH_W;
-    rows = (px_h - 2 * TTY_PAD) / FONT_GLYPH_H;
+    scale = TTY_SCALE_MIN;
+    cols = (px_w - 2 * TTY_PAD) / cell_width();
+    rows = (px_h - 2 * TTY_PAD) / cell_height();
     if (cols <= 0 || rows <= 0) {
         log_write("tty: invalid grid dims", KERNEL, LOG_ERROR);
         return;
@@ -143,8 +219,8 @@ void tty_resize(void) {
     int new_stride = (int)framebuffer_pitch();
     uint32_t *new_fb = framebuffer_buffer();
 
-    int new_cols = (new_px_w - 2 * TTY_PAD) / FONT_GLYPH_W;
-    int new_rows = (new_px_h - 2 * TTY_PAD) / FONT_GLYPH_H;
+    int new_cols = (new_px_w - 2 * TTY_PAD) / cell_width();
+    int new_rows = (new_px_h - 2 * TTY_PAD) / cell_height();
     if (new_cols <= 0 || new_rows <= 0) {
         log_write("tty: invalid resized dims", KERNEL, LOG_ERROR);
         return;
@@ -152,35 +228,35 @@ void tty_resize(void) {
 
     px_w = new_px_w; px_h = new_px_h; stride = new_stride; fb = new_fb;
 
-    /* Reallocate the character grid only when shape actually changed.
-     * Preserve as much of the previous content as fits — copy the bottom
-     * min(old_rows, new_rows) rows so the most recent output stays visible. */
-    if (new_cols != cols || new_rows != rows) {
-        char *new_grid = (char*)kmalloc((size_t)new_cols * (size_t)new_rows);
-        if (!new_grid) {
-            log_write("tty: resize kmalloc failed", KERNEL, LOG_ERROR);
-            return;
-        }
-        memset(new_grid, 0, (size_t)new_cols * (size_t)new_rows);
-        if (grid) {
-            int copy_cols = cols < new_cols ? cols : new_cols;
-            int copy_rows = rows < new_rows ? rows : new_rows;
-            int src_y0 = rows - copy_rows;
-            int dst_y0 = new_rows - copy_rows;
-            for (int r = 0; r < copy_rows; r++) {
-                memcpy(new_grid + (dst_y0 + r) * new_cols,
-                       grid     + (src_y0 + r) * cols,
-                       (size_t)copy_cols);
-            }
-            kfree(grid);
-        }
-        grid = new_grid;
-        cols = new_cols;
-        rows = new_rows;
-        if (cx >= cols) cx = cols - 1;
-        if (cy >= rows) cy = rows - 1;
+    if (reflow_grid(new_cols, new_rows) != 0) {
+        log_write("tty: resize kmalloc failed", KERNEL, LOG_ERROR);
+        return;
     }
     dirty = 1;
+}
+
+int tty_zoom(int delta) {
+    if (!ready) return -1;
+    if (delta == 0) return scale;
+
+    int new_scale = scale;
+    if (delta > 0 && new_scale < TTY_SCALE_MAX) new_scale++;
+    if (delta < 0 && new_scale > TTY_SCALE_MIN) new_scale--;
+    if (new_scale == scale) return scale;
+
+    int new_cols = (px_w - 2 * TTY_PAD) / (FONT_GLYPH_W * new_scale);
+    int new_rows = (px_h - 2 * TTY_PAD) / (FONT_GLYPH_H * new_scale);
+    if (reflow_grid(new_cols, new_rows) != 0) {
+        log_write("tty: zoom kmalloc failed", KERNEL, LOG_ERROR);
+        return -1;
+    }
+
+    int old_scale = scale;
+    scale = new_scale;
+    dirty = 1;
+    drain_push(scale > old_scale ? TTY_CTRL_ZOOM_IN : TTY_CTRL_ZOOM_OUT);
+    if (active) render();
+    return scale;
 }
 
 void tty_putc(char c) {
@@ -219,12 +295,6 @@ void tty_clear(void) {
     /* Also notify drain consumers (winman) so their mirror clears too. */
     drain_push(TTY_CTRL_CLEAR);
 }
-
-/* One-level alt-screen save/restore. Stack-of-1 — repeated tty_push without
- * a tty_pop frees the previous snapshot to keep memory bounded. */
-static char *saved_grid = 0;
-static int   saved_cx   = 0;
-static int   saved_cy   = 0;
 
 int tty_push(void) {
     if (!ready) return -1;

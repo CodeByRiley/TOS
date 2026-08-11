@@ -28,6 +28,7 @@ long process_exec(const char *path, char *const argv[]);
  * on exit). Used for daemons like winman that must run alongside a
  * foreground shell. */
 long process_spawn_async(const char *path, char *const argv[]);
+long process_kill(long pid, int signal);
 
 /* Allocate a fresh PML4 for a new process. Shares the kernel-low
  * identity map (first 1 GiB) by giving each process its own PDPT under

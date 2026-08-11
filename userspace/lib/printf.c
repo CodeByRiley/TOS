@@ -224,6 +224,7 @@ int printf(const char *fmt, ...) {
     char buf[512];
     va_list ap; va_start(ap, fmt);
     int r = vsnprintf(buf, sizeof(buf), fmt, ap);
+    if (r > (int)sizeof(buf)) r = sizeof(buf) - 1;
     va_end(ap);
     write(1, buf, r);
     return r;

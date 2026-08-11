@@ -10,12 +10,6 @@
 /* TTY detection unsupported — treat every fd as a pipe/file. */
 int isatty(int fd)                       { (void)fd; return 0; }
 
-/* No cwd concept yet — fail. */
-int chdir(const char *p)                { (void)p; return -1; }
-
-/* Returns an empty string; cwd is effectively unknown. */
-char *getcwd(char *buf, size_t size)    { if (buf && size) buf[0] = 0; return buf; }
-
 /* Busy-wait `s` seconds. Returns 0 (no signal handling). */
 unsigned int sleep(unsigned int s) {
     long target = get_ticks() + (long)s * 1000;
