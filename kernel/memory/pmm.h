@@ -35,4 +35,10 @@ uint64_t pmm_total_frames(void);
 uint64_t pmm_usable_frames(void);
 uint64_t pmm_used_frames(void);
 
+#ifdef PMM_HOST_TEST
+/* Test-only setup for executing the real bitmap allocator on the host. */
+void pmm_test_reset(uint8_t *storage, uint64_t frame_count);
+void pmm_test_mark_free(uint64_t base, uint64_t length);
+#endif
+
 #endif

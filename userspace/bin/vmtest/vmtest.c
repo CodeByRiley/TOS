@@ -148,13 +148,13 @@ static void test_stat(void) {
     check("stat root", stat_raw("/", &st) == 0);
     check("root is a directory", st.type == STAT_TYPE_DIR);
 
-    if (stat_raw("/sh.elf", &st) == 0) {
+    if (stat_raw("/bin/sh.elf", &st) == 0) {
         check("stat a file", 1);
         check("file is not a directory", st.type == STAT_TYPE_FILE);
         check("file has a size", st.size > 0);
 
         unsigned long stat_size = st.size;
-        long fd = open("/sh.elf", 0);
+        long fd = open("/bin/sh.elf", 0);
         check("open the same file", fd >= 0);
         if (fd >= 0) {
             check("fstat", fstat_raw((int)fd, &st) == 0);
@@ -165,7 +165,7 @@ static void test_stat(void) {
             close((int)fd);
         }
     } else {
-        check("stat a file (/sh.elf present?)", 0);
+        check("stat a file (/bin/sh.elf present?)", 0);
     }
 
     check("fstat on a closed fd fails", fstat_raw(9, &st) != 0);

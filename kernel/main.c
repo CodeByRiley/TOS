@@ -201,11 +201,11 @@ void kernel_main(uint64_t mb2_addr) {
 
   /* Launch the userspace window manager in the background — like DOS
    * starting WIN.COM, but here it runs as a sibling task alongside
-   * the shell rather than replacing it. If winman.elf is missing or
+   * the shell rather than replacing it. If /usr/bin/winman.elf is missing or
    * fails to load we just don't have windows; the shell still boots
    * on the kernel TTY. */
   char *winman_argv[] = {(char *)"winman", 0};
-  long winman_pid = process_spawn_async("winman.elf", winman_argv);
+  long winman_pid = process_spawn_async("/usr/bin/winman.elf", winman_argv);
   if (winman_pid < 0) {
     log_write("winman: launch failed — TTY-only mode", USER, LOG_INFO);
   } else {
@@ -215,7 +215,7 @@ void kernel_main(uint64_t mb2_addr) {
 
   char *sh_argv[] = {(char *)"sh", 0};
   while (1) {
-    long code = process_exec("sh.elf", sh_argv);
+    long code = process_exec("/bin/sh.elf", sh_argv);
     log_write_hex("shell exited code =", code, USER, LOG_INFO);
   }
 

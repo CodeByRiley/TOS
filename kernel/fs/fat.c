@@ -506,7 +506,7 @@ static int short_name_exact(const char *name, uint32_t length,
 /* Checksum tying an LFN run to its short entry. Any edit to the short name
  * by an 8.3-only writer breaks it, which is exactly how such a writer
  * signals that the long name is now stale. */
-static uint8_t lfn_checksum(const char name[FAT_NAME_LEN]) {
+static uint8_t lfn_checksum(const char *name) {
   uint8_t sum = 0;
   for (int i = 0; i < FAT_NAME_LEN; i++)
     sum = (uint8_t)(((sum & 1) << 7) + (sum >> 1) + (uint8_t)name[i]);
@@ -1349,6 +1349,56 @@ int fat_mkdir(const char *path) {
 static int is_dot_entry(const struct dir_entry *entry) {
   return entry->name[0] == '.' &&
          (entry->name[1] == ' ' || entry->name[1] == '.');
+}
+
+static int path_ends_with_dot_component(const char *path) {
+  uint32_t length = 0;
+  if (!path)
+    return 0;
+  while (length < FAT_PATH_MAX && path[length])
+    length++;
+  if (length == FAT_PATH_MAX)
+    return 1;
+
+  while (length > 0 && is_separator(path[length - 1]))
+    length--;
+  uint32_t start = length;
+  while (start > 0 && !is_separator(path[start - 1]))
+    start--;
+  uint32_t component_length = length - start;
+  return (component_length == 1 && path[start] == '.') ||
+         (component_length == 2 && path[start] == '.' &&
+          path[start + 1] == '.');
+}
+
+int fat_rmdir(const char *path) {
+  struct fat_dir parent;
+  struct dir_slot slot;
+  if (path_ends_with_dot_component(path) ||
+      resolve_slot(path, &parent, &slot) != 0 ||
+      !(slot.entry->attr & FAT_ATTR_DIRECTORY) || is_dot_entry(slot.entry))
+    return -1;
+
+  uint32_t cluster = entry_cluster(slot.entry);
+  if (!cluster_is_valid(cluster))
+    return -1;
+
+  struct fat_dir child = {.first_cluster = cluster, .is_root = 0};
+  struct dir_cursor cursor;
+  if (cursor_init(&cursor, child, 0) != 0)
+    return -1;
+
+  struct dir_entry *entry;
+  while ((entry = cursor_next(&cursor)) != 0) {
+    if ((uint8_t)entry->name[0] == 0x00)
+      break;
+    if (entry_is_usable(entry) && !is_dot_entry(entry))
+      return -1;
+  }
+
+  free_chain(cluster);
+  erase_slots(parent, slot.lfn_index, slot.index);
+  return 0;
 }
 
 long fat_read_dir(const char *path, uint32_t *index, char *buffer,

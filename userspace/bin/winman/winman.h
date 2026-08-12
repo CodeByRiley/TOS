@@ -49,10 +49,10 @@ static int wallpaper_loaded = 0;
 #define START_MENU_PAD 4
 
 static struct program start_menu_programs[] = {
-  {"Terminal", "/bin/terminal"},
-  {"File Manager", "/bin/files"},
-  {"Text Editor", "/bin/editor"},
-  {"About", "/bin/about"}
+  {"Shelf (Shell)", "/bin/sh.elf"},
+  {"Desk Elf", "/usr/bin/deskelf.elf"},
+  {"Text Editor", "/usr/bin/editor.elf"},
+  {"About", "/usr/bin/about.elf"}
 };
 
 #define START_MENU_COUNT (int)(sizeof(start_menu_programs) / sizeof(struct program))
@@ -106,6 +106,11 @@ static const uint8_t fallback_cursor_mask[CURSOR_H][CURSOR_W] = {
 #define CHROME_TEXT 0x00FFFFFFu
 #define CONSOLE_FG 0x00FFFFFFu
 #define CONSOLE_BG 0x00000000u
+
+#define MENU_BG       TASKBAR_BTN_BG
+#define MENU_TEXT     TASKBAR_BTN_TEXT
+#define MENU_HOVER_BG TASKBAR_BTN_BG_FOCUS
+#define MENU_HOVER_FG TASKBAR_BTN_TEXT_FOC
 
 #define BORDER_PX 1
 #define TITLEBAR_PX 16

@@ -83,6 +83,23 @@ int main(void) {
                      "create nested APPS/TOOLS");
     failed |= expect(fat_mkdir("apps/tools") != 0,
                      "reject duplicate directory case-insensitively");
+    failed |= expect(fat_mkdir("APPS/EMPTY") == 0,
+                     "create empty directory for removal");
+    failed |= expect(fat_rmdir("APPS/EMPTY/.") != 0,
+                     "reject removal through a dot entry");
+    failed |= expect(fat_stat("APPS/EMPTY", &(struct fat_stat){0}) == 0,
+                     "dot removal leaves directory intact");
+    failed |= expect(fat_rmdir("APPS/EMPTY") == 0,
+                     "remove empty directory");
+    failed |= expect(fat_stat("APPS/EMPTY", &(struct fat_stat){0}) != 0,
+                     "removed directory is absent");
+    failed |= expect(fat_mkdir("APPS/Empty Long Directory") == 0,
+                     "create long-name empty directory");
+    failed |= expect(fat_rmdir("APPS/Empty Long Directory") == 0,
+                     "remove long-name empty directory");
+    failed |= expect(
+        fat_stat("APPS/Empty Long Directory", &(struct fat_stat){0}) != 0,
+        "removed long-name directory is absent");
 
     struct fat_file file;
     static const char payload[] = "nested directory data";
@@ -111,6 +128,8 @@ int main(void) {
     }
     failed |= expect(fat_open("APPS/TOOLS/F19.TXT", &file) == 0,
                      "find an entry in the grown directory cluster");
+    failed |= expect(fat_rmdir("APPS/TOOLS") != 0,
+                     "reject removal of non-empty directory");
 
     uint8_t big_payload[1600];
     for (size_t i = 0; i < sizeof(big_payload); i++)
@@ -144,8 +163,11 @@ int main(void) {
     failed |= expect(bytes > 0 && contains_name(names, bytes, "NOTE.TXT"),
                      "enumerate nested directory");
 
-    failed |= expect(fat_create("APPS/NAME-IS-TOO-LONG.TXT", &file) != 0,
-                     "reject non-8.3 component");
+    failed |= expect(fat_create("APPS/NAME-IS-TOO-LONG.TXT", &file) == 0,
+                     "create VFAT long-name file");
+    failed |= expect(
+        fat_stat("APPS/NAME-IS-TOO-LONG.TXT", &(struct fat_stat){0}) == 0,
+        "stat VFAT long-name file");
     failed |= expect(fat_unlink("APPS/TOOLS/NOTE.TXT") == 0,
                      "unlink nested file");
     failed |= expect(fat_open("APPS/TOOLS/NOTE.TXT", &file) != 0,

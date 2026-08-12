@@ -34,6 +34,7 @@
 #define SYS_GETCWD          79
 #define SYS_CHDIR           80
 #define SYS_MKDIR   		 83
+#define SYS_RMDIR           84
 #define SYS_UNLINK  		 87
 #define SYS_READDIR        217   /* Linux getdents64 slot                  */
 #define SYS_READDIR_PATH   218   /* TOS extension: enumerate by path       */

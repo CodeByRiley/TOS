@@ -1,9 +1,9 @@
 /* kernel/memory/vmm.h — virtual-memory mapper.
  *
  * Long-mode 4-level paging. Standard PTE bits exposed as VMM_*, plus a
- * project-specific VMM_SHARED bit (PTE bit 9) marking pages that were
- * shared in via shmem_share — those must NOT be freed back to the PMM
- * on task exit because the owner still has them mapped.
+ * project-specific VMM_SHARED bit (PTE bit 9) marking borrowed pages —
+ * those must NOT be freed back to the PMM on task exit because another
+ * subsystem or process owns them.
  *
  * Implementation: kernel/memory/vmm.c.
  */
@@ -41,10 +41,9 @@
 #define VMM_DIRTY    (1ULL << 6)
 #define VMM_PS       (1ULL << 7)
 #define VMM_GLOBAL   (1ULL << 8)
-/* Bit 9 is one of the three software-available bits. We use it to mark a
- * frame borrowed via shmem_share: the receiving task must NOT pmm_free_frame
- * it on exit, because the owner (e.g. winman) still has it mapped and on its
- * malloc free list. */
+/* Bit 9 is one of the three software-available bits. It marks a non-owning
+ * mapping, including shmem receivers and userspace framebuffer mappings.
+ * Teardown removes the PTE but must not return the frame to the PMM. */
 #define VMM_SHARED   (1ULL << 9)
 #define VMM_NX       (1ULL << 63)
 

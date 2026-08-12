@@ -26,18 +26,19 @@
  * Linux x86_64 numbers wherever the call means the same thing; TOS-only
  * calls take numbers Linux has not used. 12 (brk) and 13 (rt_sigaction)
  * are deliberately left free. */
-#define SYS_READ    		 0
-#define SYS_WRITE   		 1
-#define SYS_OPEN    		 2
-#define SYS_CLOSE   		 3
-#define SYS_STAT             4
-#define SYS_FSTAT            5
-#define SYS_LSEEK   		 8
-#define SYS_MMAP    		 9
-#define SYS_MPROTECT        10
-#define SYS_MUNMAP          11
-#define SYS_GETCWD          79
-#define SYS_CHDIR           80
+#define SYS_READ    		   0
+#define SYS_WRITE   		   1
+#define SYS_OPEN    		   2
+#define SYS_CLOSE   		   3
+#define SYS_STAT           4
+#define SYS_FSTAT          5
+#define SYS_LSEEK   		   8
+#define SYS_MMAP    		   9
+#define SYS_MPROTECT       10
+#define SYS_MUNMAP         11
+#define SYS_GETCWD         79
+#define SYS_CHDIR          80
+#define SYS_RMDIR          84
 #define SYS_READDIR        217
 #define SYS_READDIR_PATH   218
 
@@ -65,13 +66,13 @@
 #define SYS_WM_PID         135
 #define SYS_TTY_DRAIN      136
 
-#define SYS_PROC_LIST   140
-#define SYS_MEM_STATS   141
-#define SYS_CON_PUSH    142
-#define SYS_CON_POP     143
-#define SYS_SPAWN       144
-#define SYS_KILL        145
-#define SYS_CON_ZOOM    146
+#define SYS_PROC_LIST      140
+#define SYS_MEM_STATS      141
+#define SYS_CON_PUSH       142
+#define SYS_CON_POP        143
+#define SYS_SPAWN          144
+#define SYS_KILL           145
+#define SYS_CON_ZOOM       146
 
 #define SYS_THREAD_CREATE  200
 #define SYS_THREAD_EXIT    201
@@ -79,10 +80,10 @@
 #define SYS_FUTEX_WAIT     203
 #define SYS_FUTEX_WAKE	   204
 
-#define SYS_MKDIR      83
-#define SYS_UNLINK     87
-#define SYS_SHUTDOWN   888
-#define SYS_REBOOT     887
+#define SYS_MKDIR          83
+#define SYS_UNLINK         87
+#define SYS_SHUTDOWN       888
+#define SYS_REBOOT         887
 
 /* ---------------- mmap / mprotect --------------------------------------
  *
@@ -252,6 +253,7 @@ long lseek(int fd, long off, int whence);
 long readdir(unsigned *index, char *buf, size_t n);
 long readdir_path(const char *path, unsigned *index, char *buf, size_t n);
 long mkdir_path(const char *path);
+long rmdir_path(const char *path);
 long unlink(const char *path);
 void exit(int code);
 long yield(void);

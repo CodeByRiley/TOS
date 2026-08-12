@@ -45,6 +45,18 @@ Kernel includes are written relative to `kernel/`, e.g. `#include "fs/fat.h"`.
 Userspace gets the same root via `-I ../kernel` so it can share the syscall ABI
 header.
 
+## Root filesystem
+
+The generated FAT32 image uses a Unix-style executable hierarchy:
+
+- `/bin` contains the shell and core system utilities.
+- `/usr/bin` contains regular applications and development tools.
+- `/usr/local/bin` is reserved for locally installed programs.
+
+The shell's default `PATH` is `/bin:/usr/bin:/usr/local/bin`. Bare commands are
+searched in that order; paths containing `/` are used directly. `PATH=...` and
+`export PATH=...` can change the search list for the running shell.
+
 ## Build
 
 Requires an `x86_64-elf` cross toolchain, `nasm`, and WSL with `grub-mkimage`,
@@ -68,3 +80,23 @@ tools/run.bat
 
 `tools/build.bat` and `tools/run.sh` are the same steps for cmd and bash. All
 scripts cd to the repository root themselves, so they work from any directory.
+
+## Tests
+
+Run the host suite for fast PMM, VMM, process-page-table, FAT, stdio,
+framebuffer-damage, BMP, gfx, and UI coverage:
+
+```bash
+mingw32-make test-host
+```
+
+Run the heavy suite to rebuild the ISO and add SMP, VM, filesystem, IPC/shared
+memory, Winman lifecycle, process churn, framebuffer lifetime/resize, Deskelf,
+PATH, and panic-screen checks under QEMU:
+
+```bash
+mingw32-make test-heavy
+```
+
+The in-guest stress binary can also be run manually as `stress`, or as
+`stress windows` to isolate 64 Winman surface create/destroy cycles.

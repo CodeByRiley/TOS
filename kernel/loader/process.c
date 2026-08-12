@@ -34,7 +34,9 @@
 #define ADDR_MASK VMM_ADDR_MASK
 #define PAGE_PS   VMM_PS
 
+#ifndef PROCESS_PML4_HOST_TEST
 extern uint64_t *kernel_pml4;
+#endif
 
 /* Walk one PDPT subtree and free every present user frame underneath, plus
  * each level's table. `start_idx` skips entries (used to leave the kernel-low
@@ -56,11 +58,10 @@ static void free_pdpt_subtree(uint64_t pdpt_phys, int start_idx) {
             for (int k = 0; k < 512; k++) {
                 uint64_t pte = pt[k];
                 if (!(pte & VMM_PRESENT)) continue;
-                /* Skip shmem-borrowed frames: owner still holds them and
-                 * will recycle via its own free()/munmap. Double-freeing
-                 * here lets the next pmm_alloc_frame hand them back out
-                 * while the owner still writes to them, leading to a
-                 * page-fault about two seconds and one panic later. */
+                /* Skip borrowed frames. Shared-memory receivers and direct
+                 * framebuffer clients do not own these pages; freeing one
+                 * here lets the PMM reuse a frame while its owner still
+                 * writes to it. */
                 if (pte & VMM_SHARED) continue;
                 pmm_free_frame(pte & ADDR_MASK);
             }
@@ -93,6 +94,7 @@ void free_user_pml4(uint64_t *pml4) {
     pmm_free_frame(virt_to_phys(pml4));
 }
 
+#ifndef PROCESS_PML4_HOST_TEST
 int user_stack_alloc(void) {
     return user_stack_alloc_in(kernel_pml4);
 }
@@ -468,3 +470,4 @@ long process_kill(long pid, int signal) {
         return -1;
     return task_kill((int)pid, 128 + signal);
 }
+#endif

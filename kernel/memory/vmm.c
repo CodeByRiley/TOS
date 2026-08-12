@@ -27,6 +27,13 @@
 
 uint64_t *kernel_pml4 = 0;
 
+#ifdef VMM_HOST_TEST
+#define VMM_INVALIDATE_PAGE(virt) ((void)(virt))
+#else
+#define VMM_INVALIDATE_PAGE(virt) \
+    __asm__ volatile ("invlpg (%0)" : : "r"(virt) : "memory")
+#endif
+
 /* Crack a virtual address into its four index slices. Inlined because
  * doing this by hand four times across three functions was where the
  * bugs lived. */
@@ -113,10 +120,18 @@ static uint64_t *walk_only(uint64_t *pml4, uint64_t virt) {
 }
 
 int vmm_map_in(uint64_t *pml4, uint64_t virt, uint64_t phys, uint64_t flags) {
+    /* Sanity check: catch callers who accidentally pass a virtual address
+     * as the physical address. Physical addresses should never have the
+     * high bits of a canonical kernel virtual address set. */
+    if (phys & 0xFFFF800000000000ULL) {
+        log_write("VMM: map called with a virtual address as phys!", KERNEL, LOG_ERROR);
+        return -1;
+    }
+
     uint64_t *pte;
     if (walk_or_create(pml4, virt, flags, &pte) != 0) return -1;
     *pte = (phys & ADDR_MASK) | (flags | VMM_PRESENT);
-    __asm__ volatile ("invlpg (%0)" : : "r"(virt) : "memory");
+    VMM_INVALIDATE_PAGE(virt);
     return 0;
 }
 
@@ -130,7 +145,7 @@ int vmm_protect_in(uint64_t *pml4, uint64_t virt, uint64_t flags) {
     if (!pte || !(*pte & VMM_PRESENT)) return -1;
     uint64_t keep = (*pte & ADDR_MASK) | (*pte & VMM_SHARED);
     *pte = keep | (flags | VMM_PRESENT);
-    __asm__ volatile ("invlpg (%0)" : : "r"(virt) : "memory");
+    VMM_INVALIDATE_PAGE(virt);
     return 0;
 }
 
@@ -147,7 +162,7 @@ int vmm_unmap_in(uint64_t *pml4, uint64_t virt) {
     uint64_t *pte = walk_only(pml4, virt);
     if (!pte) return -1;
     *pte = 0;
-    __asm__ volatile ("invlpg (%0)" : : "r"(virt) : "memory");
+    VMM_INVALIDATE_PAGE(virt);
     return 0;
 }
 
@@ -203,6 +218,7 @@ uint64_t vmm_translate(uint64_t virt) {
  * Later kernel mappings only ever write levels *below* the PML4, and every
  * address space reaches those through the shared physical pointer it
  * copied. Costs 256 frames (1 MiB) once, at boot. */
+#ifndef VMM_HOST_TEST
 static void reserve_kernel_pml4_entries(void) {
     uint64_t created = 0;
     for (int i = ENTRIES_PER_TABLE / 2; i < ENTRIES_PER_TABLE; i++) {
@@ -234,3 +250,4 @@ void vmm_init(void) {
      * can hand out frames the HHDM already covers. */
     reserve_kernel_pml4_entries();
 }
+#endif

@@ -36,12 +36,12 @@ static void desktop_load(void) {
   desktop_icons[0].x = 20;
   desktop_icons[0].y = 20;
   desktop_icons[0].program.name = "DOOM";
-  desktop_icons[0].program.path = "/games/doom/doom.elf";
+  desktop_icons[0].program.path = "/usr/bin/doom.elf";
 
   desktop_icons[1].x = 20;
   desktop_icons[1].y = 100;
   desktop_icons[1].program.name = "shelf";
-  desktop_icons[1].program.path = "/sh.elf";
+  desktop_icons[1].program.path = "/bin/sh.elf";
 
   desktop_icon_count = 2;
 
@@ -893,7 +893,7 @@ static void draw_start_menu(void) {
   int my = taskbar_y() - menu_h;
 
   // Background
-  fb_fill_rect(mx, my, START_MENU_W, menu_h, PRINT_COLOR_WHITE);
+  fb_fill_rect(mx, my, START_MENU_W, menu_h, MENU_BG);
 
   // Simple 1px Black Border
   fb_fill_rect(mx, my, START_MENU_W, 1, PRINT_COLOR_BLACK); // Top
@@ -911,9 +911,9 @@ static void draw_start_menu(void) {
 
     // Highlight if hovered
     uint32_t bg =
-        (i == start_menu_hover) ? PRINT_COLOR_BLUE : PRINT_COLOR_WHITE;
+        (i == start_menu_hover) ? MENU_HOVER_BG : MENU_BG;
     uint32_t fg =
-        (i == start_menu_hover) ? PRINT_COLOR_WHITE : PRINT_COLOR_BLACK;
+        (i == start_menu_hover) ? MENU_HOVER_FG : MENU_TEXT;
 
     fb_fill_rect(item_x, item_y, item_w, START_MENU_ITEM_H - 2, bg);
     draw_text_fb(item_x + 4, item_y + (START_MENU_ITEM_H - FONT_GLYPH_H) / 2,
@@ -1334,7 +1334,7 @@ static void compose_handle(int handle) {
 }
 
 static void compose(void) {
-  /* 1. Draw Desktop Background (Tiled) */
+  /* Draw Desktop Background (Tiled) */
   if (wallpaper_loaded) {
     int w = wallpaper_img.width;
     int h = wallpaper_img.height;
@@ -1360,7 +1360,7 @@ static void compose(void) {
     fb_fill_rect(0, 0, fb_w, fb_h, DESKTOP_BG); // Fallback to teal
   }
 
-  /* 2. Draw Desktop Icons */
+  /* Draw Desktop Icons */
   for (int i = 0; i < desktop_icon_count; i++) {
     if (desktop_icons[i].loaded) {
       // Pass target size (desktop_icons[i].w / h) and source size (img.width /
@@ -1379,12 +1379,12 @@ static void compose(void) {
     draw_text_fb(desktop_icons[i].x, text_y, desktop_icons[i].program.name,
                  desktop_icons[i].w, 0x00FFFFFF, DESKTOP_BG);
   }
-  /* 3. Draw Windows back-to-front */
+  /* Draw Windows back-to-front */
   for (int i = z_count - 1; i >= 0; i--) {
     compose_handle(z_order[i]);
   }
 
-  /* 4. Draw Taskbar (always on top) */
+  /* Draw Taskbar (always on top) */
   draw_taskbar();
   draw_start_menu();
 }
@@ -1723,9 +1723,20 @@ static void handle_destroy_internal(int handle, int client_pid_check) {
   int old_y = w->y;
   int old_ow = outer_w(w);
   int old_oh = outer_h(w);
+  int old_owner_pid = w->owner_pid;
+  uint64_t old_client_va = w->client_va;
+  int old_n_pages = w->n_pages;
+  void *old_surface_raw = w->surface_raw;
 
-  if (w->surface_raw)
-    free(w->surface_raw);
+  /* Revoke the receiver mapping before making the owner allocation reusable.
+   * A client may close one window and remain alive, so relying on process exit
+   * to discard its PML4 leaves a stale alias into the next window allocated in
+   * this heap block. If the owner is already gone, unshare fails harmlessly:
+   * its address space has either been reaped or is about to be reaped. */
+  if (old_client_va && old_n_pages > 0)
+    shmem_unshare(old_owner_pid, old_client_va, old_n_pages);
+  if (old_surface_raw)
+    free(old_surface_raw);
   memset(w, 0, sizeof(*w));
   z_remove(handle);
 
@@ -1744,6 +1755,8 @@ static void handle_destroy_internal(int handle, int client_pid_check) {
   }
 
   mark_dirty(old_x, old_y, old_ow, old_oh);
+  printf("winman: destroy handle=%d owner=%d active=%d\n", handle,
+         old_owner_pid, window_count());
 }
 
 static void handle_destroy(int client_pid, int handle) {
@@ -1864,9 +1877,9 @@ static void reap_dead_windows(void) {
   }
 }
 
-static void handle_set_title(int handle, const char *title) {
+static void handle_set_title(int owner_pid, int handle, const char *title) {
   struct window *w = find_handle(handle);
-  if (!w || !title)
+  if (!w || w->owner_pid != owner_pid || !title)
     return;
   size_t i = 0;
   while (i < sizeof(w->title) - 1 && title[i]) {
@@ -1912,12 +1925,12 @@ static void pump_ipc(void) {
       break;
     case IPC_WM_INVALIDATE_REQ: {
       struct window *win = find_handle(m.a);
-      if (win)
+      if (win && win->owner_pid == from)
         mark_dirty(win->x, win->y, outer_w(win), outer_h(win));
       break;
     }
     case IPC_WM_SET_TITLE_REQ:
-      handle_set_title(m.a, m.str);
+      handle_set_title(from, m.a, m.str);
       break;
     case IPC_PEER_EXITED: {
       // The dead PID might be in from_pid or m.a depending on your kernel
@@ -1958,6 +1971,18 @@ static void forward_input(int target_pid, int win_handle, const struct msg *m) {
   out.c = local_x;
   out.d = local_y;
   ipc_send(target_pid, &out);
+}
+
+static void request_window_close(int handle) {
+  struct window *w = find_handle(handle);
+  if (!w || w->owner_pid <= 0)
+    return;
+
+  struct ipc_msg out;
+  memset(&out, 0, sizeof(out));
+  out.type = IPC_WM_INPUT;
+  out.a = WM_EV_QUIT;
+  ipc_send(w->owner_pid, &out);
 }
 
 static void pump_input(void) {
@@ -2024,9 +2049,8 @@ static void pump_input(void) {
        */
       if (kind == HIT_BTN_CLOSE) {
         if (hit_handle != HANDLE_CONSOLE) {
-          printf("winman: close button -> destroy handle=%d\n", hit_handle);
-
-          handle_destroy_internal(hit_handle, 0);
+          printf("winman: close button -> request handle=%d\n", hit_handle);
+          request_window_close(hit_handle);
         }
 
         continue;

@@ -9,7 +9,7 @@
  * Input model:
  *   - Raw KEY_* events from kbd_poll, folded to ASCII via keymap.c.
  *   - Shift/Ctrl tracked locally.
- *   - TAB cycles filename completion (FAT16 root only).
+ *   - TAB completes command names from PATH or files from the current dir.
  */
 // #region INCLUDES
 #include "../../lib/syscall.h"
@@ -51,9 +51,65 @@ static int sh_printf(const char *fmt, ...) {
 
 // #region GLOBALS
 #define LINE_MAX 512
+#define EXEC_PATH_MAX 256
+#define EXEC_DIR_MAX  256
+
+#define DEFAULT_EXEC_PATH "/bin:/usr/bin:/usr/local/bin"
 
 static int shift_held = 0;
 static int ctrl_held  = 0;
+static char exec_path[EXEC_PATH_MAX] = DEFAULT_EXEC_PATH;
+
+/* Read one colon-delimited PATH component. Empty components mean the current
+ * directory, matching the usual Unix PATH convention. */
+static int path_next(const char *path, int *cursor, char *out, int max) {
+    if (!path || !cursor || *cursor < 0 || !out || max < 2)
+        return 0;
+
+    int i = *cursor;
+    int n = 0;
+    int overflow = 0;
+    while (path[i] && path[i] != ':') {
+        if (n + 1 < max)
+            out[n++] = path[i];
+        else
+            overflow = 1;
+        i++;
+    }
+    *cursor = path[i] == ':' ? i + 1 : -1;
+
+    if (n == 0)
+        out[n++] = '.';
+    out[n] = 0;
+    return overflow ? -1 : 1;
+}
+
+static int set_exec_path(const char *value) {
+    int n = 0;
+    if (!value)
+        return -1;
+    while (value[n]) {
+        if (n + 1 >= EXEC_PATH_MAX)
+            return -1;
+        n++;
+    }
+    for (int i = 0; i <= n; i++)
+        exec_path[i] = value[i];
+    return 0;
+}
+
+/* Returns 0 for a normal word, 1 for an accepted PATH assignment, and -1
+ * for a PATH assignment that did not fit. */
+static int apply_path_assignment(const char *word) {
+    static const char prefix[] = "PATH=";
+    if (!word)
+        return 0;
+    for (int i = 0; prefix[i]; i++) {
+        if (word[i] != prefix[i])
+            return 0;
+    }
+    return set_exec_path(word + sizeof(prefix) - 1) == 0 ? 1 : -1;
+}
 // #endregion GLOBALS
 
 // #region KEYBOARD INPUT
@@ -94,7 +150,7 @@ static char read_char(void) {
 
 // #region TAB COMPLETION
 #define COMP_MAX_MATCHES 32
-#define COMP_NAME_MAX    16          /* FAT 8.3 + dot + nul slack */
+#define COMP_NAME_MAX    64
 
 /* Cache across consecutive TAB presses so cycling matches doesn't rescan
  * the filesystem. Invalidated by any non-TAB key (read_line clears it). */
@@ -111,6 +167,14 @@ static int word_start(const char *buf, int n) {
     return i;
 }
 
+static int is_command_word(const char *buf, int word_offset) {
+    for (int i = 0; i < word_offset; i++) {
+        if (buf[i] != ' ' && buf[i] != '\t')
+            return 0;
+    }
+    return 1;
+}
+
 /* Case-insensitive prefix match. plen passed separately so prefix can be
  * a substring of buf without a NUL boundary. */
 static int starts_with_ci(const char *name, const char *prefix, int plen) {
@@ -125,30 +189,93 @@ static int starts_with_ci(const char *name, const char *prefix, int plen) {
     return 1;
 }
 
-/* Populate comp_matches with every root-FS name that starts (case-
- * insensitively) with the `plen` chars at `prefix`. */
-static void comp_scan(const char *prefix, int plen) {
-    comp_count = 0;
-    comp_index = 0;
+static int ends_with_ci(const char *name, int length, const char *suffix) {
+    int suffix_len = (int)strlen(suffix);
+    if (length < suffix_len)
+        return 0;
+    for (int i = 0; i < suffix_len; i++) {
+        char a = name[length - suffix_len + i];
+        char b = suffix[i];
+        if (a >= 'A' && a <= 'Z') a = (char)(a + 32);
+        if (b >= 'A' && b <= 'Z') b = (char)(b + 32);
+        if (a != b)
+            return 0;
+    }
+    return 1;
+}
 
+static int comp_contains(const char *name, int length) {
+    for (int i = 0; i < comp_count; i++) {
+        if ((int)strlen(comp_matches[i]) != length)
+            continue;
+        int same = 1;
+        for (int j = 0; j < length; j++) {
+            if (comp_matches[i][j] != name[j]) {
+                same = 0;
+                break;
+            }
+        }
+        if (same)
+            return 1;
+    }
+    return 0;
+}
+
+static void comp_add(const char *name, int length, const char *prefix,
+                     int prefix_len) {
+    if (comp_count >= COMP_MAX_MATCHES || length <= 0 ||
+        length >= COMP_NAME_MAX || prefix_len > length ||
+        !starts_with_ci(name, prefix, prefix_len) ||
+        comp_contains(name, length))
+        return;
+    for (int i = 0; i < length; i++)
+        comp_matches[comp_count][i] = name[i];
+    comp_matches[comp_count][length] = 0;
+    comp_count++;
+}
+
+static void comp_scan_dir(const char *dir, const char *prefix, int prefix_len,
+                          int commands_only) {
     char     dbuf[512];
     unsigned idx = 0;
     while (comp_count < COMP_MAX_MATCHES) {
-        long n = readdir(&idx, dbuf, sizeof(dbuf));
+        long n = readdir_path(dir, &idx, dbuf, sizeof(dbuf));
         if (n <= 0) break;
         long off = 0;
         while (off < n && comp_count < COMP_MAX_MATCHES) {
             const char *name = dbuf + off;
-            size_t nl = strlen(name);
-            if (nl > 0 && nl < COMP_NAME_MAX &&
-                starts_with_ci(name, prefix, plen)) {
-                for (size_t k = 0; k <= nl; k++) {
-                    comp_matches[comp_count][k] = name[k];
-                }
-                comp_count++;
+            int nl = (int)strlen(name);
+            int display_len = nl;
+            if (commands_only) {
+                if (ends_with_ci(name, nl, ".elf") ||
+                    ends_with_ci(name, nl, ".exe"))
+                    display_len -= 4;
+                else
+                    display_len = 0;
             }
+            comp_add(name, display_len, prefix, prefix_len);
             off += (long)nl + 1;
         }
+    }
+}
+
+/* Command words come from PATH and have their executable suffix hidden.
+ * Other words retain ordinary current-directory filename completion. */
+static void comp_scan(const char *prefix, int prefix_len, int command_word) {
+    comp_count = 0;
+    comp_index = 0;
+
+    if (!command_word) {
+        comp_scan_dir(".", prefix, prefix_len, 0);
+        return;
+    }
+
+    int cursor = 0;
+    char dir[EXEC_DIR_MAX];
+    int status;
+    while ((status = path_next(exec_path, &cursor, dir, sizeof(dir))) != 0) {
+        if (status > 0)
+            comp_scan_dir(dir, prefix, prefix_len, 1);
     }
 }
 
@@ -187,7 +314,7 @@ static void handle_tab(char *buf, int *n_ptr, int max, int continuing) {
         prefix[wl] = 0;
 
         comp_word_len = wl;
-        comp_scan(prefix, wl);
+        comp_scan(prefix, wl, is_command_word(buf, ws));
         if (comp_count == 0) return;     /* no matches; leave buf as-is */
         comp_index = 0;
         comp_apply(buf, n_ptr, max);
@@ -273,6 +400,7 @@ static int builtin_fdnstest(int argc, char **argv);
 static int builtin_exit(int argc, char **argv);
 static int builtin_cd(int argc, char **argv);
 static int builtin_pwd(int argc, char **argv);
+static int builtin_export(int argc, char **argv);
 
 static const struct builtin builtins[] = {
     { "help",     "help",                       builtin_help },
@@ -287,6 +415,7 @@ static const struct builtin builtins[] = {
     { "fdnstest", "fdnstest",                   builtin_fdnstest },
     { "cd",  "cd DIR", builtin_cd },
     { "pwd", "pwd",    builtin_pwd },
+    { "export", "export PATH=DIR[:DIR...]", builtin_export },
     { 0, 0, 0 },
 };
 
@@ -386,17 +515,30 @@ static int builtin_pwd(int argc, char **argv) {
     return 0;
 }
 
+static int builtin_export(int argc, char **argv) {
+    if (argc == 1) {
+        printf("PATH=%s\n", exec_path);
+        return 0;
+    }
+    if (argc != 2) {
+        printf("usage: export PATH=DIR[:DIR...]\n");
+        return 1;
+    }
+    int assignment = apply_path_assignment(argv[1]);
+    if (assignment == 0) {
+        printf("usage: export PATH=DIR[:DIR...]\n");
+        return 1;
+    }
+    if (assignment < 0) {
+        printf("export: PATH is too long\n");
+        return 1;
+    }
+    return 0;
+}
+
 // #endregion BUILT-INS
 
 // #region EXEC
-
-static const char *exec_search_paths[] = {
-    "",
-    "/",
-    "BIN",
-    "GAMES",
-    0,
-};
 
 static int append_char(char *out, int *n, int max, char c) {
     if (*n + 1 >= max)
@@ -436,7 +578,7 @@ static int final_component_has_dot(const char *s) {
 }
 
 static int build_exec_candidate(const char *prefix, const char *raw,
-                                char *out, int max) {
+                                const char *default_ext, char *out, int max) {
     int n = 0;
     out[0] = 0;
 
@@ -453,8 +595,8 @@ static int build_exec_candidate(const char *prefix, const char *raw,
     if (append_str(out, &n, max, raw) != 0)
         return -1;
 
-    if (!final_component_has_dot(raw)) {
-        if (append_str(out, &n, max, ".elf") != 0)
+    if (!final_component_has_dot(raw) && default_ext) {
+        if (append_str(out, &n, max, default_ext) != 0)
             return -1;
     }
 
@@ -469,23 +611,36 @@ static int probe_exec_candidate(const char *path) {
     return 1;
 }
 
-/* Resolve a user command to an ELF path. The filesystem is the command
- * registry: names without a slash are searched in a tiny PATH list, while
- * explicit paths are used as-is after optional .elf suffixing. */
+/* TOS supports native ELF and PE32+ images. Prefer ELF for an unsuffixed
+ * command when both formats exist, then fall back to PE. */
+static int resolve_in_dir(const char *dir, const char *raw, char *out,
+                          int max) {
+    if (build_exec_candidate(dir, raw, ".elf", out, max) == 0 &&
+        probe_exec_candidate(out))
+        return 0;
+    if (!final_component_has_dot(raw) &&
+        build_exec_candidate(dir, raw, ".exe", out, max) == 0 &&
+        probe_exec_candidate(out))
+        return 0;
+    return -1;
+}
+
+/* Resolve a user command to an executable path. Bare names are searched in
+ * the shell's colon-separated PATH; explicit paths bypass PATH. */
 static int resolve_exec_path(const char *raw, char *out, int max) {
     if (!raw || !raw[0])
         return -1;
 
-    if (has_path_separator(raw)) {
-        if (build_exec_candidate("", raw, out, max) != 0)
-            return -1;
-        return probe_exec_candidate(out) ? 0 : -1;
-    }
+    if (has_path_separator(raw))
+        return resolve_in_dir("", raw, out, max);
 
-    for (int i = 0; exec_search_paths[i]; i++) {
-        if (build_exec_candidate(exec_search_paths[i], raw, out, max) != 0)
+    int cursor = 0;
+    char dir[EXEC_DIR_MAX];
+    int status;
+    while ((status = path_next(exec_path, &cursor, dir, sizeof(dir))) != 0) {
+        if (status < 0)
             continue;
-        if (probe_exec_candidate(out))
+        if (resolve_in_dir(dir, raw, out, max) == 0)
             return 0;
     }
     return -1;
@@ -504,7 +659,7 @@ static const char *path_basename(const char *path) {
  *
  *   - Searches a small PATH for bare names.
  *   - Preserves explicit directory components.
- *   - Appends ".elf" to the final component if it has no extension.
+ *   - Tries ".elf", then ".exe", when the final component has no extension.
  *   - Probes existence via open() so typos surface as a clean error
  *     rather than the kernel's "[x.elf exited -1]" message.
  *
@@ -612,7 +767,7 @@ static int builtin_fdnstest(int argc, char **argv) {
     printf("fdnstest: parent fd=%d\n", parent_fd);
 
     char *child_argv[] = { "fdchild", 0 };
-    long code = exec("fdchild.elf", child_argv);
+    long code = exec("/usr/bin/fdchild.elf", child_argv);
 
     printf("fdnstest: child exited %d\n", (int)code);
     close(parent_fd);
@@ -639,6 +794,15 @@ int main(int argc, char **argv) {
         int  ac = tokenize(line, targs, 16);
         if (ac == 0) continue;
         char *cmd = targs[0];
+
+        if (ac == 1) {
+            int assignment = apply_path_assignment(cmd);
+            if (assignment != 0) {
+                if (assignment < 0)
+                    printf("PATH: value is too long\n");
+                continue;
+            }
+        }
 
         const struct builtin *builtin = find_builtin(cmd);
         if (builtin) {

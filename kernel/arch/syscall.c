@@ -119,8 +119,11 @@ static long sys_fb_map(void) {
     uint64_t phys = framebuffer_phys_for_page(i);
     if (!phys)
       return -1;
+    /* The framebuffer pool belongs to the display subsystem. Mark this as a
+       borrowed mapping so munmap/task teardown removes the PTE without
+       returning the still-live scanout frame to the PMM. */
     if (vmm_map(USER_FB_BASE + (uint64_t)i * 4096, phys,
-                VMM_PRESENT | VMM_WRITE | VMM_USER) != 0) {
+                VMM_PRESENT | VMM_WRITE | VMM_USER | VMM_SHARED) != 0) {
       return -1;
     }
   }
@@ -322,8 +325,9 @@ static long sys_mprotect(uint64_t addr, long len, int prot) {
 /* munmap(addr, len).
  *
  * Unmaps whole pages and returns their frames to the PMM, except frames
- * carrying VMM_SHARED: those belong to whichever task shared them in, and
- * freeing one here would hand a live page back to the allocator. Ranges
+ * carrying VMM_SHARED: these are borrowed from another process or kernel
+ * subsystem, and freeing one here would hand a live page back to the
+ * allocator. Ranges
  * inside the mmap arena go on the free list; MAP_FIXED ranges outside it
  * need no bookkeeping, since fixed mappings are placed by the caller and
  * collision-checked at map time.
@@ -865,6 +869,13 @@ static long sys_unlink(const char *path) {
   return fat_unlink(resolved);
 }
 
+static long sys_rmdir(const char *path) {
+  char resolved[TASK_CWD_MAX];
+  if (resolve_path(path, resolved, sizeof(resolved)) != 0)
+    return -1;
+  return fat_rmdir(resolved);
+}
+
 static long sys_read(int fd, void *buf, size_t n) {
   struct task *t = task_current();
   if (!t || fd < 3 || fd >= TASK_MAX_FDS || !t->fds[fd])
@@ -1273,6 +1284,9 @@ long syscall_dispatch(struct syscall_frame *f) {
     break;
   case SYS_UNLINK:
     ret = sys_unlink((const char *)(uintptr_t)a1);
+    break;
+  case SYS_RMDIR:
+    ret = sys_rmdir((const char *)(uintptr_t)a1);
     break;
   case SYS_MKDIR:
     ret = sys_mkdir((const char *)(uintptr_t)a1);

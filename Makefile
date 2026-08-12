@@ -104,6 +104,88 @@ build-x86_64: $(kernel_bin) $(disk_img)
 			$(iso_dir) \
 	"
 
+# --- host + QEMU regression suites -------------------------------------
+
+HOST_CC ?= gcc
+HOST_TEST_CFLAGS := -std=c11 -O2 -Wall -Wextra
+HOST_TEST_DIR := build/tests
+HOST_TEST_BINS := \
+	$(HOST_TEST_DIR)/pmm_test.exe \
+	$(HOST_TEST_DIR)/vmm_test.exe \
+	$(HOST_TEST_DIR)/process_pml4_test.exe \
+	$(HOST_TEST_DIR)/fat_directory_test.exe \
+	$(HOST_TEST_DIR)/stdio_mode_test.exe \
+	$(HOST_TEST_DIR)/bmp_decode_test.exe \
+	$(HOST_TEST_DIR)/gfx_ui_test.exe \
+	$(HOST_TEST_DIR)/fb_damage_test.exe
+
+$(HOST_TEST_DIR):
+	mkdir -p $@
+
+$(HOST_TEST_DIR)/pmm_test.exe: tests/pmm_test.c kernel/memory/pmm.c \
+		kernel/memory/pmm.h | $(HOST_TEST_DIR)
+	$(HOST_CC) $(HOST_TEST_CFLAGS) -DPMM_HOST_TEST -I kernel \
+		tests/pmm_test.c kernel/memory/pmm.c -o $@
+
+$(HOST_TEST_DIR)/vmm_test.exe: tests/vmm_test.c kernel/memory/vmm.c \
+		kernel/memory/vmm.h kernel/memory/hhdm.h | $(HOST_TEST_DIR)
+	$(HOST_CC) $(HOST_TEST_CFLAGS) -DHHDM_HOST_TEST -DVMM_HOST_TEST \
+		-I kernel tests/vmm_test.c kernel/memory/vmm.c -o $@
+
+$(HOST_TEST_DIR)/process_pml4_test.exe: tests/process_pml4_test.c \
+		kernel/loader/process.c kernel/memory/vmm.h kernel/memory/hhdm.h \
+		| $(HOST_TEST_DIR)
+	$(HOST_CC) $(HOST_TEST_CFLAGS) -DHHDM_HOST_TEST \
+		-DPROCESS_PML4_HOST_TEST -I kernel \
+		tests/process_pml4_test.c kernel/loader/process.c -o $@
+
+$(HOST_TEST_DIR)/fat_directory_test.exe: tests/fat_directory_test.c \
+		kernel/fs/fat.c kernel/fs/fat.h | $(HOST_TEST_DIR)
+	$(HOST_CC) $(HOST_TEST_CFLAGS) -I kernel \
+		tests/fat_directory_test.c kernel/fs/fat.c -o $@
+
+$(HOST_TEST_DIR)/stdio_mode_test.exe: tests/stdio_mode_test.c \
+		kernel/fs/stdio.c kernel/fs/fat.c kernel/fs/stdio.h kernel/fs/fat.h \
+		| $(HOST_TEST_DIR)
+	$(HOST_CC) $(HOST_TEST_CFLAGS) -I kernel tests/stdio_mode_test.c \
+		kernel/fs/stdio.c kernel/fs/fat.c -o $@
+
+$(HOST_TEST_DIR)/bmp_decode_test.exe: tests/bmp_decode_test.c \
+		userspace/lib/bmp.c userspace/lib/bmp.h | $(HOST_TEST_DIR)
+	$(HOST_CC) $(HOST_TEST_CFLAGS) -I userspace/lib \
+		tests/bmp_decode_test.c userspace/lib/bmp.c -o $@
+
+$(HOST_TEST_DIR)/gfx_ui_test.exe: tests/gfx_ui_test.c userspace/lib/gfx.c \
+		userspace/lib/ui.c userspace/lib/bmp.c | $(HOST_TEST_DIR)
+	$(HOST_CC) $(HOST_TEST_CFLAGS) -I userspace/lib tests/gfx_ui_test.c \
+		userspace/lib/gfx.c userspace/lib/ui.c userspace/lib/bmp.c -o $@
+
+$(HOST_TEST_DIR)/fb_damage_test.exe: tests/fb_damage_test.c | $(HOST_TEST_DIR)
+	$(HOST_CC) $(HOST_TEST_CFLAGS) $< -o $@
+
+.PHONY: test test-host
+test: test-host
+
+test-host: $(HOST_TEST_BINS)
+	@set -e; for test_bin in $(HOST_TEST_BINS); do \
+		echo "==> $$test_bin"; \
+		"$$test_bin"; \
+	done
+
+.PHONY: test-qemu-heavy test-heavy
+test-qemu-heavy: build-x86_64
+	wsl bash -lc "cd \$$(wslpath '$(CURDIR)') && \
+		python3 tests/smp_async_spawn_test.py --cpus 4 --timeout 90 && \
+		python3 tests/system_stress_test.py --cpus 4 --timeout 240 && \
+		python3 tests/window_lifecycle_test.py --timeout 120 && \
+		python3 tests/fb_mapping_lifetime_test.py --timeout 90 && \
+		python3 tests/virtio_resize_test.py --boot-timeout 90 && \
+		python3 tests/deskelf_test.py --timeout 90 && \
+		python3 tests/path_lookup_test.py --timeout 90 && \
+		python3 tests/kernel_panic_test.py --timeout 90"
+
+test-heavy: test-host test-qemu-heavy
+
 clean:
 	wsl bash -c "cd \$$(wslpath '$(CURDIR)') && rm -rf build dist $(iso_dir)/boot/kernel.bin $(iso_dir)/boot/disk.img $(iso_dir)/boot/grub/eltorito.img"
 	$(MAKE) -C userspace clean

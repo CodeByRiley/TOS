@@ -34,11 +34,12 @@
 #define u16t uint16_t
 #define u64t uint64_t
 
+#ifndef PMM_HOST_TEST
 extern char _kernel_start[];
 extern char _kernel_end[];
-
 extern char _kernel_phys_start[];
 extern char _kernel_phys_end[];
+#endif
 
 static u8t *bitmap = 0;
 static u64t bitmap_frames = 0;
@@ -54,6 +55,7 @@ static int bitmap_test(u64t frame) {
   return bitmap[frame / 8] & (1 << (frame % 8));
 }
 
+#ifndef PMM_HOST_TEST
 static u64t align_up(u64t value, u64t align) {
   return (value + align - 1) & ~(align - 1);
 }
@@ -92,6 +94,7 @@ static void mark_region_used(u64t base, u64t length) {
     }
   }
 }
+#endif
 
 /* Mark [base, base+length) as free — rounds inward to whole frames. */
 static void mark_region_free(u64t base, u64t length) {
@@ -105,6 +108,25 @@ static void mark_region_free(u64t base, u64t length) {
   }
 }
 
+#ifdef PMM_HOST_TEST
+void pmm_test_reset(uint8_t *storage, uint64_t frame_count) {
+  bitmap = storage;
+  bitmap_frames = frame_count;
+  usable_frames = 0;
+  used_frames = frame_count;
+  next_free_frame = PMM_GENERAL_ALLOC_BASE / FRAME_SIZE;
+  for (u64t i = 0; i < (frame_count + 7) / 8; i++)
+    bitmap[i] = 0xFF;
+}
+
+void pmm_test_mark_free(uint64_t base, uint64_t length) {
+  u64t before = used_frames;
+  mark_region_free(base, length);
+  usable_frames += before - used_frames;
+}
+#endif
+
+#ifndef PMM_HOST_TEST
 static void hhdm_extend(u64t highest_physical) {
   u64t required_gib = (highest_physical + GIB - 1) / GIB;
 
@@ -260,6 +282,7 @@ void pmm_init(u64t mb2_addr) {
   log_write_hex("PMM: usable frames=", usable_frames, KERNEL, LOG_INFO);
   log_write_hex("PMM: used frames  =", used_frames, KERNEL, LOG_INFO);
 }
+#endif
 
 static u64t allocate_frame_at(u64t frame) {
   bitmap_set(frame);
@@ -372,6 +395,8 @@ void pmm_free_contiguous(u64t frame, u64t num_frames) {
 
 void pmm_free_frame(u64t frame) {
   u64t f = frame / FRAME_SIZE;
+  if (f >= bitmap_frames)
+    return;
   if (bitmap_test(f)) {
     bitmap_clear(f);
     used_frames--;

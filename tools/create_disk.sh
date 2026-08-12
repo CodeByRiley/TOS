@@ -20,32 +20,35 @@ payloads=(
 	"rootfs/system/wallpaper.bmp::system/wallpaper.bmp"
 	"rootfs/system/icons/DOOM.bmp::system/icons/doom.bmp"
 	"rootfs/system/icons/shelf.bmp::system/icons/shelf.bmp"
-	"userspace/bin/hello/hello.elf::hello.elf"
-	"userspace/bin/ls/ls.elf::ls.elf"
-	"userspace/bin/cat/cat.elf::cat.elf"
-	"userspace/bin/gfx/gfx.elf::gfx.elf"
-	"userspace/bin/sh/sh.elf::sh.elf"
-	"userspace/bin/shutdown/shutdown.elf::shutdown.elf"
-	"userspace/bin/reboot/reboot.elf::reboot.elf"
-	"userspace/bin/pkill/pkill.elf::pkill.elf"
-	"userspace/bin/plist/plist.elf::plist.elf"
-	"userspace/bin/fdchild/fdchild.elf::fdchild.elf"
-	"userspace/bin/mtest/mtest.elf::mtest.elf"
-	"userspace/bin/vmtest/vmtest.elf::vmtest.elf"
-	"userspace/bin/uidemo/uidemo.elf::uidemo.elf"
-	"userspace/bin/pe_test/pe_test.exe::pe_test.exe"
-	"userspace/bin/hello/hello.exe::hello.exe"
-	"userspace/bin/ls/ls.exe::ls.exe"
-	"userspace/bin/winman/winman.elf::winman.elf"
-	"userspace/bin/btop/btop.elf::btop.elf"
-	"userspace/bin/thread/thread.elf::thread.elf"
+	"userspace/bin/sh/sh.elf::bin/sh.elf"
+	"userspace/bin/ls/ls.elf::bin/ls.elf"
+	"userspace/bin/cat/cat.elf::bin/cat.elf"
+	"userspace/bin/shutdown/shutdown.elf::bin/shutdown.elf"
+	"userspace/bin/reboot/reboot.elf::bin/reboot.elf"
+	"userspace/bin/pkill/pkill.elf::bin/pkill.elf"
+	"userspace/bin/hello/hello.elf::usr/bin/hello.elf"
+	"userspace/bin/gfx/gfx.elf::usr/bin/gfx.elf"
+	"userspace/bin/plist/plist.elf::usr/bin/plist.elf"
+	"userspace/bin/fdchild/fdchild.elf::usr/bin/fdchild.elf"
+	"userspace/bin/mtest/mtest.elf::usr/bin/mtest.elf"
+	"userspace/bin/vmtest/vmtest.elf::usr/bin/vmtest.elf"
+	"userspace/bin/uidemo/uidemo.elf::usr/bin/uidemo.elf"
+	"userspace/bin/pe_test/pe_test.exe::usr/bin/pe_test.exe"
+	"userspace/bin/hello/hello.exe::usr/bin/hello.exe"
+	"userspace/bin/ls/ls.exe::usr/bin/ls.exe"
+	"userspace/bin/winman/winman.elf::usr/bin/winman.elf"
+	"userspace/bin/btop/btop.elf::usr/bin/btop.elf"
+	"userspace/bin/thread/thread.elf::usr/bin/thread.elf"
+	"userspace/bin/deskelf/deskelf.elf::usr/bin/deskelf.elf"
+	"userspace/bin/stress/stress.elf::usr/bin/stress.elf"
+	"userspace/bin/stress_peer/stress_peer.elf::usr/bin/stress_peer.elf"
 )
 
 # Firmware and DOOM are optional: QEMU and non-NVIDIA systems continue to
 # build the same root filesystem without them.
 optional_payloads=(
 	"rootfs/games/doom/doom.wad::games/doom/doom.wad"
-	"userspace/bin/doom/doom.elf::games/doom/doom.elf"
+	"userspace/bin/doom/doom.elf::usr/bin/doom.elf"
 	"rootfs/firmware/gsp_ga10x.bin::firmware/gsp_ga10x.bin"
 	"rootfs/firmware/gsp_tu10x.bin::firmware/gsp_tu10x.bin"
 	"rootfs/firmware/ucodes_ga10x.bin::firmware/ucodes_ga10x.bin"
@@ -108,6 +111,15 @@ ensure_fat_parent_dirs() {
 		fi
 	done
 }
+
+# Keep the standard executable hierarchy present even when a directory has
+# no packaged files yet. /usr/local/bin is intentionally reserved for tools
+# installed after the base image is built.
+for fat_dir in bin usr usr/bin usr/local usr/local/bin; do
+	if ! mdir -i "$IMG" "::${fat_dir}" >/dev/null 2>&1; then
+		mmd -i "$IMG" "::${fat_dir}"
+	fi
+done
 
 for entry in "${payloads[@]}"; do
 	host_path="${entry%%::*}"

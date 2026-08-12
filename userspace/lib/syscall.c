@@ -77,6 +77,10 @@ long mkdir_path(const char *path) {
     return syscall1(SYS_MKDIR, (sysarg_t)(uintptr_t)path);
 }
 
+long rmdir_path(const char *path) {
+    return syscall1(SYS_RMDIR, (sysarg_t)(uintptr_t)path);
+}
+
 long unlink(const char *path) {
     return syscall1(SYS_UNLINK, (sysarg_t)(uintptr_t)path);
 }

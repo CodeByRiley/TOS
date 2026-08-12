@@ -77,6 +77,7 @@ size_t fat_write(struct fat_file *f, const void *buf, size_t len);
 int    fat_seek(struct fat_file *f, uint32_t pos);
 int    fat_unlink(const char *path);
 int    fat_mkdir(const char *path);
+int    fat_rmdir(const char *path);
 
 /* Enumerate packed NUL-terminated names. Directories end in '/'. Names are
  * the VFAT long name when the entry has one, else the 8.3 name. */

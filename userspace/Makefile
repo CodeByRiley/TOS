@@ -59,7 +59,7 @@ LIB_C_OBJS := $(filter-out lib/crt0.o lib/syscall_asm.o, $(LIB_OBJS)) $(TTF_OBJS
 
 # One binary per directory under bin/, named after the directory.
 # Doom is special (multi-source) and gets its own rules.
-SIMPLE_BINS := hello cat gfx ls sh shutdown reboot mtest btop pkill plist fdchild vmtest uidemo thread
+SIMPLE_BINS := hello cat gfx ls sh shutdown reboot mtest btop pkill plist fdchild vmtest uidemo thread deskelf stress stress_peer
 SIMPLE_BIN_OBJS := $(foreach b,$(SIMPLE_BINS),bin/$(b)/$(b).o)
 SIMPLE_BIN_ELFS := $(foreach b,$(SIMPLE_BINS),bin/$(b)/$(b).elf)
 WINMAN_OBJ := bin/winman/winman.o
