@@ -15,6 +15,9 @@
 /rootfs/**/*.WAD*
 /rootfs/music/**/*
 
+**.wav
+**.log
+
 # Local editor, language-server, and build-tool state
 .cache/
 .ccls-cache/
