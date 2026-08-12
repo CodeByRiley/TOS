@@ -52,6 +52,26 @@ _Static_assert(sizeof(struct idt_ptr) == 10,
 _Static_assert(offsetof(struct idt_entry, offset_high) == 8,
                "IDT high offset must start at byte 8");
 
+/* Register image built by isr_common in isr.asm. SS:RSP are present only
+ * when the interrupt crossed privilege levels; callers must check CS.RPL
+ * before reading them. */
+struct interrupt_frame {
+    uint64_t r15, r14, r13, r12, r11, r10, r9, r8;
+    uint64_t rdi, rsi, rbp, rbx, rdx, rcx, rax;
+    uint64_t int_num;
+    uint64_t err_code;
+    uint64_t rip;
+    uint64_t cs;
+    uint64_t rflags;
+    uint64_t rsp;
+    uint64_t ss;
+};
+
+_Static_assert(offsetof(struct interrupt_frame, int_num) == 120,
+               "ISR vector offset must match isr.asm");
+_Static_assert(offsetof(struct interrupt_frame, rip) == 136,
+               "ISR RIP offset must match the CPU exception frame");
+
 void idt_init(void);
 
 /* AP entry: load the shared IDTR. */

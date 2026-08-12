@@ -72,3 +72,11 @@ void lapic_send_startup(uint8_t apic_id, uint8_t vector) {
                 LAPIC_ICR_ASSERT | (uint32_t)vector);
     icr_wait();
 }
+
+void lapic_send_fixed(uint8_t apic_id, uint8_t vector) {
+    lapic_write(LAPIC_REG_ICR_HIGH, (uint32_t)apic_id << 24);
+    lapic_write(LAPIC_REG_ICR_LOW,
+                LAPIC_ICR_FIXED | LAPIC_ICR_PHYSICAL |
+                LAPIC_ICR_ASSERT | LAPIC_ICR_LEVEL_EDGE | vector);
+    icr_wait();
+}

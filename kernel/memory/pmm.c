@@ -1,9 +1,9 @@
 /* kernel/memory/pmm.c — bitmap physical-frame allocator.
  *
  * Single bitmap covering [0, highest_usable_addr) at 4 KiB granularity.
- * 1 = frame is taken / reserved; 0 = frame is free. Linear first-fit
- * search; allocation is O(n) in the bitmap, but n is small enough on
- * our typical 4-256 MiB targets that this is fine.
+ * 1 = frame is taken / reserved; 0 = frame is free. A next-fit hint keeps
+ * sequential page allocations linear overall instead of restarting the
+ * bitmap scan for every frame.
  *
  * Build order: at boot we mark EVERYTHING used, then walk the MB2 mmap
  * to flip "usable" regions free, then re-mark the bits we still need
@@ -44,6 +44,7 @@ static u8t *bitmap = 0;
 static u64t bitmap_frames = 0;
 static u64t usable_frames = 0;
 static u64t used_frames = 0;
+static u64t next_free_frame = PMM_GENERAL_ALLOC_BASE / FRAME_SIZE;
 
 static void bitmap_set(u64t frame) { bitmap[frame / 8] |= (1 << (frame % 8)); }
 static void bitmap_clear(u64t frame) {
@@ -260,15 +261,30 @@ void pmm_init(u64t mb2_addr) {
   log_write_hex("PMM: used frames  =", used_frames, KERNEL, LOG_INFO);
 }
 
-/* First-fit linear scan. Returns the frame's physical base, or 0 on OOM. */
+static u64t allocate_frame_at(u64t frame) {
+  bitmap_set(frame);
+  used_frames++;
+  next_free_frame = frame + 1;
+  if (next_free_frame >= bitmap_frames)
+    next_free_frame = PMM_GENERAL_ALLOC_BASE / FRAME_SIZE;
+  return frame * FRAME_SIZE;
+}
+
+/* Next-fit scan. The wraparound preserves first-fit completeness while large
+ * eager mmap calls normally advance one bit per allocation. */
 u64t pmm_alloc_frame(void) {
-  for (u64t f = PMM_GENERAL_ALLOC_BASE / FRAME_SIZE; f < bitmap_frames; f++) {
-    if (!bitmap_test(f)) {
-      bitmap_set(f);
-      used_frames++;
-      return f * FRAME_SIZE;
-    }
-  }
+  u64t first = PMM_GENERAL_ALLOC_BASE / FRAME_SIZE;
+  u64t start = next_free_frame;
+  if (start < first || start >= bitmap_frames)
+    start = first;
+
+  for (u64t f = start; f < bitmap_frames; f++)
+    if (!bitmap_test(f))
+      return allocate_frame_at(f);
+  for (u64t f = first; f < start; f++)
+    if (!bitmap_test(f))
+      return allocate_frame_at(f);
+
   log_write("PMM: out of memory", KERNEL, LOG_ERROR);
   return 0;
 }
@@ -286,6 +302,11 @@ u64t pmm_alloc_frame_below(u64t limit) {
     if (!bitmap_test(f)) {
       bitmap_set(f);
       used_frames++;
+      if (f >= PMM_GENERAL_ALLOC_BASE / FRAME_SIZE) {
+        next_free_frame = f + 1;
+        if (next_free_frame >= bitmap_frames)
+          next_free_frame = PMM_GENERAL_ALLOC_BASE / FRAME_SIZE;
+      }
       return f * FRAME_SIZE;
     }
   }
@@ -326,6 +347,11 @@ u64t pmm_alloc_contiguous_below(u64t limit, u64t num_frames) {
           bitmap_set(i);
           used_frames++;
         }
+        if (start_frame >= PMM_GENERAL_ALLOC_BASE / FRAME_SIZE) {
+          next_free_frame = start_frame + num_frames;
+          if (next_free_frame >= bitmap_frames)
+            next_free_frame = PMM_GENERAL_ALLOC_BASE / FRAME_SIZE;
+        }
         return start_frame * FRAME_SIZE;
       }
     } else {
@@ -349,6 +375,8 @@ void pmm_free_frame(u64t frame) {
   if (bitmap_test(f)) {
     bitmap_clear(f);
     used_frames--;
+    if (f >= PMM_GENERAL_ALLOC_BASE / FRAME_SIZE && f < next_free_frame)
+      next_free_frame = f;
   }
 }
 

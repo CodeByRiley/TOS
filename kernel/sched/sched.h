@@ -8,9 +8,9 @@
  *                          static_asserts enforce the ABI)
  *   - task spawn / yield / block / exit / sleep helpers
  *
- * The scheduler is a single ready queue with PIT-driven preemption;
- * sleeping tasks live off-queue until sched_wake_sleepers re-queues
- * them.
+ * The BSP scheduler is a cooperative single ready queue. PIT interrupts
+ * account runtime and wake sleepers, but task switches happen at explicit
+ * yield/block/sleep points.
  *
  * Implementation: kernel/sched/sched.c.
  */
@@ -24,10 +24,9 @@
 #define INPUT_RING_SIZE_LOCAL 64
 #define IPC_RING_SIZE_LOCAL   16
 
-/* Cooperative-ish round-robin scheduler with a fixed 16-slot task table,
- * a singly-linked ready queue, and the optimism of a startup pitch deck.
- * No priorities, no time slicing, no SMP. The only thing keeping this
- * fair is that nobody's written a hostile kthread yet. */
+/* Cooperative BSP scheduler with a fixed 16-slot task table and a
+ * singly-linked ready queue. APs service the separate SMP-safe kernel work
+ * queue; userspace stays on the BSP until scheduler state is made per-CPU. */
 
 #define MAX_TASKS 16
 #define KSTACK_BYTES (16 * 1024)
@@ -59,6 +58,7 @@ enum task_state {
   TASK_READY,
   TASK_DEAD,      /* slot free                                             */
   TASK_SLEEPING,  /* off the ready queue until PIT tick >= wake_tick       */
+  TASK_LOADING,   /* stable pid reserved while its image is loaded         */
 };
 
 struct task {
@@ -128,7 +128,7 @@ struct task {
   char     name[16];
 
   /* PIT-tick counter incremented from the timer IRQ when this task is the
-   * one being preempted. Userspace btop computes CPU% from the delta over
+   * running BSP task. Userspace btop computes CPU% from the delta over
    * a sampling window. Never reset by the kernel. */
   uint64_t ticks_run;
 };
@@ -172,6 +172,14 @@ struct task *task_spawn(void (*entry)(void));
  * starting RIP/RSP for ring 3. Returns the task, queued ready. */
 struct task *task_spawn_user(uint64_t *user_pml4, uint64_t entry,
                              uint64_t user_rsp, int parent_pid);
+
+/* Two-phase user spawn used by process_spawn_async. The reservation owns its
+ * final pid, kernel stack, rings and inherited cwd, but is not runnable until
+ * task_activate_reserved_user publishes the completed address space. */
+struct task *task_reserve_user(int parent_pid);
+int task_activate_reserved_user(struct task *t, uint64_t *user_pml4,
+                                uint64_t entry, uint64_t user_rsp);
+void task_fail_reserved_user(struct task *t, long code);
 
 struct task *task_spawn_thread(uint64_t entry, uint64_t user_stack);
 

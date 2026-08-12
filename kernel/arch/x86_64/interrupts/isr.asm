@@ -72,6 +72,8 @@ ISR_NOERR 44
 ISR_NOERR 45
 ISR_NOERR 46
 ISR_NOERR 47
+ISR_NOERR 240       ; SMP work-queue wake IPI
+ISR_NOERR 255       ; LAPIC spurious vector
 
 ; Save every general-purpose register. Interrupts are asynchronous — there is
 ; no calling convention to lean on, no caller-saved/callee-saved distinction

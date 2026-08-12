@@ -1,4 +1,5 @@
 #include "./winman.h"
+#include "display/print.h"
 
 static int cursor_w(void) {
   return cursor_img.pixels ? cursor_img.width : CURSOR_W;
@@ -8,6 +9,10 @@ static int cursor_h(void) {
   return cursor_img.pixels ? cursor_img.height : CURSOR_H;
 }
 
+/* Double-click tracking */
+static int last_clicked_icon = -1;
+static u32 last_click_tick = 0;
+
 /* Try the on-disk cursor once at startup. Failure is not an error worth
  * stopping for — it just leaves the built-in mask in place. */
 static void cursor_load(void) {
@@ -16,6 +21,64 @@ static void cursor_load(void) {
            cursor_img.height, CURSOR_BMP_PATH);
   } else {
     printf("winman: %s unavailable, using built-in cursor\n", CURSOR_BMP_PATH);
+  }
+}
+
+static inline void blend_px(uint32_t *dst, uint32_t src);
+
+static void desktop_load(void) {
+  if (bmp_load("/system/wallpaper.bmp", &wallpaper_img) == 0) {
+    wallpaper_loaded = 1;
+    printf("winman: wallpaper %dx%d loaded\n", wallpaper_img.width,
+           wallpaper_img.height);
+  }
+
+  desktop_icons[0].x = 20;
+  desktop_icons[0].y = 20;
+  desktop_icons[0].program.name = "DOOM";
+  desktop_icons[0].program.path = "/games/doom/doom.elf";
+
+  desktop_icons[1].x = 20;
+  desktop_icons[1].y = 100;
+  desktop_icons[1].program.name = "shelf";
+  desktop_icons[1].program.path = "/sh.elf";
+
+  desktop_icon_count = 2;
+
+  /* Load Icon Images */
+  for (int i = 0; i < desktop_icon_count; i++) {
+    char path[64];
+    // Create strings like "/system/icons/DOOM.bmp"
+    // If you don't have snprintf, just hardcode the strings!
+    int n = 0;
+    const char *prefix = "/system/icons/";
+    while (prefix[n] && n < 40) {
+      path[n] = prefix[n];
+      n++;
+    }
+    int m = 0;
+    while (desktop_icons[i].program.name[m] && n < 60) {
+      path[n] = desktop_icons[i].program.name[m];
+      n++;
+      m++;
+    }
+    path[n++] = '.';
+    path[n++] = 'b';
+    path[n++] = 'm';
+    path[n++] = 'p';
+    path[n++] = 0;
+
+    if (bmp_load(path, &desktop_icons[i].icon) == 0) {
+      desktop_icons[i].loaded = 1;
+      desktop_icons[i].w = 32; // desktop_icons[i].icon.width;
+      desktop_icons[i].h = 32; // desktop_icons[i].icon.height;
+    } else {
+      printf("winman: icon %s not found, using fallback\n",
+             desktop_icons[i].program.name);
+      desktop_icons[i].loaded = 0;
+      desktop_icons[i].w = 32;
+      desktop_icons[i].h = 32;
+    }
   }
 }
 
@@ -37,6 +100,22 @@ static void z_bring_to_front(int handle) {
     z_order[i] = z_order[i - 1];
   z_order[0] = handle;
   z_count++;
+}
+
+static void z_send_to_back(int handle) {
+  z_remove(handle);
+  if (z_count >= MAX_Z)
+    return;
+
+  z_order[z_count] = handle;
+  z_count++;
+}
+
+static int outer_w(const struct window *w) {
+  return w->client_w + 2 * BORDER_PX;
+}
+static int outer_h(const struct window *w) {
+  return w->client_h + TITLEBAR_PX + BORDER_PX;
 }
 
 /* Pre-expanded glyph row for the console (CONSOLE_FG/CONSOLE_BG are
@@ -68,6 +147,47 @@ static void fill_dwords(uint32_t *dst, size_t n, uint32_t color) {
   }
   while (n--)
     *dst++ = color;
+}
+
+/* Union the new rect into the existing dirty bounding box. */
+static void mark_dirty(int x, int y, int w, int h) {
+  if (w <= 0 || h <= 0)
+    return;
+  if (x < 0) {
+    w += x;
+    x = 0;
+  }
+  if (y < 0) {
+    h += y;
+    y = 0;
+  }
+  if (x + w > fb_w)
+    w = fb_w - x;
+  if (y + h > fb_h)
+    h = fb_h - y;
+  if (w <= 0 || h <= 0)
+    return;
+
+  if (!desktop_dirty) {
+    dirty_x = x;
+    dirty_y = y;
+    dirty_w = w;
+    dirty_h = h;
+  } else {
+    int x2 = dirty_x + dirty_w;
+    int y2 = dirty_y + dirty_h;
+    if (x < dirty_x)
+      dirty_x = x;
+    if (y < dirty_y)
+      dirty_y = y;
+    if (x + w > x2)
+      x2 = x + w;
+    if (y + h > y2)
+      y2 = y + h;
+    dirty_w = x2 - dirty_x;
+    dirty_h = y2 - dirty_y;
+  }
+  desktop_dirty = 1;
 }
 
 static struct ttf_font con_font;
@@ -198,10 +318,100 @@ static int in_titlebar_btn(int win_x, int win_y, int outer_w,
   return mx >= bx && mx < bx + bw && my >= by && my < by + bh;
 }
 
+/* Enumerate the windows that should appear on the taskbar in stable order:
+ * the console first (handle 0), then in-use client windows in their array
+ * slot order. Order matches z-order today since neither has explicit raising.
+ */
+struct tb_entry {
+  int handle;
+  const char *title;
+};
+
+static int build_taskbar_entries(struct tb_entry *out, int max) {
+  int n = 0;
+  if (con.enabled && n < max) {
+    out[n].handle = HANDLE_CONSOLE;
+    out[n].title = con.title;
+    n++;
+  }
+  for (int i = 0; i < MAX_WINDOWS && n < max; i++) {
+    if (!windows[i].in_use)
+      continue;
+    out[n].handle = windows[i].handle;
+    out[n].title = windows[i].title;
+    n++;
+  }
+  return n;
+}
+
+static int taskbar_y(void) { return fb_h - TASKBAR_PX; }
+
+/* Returns 1 + writes *out_handle when the click landed on a taskbar button,
+ * 0 otherwise (including clicks on the taskbar strip background). Caller
+ * should still treat strip clicks as "ate the input" — the strip is opaque
+ * and never belongs to a client. */
+static int hit_taskbar(int mx, int my, int *out_handle) {
+  int y = taskbar_y();
+  if (my < y || my >= y + TASKBAR_PX)
+    return 0;
+
+  struct tb_entry ents[1 + MAX_WINDOWS];
+  int n = build_taskbar_entries(ents, (int)(sizeof(ents) / sizeof(ents[0])));
+
+  int bx = TASKBAR_START_W + TASKBAR_BTN_GAP;
+  int by = y;
+  int bh = TASKBAR_PX;
+
+  for (int i = 0; i < n; i++) {
+    if (bx + TASKBAR_BTN_W > fb_w)
+      break;
+    if (mx >= bx && mx < bx + TASKBAR_BTN_W && my >= by && my < by + bh) {
+      *out_handle = ents[i].handle;
+      return 1;
+    }
+    bx += TASKBAR_BTN_W + TASKBAR_BTN_GAP;
+  }
+  return 0;
+}
+
+static int in_start_menu(int menu_x, int menu_y, int mx, int my) {
+  if (!start_menu_open)
+    return 0;
+  int menu_h = START_MENU_COUNT * START_MENU_ITEM_H + START_MENU_PAD * 2;
+  return mx >= menu_x && mx < menu_x + START_MENU_W && my >= menu_y &&
+         my < menu_y + menu_h;
+}
+
 /* Classify a screen-space hit by walking the z-order topmost-first. The
  * console is just another z-stack entry now; whichever handle is at
  * z_order[0] wins ties at the same pixel. */
 static int hit_test_at(int mx, int my, int *out_handle) {
+  /* GLOBAL UI CHECKS FIRST */
+  if (start_menu_open) {
+    int menu_x = 0;
+    int menu_h = START_MENU_COUNT * START_MENU_ITEM_H + START_MENU_PAD * 2;
+    int menu_y = taskbar_y() - menu_h;
+    if (in_start_menu(menu_x, menu_y, mx, my)) {
+      return HIT_START_MENU;
+    }
+  }
+
+  /* TASKBAR CHECKS */
+  if (my >= taskbar_y()) {
+    // Check Start Button
+    if (mx >= 0 && mx < TASKBAR_START_W) {
+      return HIT_START_BTN;
+    }
+    // Check Taskbar Window Buttons
+    int tb_handle = 0;
+    if (hit_taskbar(mx, my, &tb_handle)) {
+      *out_handle = tb_handle;
+      return HIT_TASKBAR_BTN; // Make sure this is defined in winman.h!
+    }
+    return HIT_NONE; // Clicked on empty taskbar area
+  }
+
+  /* WINDOW CHECKS */
   for (int i = 0; i < z_count; i++) {
     int h = z_order[i];
     if (is_minimized(h))
@@ -389,6 +599,8 @@ static void client_window_resize(int handle, int new_cw, int new_ch) {
     return;
   }
 
+  mark_dirty(w->x, w->y, outer_w(w), outer_h(w));
+
   uint64_t old_client_va = w->client_va;
   int old_n_pages = w->n_pages;
   void *old_raw = w->surface_raw;
@@ -399,7 +611,8 @@ static void client_window_resize(int handle, int new_cw, int new_ch) {
   w->client_va = client_va;
   w->client_w = new_cw;
   w->client_h = new_ch;
-  desktop_dirty = 1;
+
+  mark_dirty(w->x, w->y, outer_w(w), outer_h(w));
 
   struct ipc_msg note;
   memset(&note, 0, (sizeof(note)));
@@ -431,6 +644,32 @@ static void *aligned_page_alloc(size_t npages, void **out_raw) {
   if (out_raw)
     *out_raw = raw;
   return (void *)v;
+}
+
+/* Grow geometrically and retain the allocation across host resizes. Width-only
+ * changes normally need no growth because virtio keeps a stable row pitch. */
+static int backbuffer_reserve(size_t required) {
+  if (required <= fb_capacity)
+    return 0;
+
+  size_t pages = fb_capacity / 4096;
+  if (pages == 0)
+    pages = 1;
+  size_t required_pages = (required + 4095) / 4096;
+  while (pages < required_pages)
+    pages *= 2;
+
+  size_t capacity = pages * 4096;
+  uint32_t *new_fb = (uint32_t *)mmap(0, capacity, PROT_READ | PROT_WRITE,
+                                      MAP_PRIVATE | MAP_ANONYMOUS);
+  if (new_fb == MAP_FAILED)
+    return -1;
+
+  if (fb && fb_capacity)
+    munmap(fb, fb_capacity);
+  fb = new_fb;
+  fb_capacity = capacity;
+  return 0;
 }
 
 static inline uint32_t *fb_pix(int x, int y) {
@@ -495,13 +734,6 @@ static void draw_text_fb(int x, int y, const char *s, int max_w, uint32_t fg,
   }
 }
 
-static int outer_w(const struct window *w) {
-  return w->client_w + 2 * BORDER_PX;
-}
-static int outer_h(const struct window *w) {
-  return w->client_h + TITLEBAR_PX + BORDER_PX;
-}
-
 /* Compute screen-space rect of titlebar button `idx_from_right` (0 = closest
  * to the corner). Used by both draw_chrome and the input pump's hit_test
  * so click rects exactly match what was rendered. */
@@ -523,6 +755,26 @@ static void draw_button_mask(int x, int y,
   fb_fill_rect(x, y, TB_BTN_SIZE, TB_BTN_SIZE, bg);
   for (int r = 0; r < TB_BTN_SIZE; r++) {
     for (int c = 0; c < TB_BTN_SIZE; c++) {
+      if (!mask[r][c])
+        continue;
+      int px = x + c;
+      int py = y + r;
+      if (px < 0 || px >= fb_w || py < 0 || py >= fb_h)
+        continue;
+      *fb_pix(px, py) = fg;
+    }
+  }
+}
+
+/* Stamp a TB_BTN_SIZE square button at (x,y). bg fills the rect; fg appears
+ * only where the mask is 1. Mirrors the cursor's mask-overlay rendering. */
+static void
+draw_button_mask_large(int x, int y,
+                       const uint8_t mask[TASKBAR_START_W][TASKBAR_START_W],
+                       uint32_t fg, uint32_t bg) {
+  fb_fill_rect(x, y, TASKBAR_START_W, TASKBAR_START_W, bg);
+  for (int r = 0; r < TASKBAR_START_W; r++) {
+    for (int c = 0; c < TASKBAR_START_W; c++) {
       if (!mask[r][c])
         continue;
       int px = x + c;
@@ -593,52 +845,37 @@ static void blit_surface(const struct window *w) {
   }
 }
 
-/* Enumerate the windows that should appear on the taskbar in stable order:
- * the console first (handle 0), then in-use client windows in their array
- * slot order. Order matches z-order today since neither has explicit raising.
- */
-struct tb_entry {
-  int handle;
-  const char *title;
-};
-
-static int build_taskbar_entries(struct tb_entry *out, int max) {
-  int n = 0;
-  if (con.enabled && n < max) {
-    out[n].handle = HANDLE_CONSOLE;
-    out[n].title = con.title;
-    n++;
-  }
-  for (int i = 0; i < MAX_WINDOWS && n < max; i++) {
-    if (!windows[i].in_use)
-      continue;
-    out[n].handle = windows[i].handle;
-    out[n].title = windows[i].title;
-    n++;
-  }
-  return n;
-}
-
-static int taskbar_y(void) { return fb_h - TASKBAR_PX; }
-
 static void draw_taskbar(void) {
   int y = taskbar_y();
   if (y < 0)
     return;
+  // fill the entire taskbar
   fb_fill_rect(0, y, fb_w, TASKBAR_PX, TASKBAR_BG);
+
+  // draw the start button FIRST at x=0 so it doesn't cover taskbar buttons
+  // Using WHITE for fg so the > is visible against the red bg
+  draw_button_mask_large(0, y, fallback_taskbar_start_mask, PRINT_COLOR_GREEN,
+                         TASKBAR_BG);
+
+  // draw divider right after the start button
+  fb_fill_rect(TASKBAR_START_W + TASKBAR_BTN_GAP, y, 2, TASKBAR_PX,
+               PRINT_COLOR_BLACK);
 
   struct tb_entry ents[1 + MAX_WINDOWS];
   int n = build_taskbar_entries(ents, (int)(sizeof(ents) / sizeof(ents[0])));
 
-  int bx = TASKBAR_BTN_GAP;
-  int by = y + TASKBAR_PAD_Y;
-  int bh = TASKBAR_PX - 2 * TASKBAR_PAD_Y;
+  /* 3. Draw taskbar buttons */
+  int bx = TASKBAR_START_W + TASKBAR_BTN_GAP;
+  int by = y;
+  int bh = TASKBAR_PX;
+
   for (int i = 0; i < n; i++) {
     if (bx + TASKBAR_BTN_W > fb_w)
       break;
     int focused = ents[i].handle == focused_handle;
     uint32_t bg = focused ? TASKBAR_BTN_BG_FOCUS : TASKBAR_BTN_BG;
     uint32_t fg = focused ? TASKBAR_BTN_TEXT_FOC : TASKBAR_BTN_TEXT;
+
     fb_fill_rect(bx, by, TASKBAR_BTN_W, bh, bg);
     int tx = bx + 4;
     int ty = by + (bh - FONT_GLYPH_H) / 2;
@@ -647,31 +884,41 @@ static void draw_taskbar(void) {
   }
 }
 
-/* Returns 1 + writes *out_handle when the click landed on a taskbar button,
- * 0 otherwise (including clicks on the taskbar strip background). Caller
- * should still treat strip clicks as "ate the input" — the strip is opaque
- * and never belongs to a client. */
-static int hit_taskbar(int mx, int my, int *out_handle) {
-  int y = taskbar_y();
-  if (my < y || my >= y + TASKBAR_PX)
-    return 0;
+static void draw_start_menu(void) {
+  if (!start_menu_open)
+    return;
 
-  struct tb_entry ents[1 + MAX_WINDOWS];
-  int n = build_taskbar_entries(ents, (int)(sizeof(ents) / sizeof(ents[0])));
+  int menu_h = START_MENU_COUNT * START_MENU_ITEM_H + START_MENU_PAD * 2;
+  int mx = 0;
+  int my = taskbar_y() - menu_h;
 
-  int bx = TASKBAR_BTN_GAP;
-  int by = y + TASKBAR_PAD_Y;
-  int bh = TASKBAR_PX - 2 * TASKBAR_PAD_Y;
-  for (int i = 0; i < n; i++) {
-    if (bx + TASKBAR_BTN_W > fb_w)
-      break;
-    if (mx >= bx && mx < bx + TASKBAR_BTN_W && my >= by && my < by + bh) {
-      *out_handle = ents[i].handle;
-      return 1;
-    }
-    bx += TASKBAR_BTN_W + TASKBAR_BTN_GAP;
+  // Background
+  fb_fill_rect(mx, my, START_MENU_W, menu_h, PRINT_COLOR_WHITE);
+
+  // Simple 1px Black Border
+  fb_fill_rect(mx, my, START_MENU_W, 1, PRINT_COLOR_BLACK); // Top
+  fb_fill_rect(mx, my + menu_h - 1, START_MENU_W, 1,
+               PRINT_COLOR_BLACK);                    // Bottom
+  fb_fill_rect(mx, my, 1, menu_h, PRINT_COLOR_BLACK); // Left
+  fb_fill_rect(mx + START_MENU_W - 1, my, 1, menu_h,
+               PRINT_COLOR_BLACK); // Right
+
+  // Draw the programs
+  for (int i = 0; i < START_MENU_COUNT; i++) {
+    int item_y = my + START_MENU_PAD + (i * START_MENU_ITEM_H);
+    int item_x = mx + START_MENU_PAD;
+    int item_w = START_MENU_W - (START_MENU_PAD * 2);
+
+    // Highlight if hovered
+    uint32_t bg =
+        (i == start_menu_hover) ? PRINT_COLOR_BLUE : PRINT_COLOR_WHITE;
+    uint32_t fg =
+        (i == start_menu_hover) ? PRINT_COLOR_WHITE : PRINT_COLOR_BLACK;
+
+    fb_fill_rect(item_x, item_y, item_w, START_MENU_ITEM_H - 2, bg);
+    draw_text_fb(item_x + 4, item_y + (START_MENU_ITEM_H - FONT_GLYPH_H) / 2,
+                 start_menu_programs[i].name, item_w - 8, fg, bg);
   }
-  return 0;
 }
 
 static void con_draw_glyph(int gx, int gy, char c) {
@@ -695,8 +942,7 @@ static void con_draw_glyph(int gx, int gy, char c) {
       return;
 
     struct gfx_surface s;
-    gfx_surface_init(&s, con.surface, con.client_w, con.client_h,
-                     con.client_w);
+    gfx_surface_init(&s, con.surface, con.client_w, con.client_h, con.client_w);
     struct gfx_rect prev =
         gfx_clip_push(&s, gfx_rect_make(px, py, cell_w, cell_h));
 
@@ -706,8 +952,8 @@ static void con_draw_glyph(int gx, int gy, char c) {
     int band = (con_ttf_ascent - con_ttf_descent) * scale;
     int baseline = py + (cell_h - band) / 2 + con_ttf_ascent * scale;
 
-    ttf_draw_glyph_cell(&s, &con_font, px, baseline, cell_w,
-                        (unsigned char)c, con_font_px(), CONSOLE_FG);
+    ttf_draw_glyph_cell(&s, &con_font, px, baseline, cell_w, (unsigned char)c,
+                        con_font_px(), CONSOLE_FG);
     gfx_clip_set(&s, prev);
     return;
   }
@@ -755,7 +1001,8 @@ static void con_redraw(void) {
         con_draw_glyph(x, y, c);
     }
   }
-  desktop_dirty = 1;
+  mark_dirty(con.x, con.y, outer_w_dims(con.client_w),
+             outer_h_dims(con.client_h));
 }
 
 static int con_set_scale(int new_scale) {
@@ -844,7 +1091,8 @@ static void con_wipe(void) {
   if (con.cells)
     memset(con.cells, 0, (size_t)con.cols * (size_t)con.rows);
   con.cx = con.cy = 0;
-  desktop_dirty = 1;
+  mark_dirty(con.x, con.y, outer_w_dims(con.client_w),
+             outer_h_dims(con.client_h));
 }
 
 static void con_save(void) {
@@ -869,13 +1117,17 @@ static void con_restore(void) {
   con.cx = con_saved_cx;
   con.cy = con_saved_cy;
   con_saved_valid = 0;
-  desktop_dirty = 1;
+  mark_dirty(con.x, con.y, outer_w_dims(con.client_w),
+             outer_h_dims(con.client_h));
 }
 
 static void con_putc(char c) {
   if (!con.enabled)
     return;
-  desktop_dirty = 1;
+
+  /* Control characters (newline, scroll, clear, etc.) call con_redraw/con_wipe,
+   * which already mark the whole console dirty. We only need to mark the
+   * specific cell for standard printable characters. */
   if (c == '\n') {
     con_newline();
     return;
@@ -889,6 +1141,11 @@ static void con_putc(char c) {
       con.cx--;
       con.cells[con.cy * con.cols + con.cx] = 0;
       con_draw_glyph(con.cx, con.cy, ' ');
+
+      /* Mark only the erased cell dirty */
+      int cell_x = con.x + BORDER_PX + con.cx * con_cell_w();
+      int cell_y = con.y + TITLEBAR_PX + con.cy * con_cell_h();
+      mark_dirty(cell_x, cell_y, con_cell_w(), con_cell_h());
     }
     return;
   }
@@ -915,15 +1172,21 @@ static void con_putc(char c) {
     con_set_scale(con.scale + 1);
     return;
   }
-
   if (c == TTY_CTRL_ZOOM_OUT) {
     con_set_scale(con.scale - 1);
     return;
   }
+
   if (con.cx >= con.cols)
     con_newline();
+
   con.cells[con.cy * con.cols + con.cx] = c;
   con_draw_glyph(con.cx, con.cy, c);
+
+  int cell_x = con.x + BORDER_PX + con.cx * con_cell_w();
+  int cell_y = con.y + TITLEBAR_PX + con.cy * con_cell_h();
+  mark_dirty(cell_x, cell_y, con_cell_w(), con_cell_h());
+
   con.cx++;
 }
 
@@ -1007,6 +1270,41 @@ static void drain_tty_into_console(void) {
   }
 }
 
+/* Blit and scale an icon to dst_w x dst_h, supporting alpha and magenta chroma
+ * key. */
+static void blit_icon(int dst_x, int dst_y, int dst_w, int dst_h, int src_w,
+                      int src_h, uint32_t *pixels) {
+  if (!pixels || src_w <= 0 || src_h <= 0 || dst_w <= 0 || dst_h <= 0)
+    return;
+
+  for (int y = 0; y < dst_h; y++) {
+    for (int x = 0; x < dst_w; x++) {
+      if (dst_y + y >= fb_h || dst_x + x >= fb_w)
+        continue;
+
+      /* Nearest-neighbor sampling: map destination pixel to source pixel */
+      int sx = (x * src_w) / dst_w;
+      int sy = (y * src_h) / dst_h;
+
+      uint32_t src = pixels[sy * src_w + sx];
+      uint32_t alpha = src >> 24;
+
+      if (alpha == 255) {
+        // Fully opaque, just copy it
+        *fb_pix(dst_x + x, dst_y + y) = src & 0x00FFFFFF;
+      } else if (alpha > 0) {
+        // Has alpha channel, blend it
+        blend_px(fb_pix(dst_x + x, dst_y + y), src);
+      } else {
+        // Alpha is 0. If it's pure magenta, treat it as transparent.
+        if ((src & 0x00FFFFFF) == 0x00FF00FF) {
+          continue; // Transparent! Skip this pixel.
+        }
+      }
+    }
+  }
+}
+
 /* Render one entry in the stack (real window or console). Factored out so
  * compose() can iterate z_order without caring which kind it's drawing.
  * Minimized windows are skipped entirely — they keep their slot + taskbar
@@ -1036,27 +1334,97 @@ static void compose_handle(int handle) {
 }
 
 static void compose(void) {
-  fb_fill_rect(0, 0, fb_w, fb_h, DESKTOP_BG);
+  /* 1. Draw Desktop Background (Tiled) */
+  if (wallpaper_loaded) {
+    int w = wallpaper_img.width;
+    int h = wallpaper_img.height;
 
-  /* Back-to-front so topmost overdraws everything beneath. z_order[0] is
-   * the topmost handle; iterate from the tail. */
+    for (int y = 0; y < fb_h; y++) {
+      // Get the correct source row from the wallpaper (wrapping vertically)
+      uint32_t *src_row = &wallpaper_img.pixels[(y % h) * w];
+      uint32_t *dst_row = fb_pix(0, y);
+
+      int x = 0;
+      // Tile horizontally across the screen
+      while (x < fb_w) {
+        int chunk = w;
+        if (x + chunk > fb_w) {
+          chunk = fb_w - x; // Don't draw past the edge of the screen
+        }
+        // Fast copy of a chunk of pixels
+        memcpy(dst_row + x, src_row, (size_t)chunk * 4);
+        x += chunk;
+      }
+    }
+  } else {
+    fb_fill_rect(0, 0, fb_w, fb_h, DESKTOP_BG); // Fallback to teal
+  }
+
+  /* 2. Draw Desktop Icons */
+  for (int i = 0; i < desktop_icon_count; i++) {
+    if (desktop_icons[i].loaded) {
+      // Pass target size (desktop_icons[i].w / h) and source size (img.width /
+      // height)
+      blit_icon(desktop_icons[i].x, desktop_icons[i].y, desktop_icons[i].w,
+                desktop_icons[i].h, desktop_icons[i].icon.width,
+                desktop_icons[i].icon.height, desktop_icons[i].icon.pixels);
+    } else {
+      // Draw a fallback grey square if the image is missing
+      fb_fill_rect(desktop_icons[i].x, desktop_icons[i].y, desktop_icons[i].w,
+                   desktop_icons[i].h, 0x00808080);
+    }
+
+    // Draw the text label under the icon
+    int text_y = desktop_icons[i].y + desktop_icons[i].h + 2;
+    draw_text_fb(desktop_icons[i].x, text_y, desktop_icons[i].program.name,
+                 desktop_icons[i].w, 0x00FFFFFF, DESKTOP_BG);
+  }
+  /* 3. Draw Windows back-to-front */
   for (int i = z_count - 1; i >= 0; i--) {
     compose_handle(z_order[i]);
   }
 
-  /* Taskbar is always-on-top: drawn last so any window that overlaps the
-   * bottom strip gets covered. clamp_to_desktop already prevents the title
-   * bar from being lost behind it, but client areas may still overlap. */
+  /* 4. Draw Taskbar (always on top) */
   draw_taskbar();
+  draw_start_menu();
 }
 
 static void present_full_desktop(void) {
   if (!fb_hw || !fb || fb_bytes == 0)
     return;
   compose();
-  memcpy(fb_hw, fb, fb_bytes);
+  for (int y = 0; y < fb_h; y++) {
+    uint32_t *src = fb + (size_t)y * (size_t)fb_stride;
+    uint32_t *dst = fb_hw + (size_t)y * (size_t)fb_stride;
+    memcpy(dst, src, (size_t)fb_w * 4);
+  }
   fb_damage(0, 0, (uint32_t)fb_w, (uint32_t)fb_h);
   desktop_dirty = 0;
+}
+
+static void present_dirty(void) {
+  if (!fb_hw || !fb || fb_bytes == 0 || !desktop_dirty)
+    return;
+
+  // Still composite the whole screen to the back buffer.
+  // (Software compositing is fast enough; the bottleneck is the memcpy).
+  compose();
+
+  // Only copy the dirty bounding box to the hardware framebuffer
+  for (int yy = 0; yy < dirty_h; yy++) {
+    uint32_t *src = fb_pix(dirty_x, dirty_y + yy);
+    uint32_t *dst =
+        fb_hw + (size_t)(dirty_y + yy) * (size_t)fb_stride + (size_t)dirty_x;
+    memcpy(dst, src, (size_t)dirty_w * 4);
+  }
+
+  // Tell the kernel (and thus VirtIO) to ONLY flush this rect!
+  fb_damage((uint32_t)dirty_x, (uint32_t)dirty_y, (uint32_t)dirty_w,
+            (uint32_t)dirty_h);
+
+  desktop_dirty = 0;
+  dirty_w = 0;
+  dirty_h = 0;
 }
 
 static int cursor_scale(void) {
@@ -1318,7 +1686,7 @@ static int handle_create(int client_pid, int w, int h, const char *title,
 
   focused_handle = win->handle;
   z_bring_to_front(win->handle);
-  desktop_dirty = 1;
+  mark_dirty(win->x, win->y, outer_w(win), outer_h(win));
 
   *out_client_va = client_va;
   *out_pitch = (uint32_t)(w * 4);
@@ -1349,16 +1717,33 @@ static void handle_destroy_internal(int handle, int client_pid_check) {
     return;
   if (client_pid_check && w->owner_pid != client_pid_check)
     return;
+
+  /* Save geometry so we can mark the dirty rect AFTER the struct is wiped */
+  int old_x = w->x;
+  int old_y = w->y;
+  int old_ow = outer_w(w);
+  int old_oh = outer_h(w);
+
   if (w->surface_raw)
     free(w->surface_raw);
   memset(w, 0, sizeof(*w));
   z_remove(handle);
-  /* Refocus to the new topmost (which may be the console or another
-   * window). If nothing left, fall back to 0 == console / no-focus. */
+
   if (focused_handle == handle) {
     focused_handle = z_count > 0 ? z_order[0] : 0;
+
+    /* Force taskbar redraw because the active button changed */
+    mark_dirty(0, taskbar_y(), fb_w, TASKBAR_PX);
+
+    /* Force new focused window to redraw its titlebar color */
+    if (focused_handle) {
+      struct window *fw = find_handle(focused_handle);
+      if (fw)
+        mark_dirty(fw->x, fw->y, outer_w(fw), outer_h(fw));
+    }
   }
-  desktop_dirty = 1;
+
+  mark_dirty(old_x, old_y, old_ow, old_oh);
 }
 
 static void handle_destroy(int client_pid, int handle) {
@@ -1391,8 +1776,8 @@ static int is_minimized(int handle) {
  * keeps its z-order slot, but compose + hit-test skip it; the taskbar
  * button is the only way to bring it back. */
 static void toggle_minimize(int handle) {
-  if (handle == HANDLE_CONSOLE)
-    return;
+  // if (handle == HANDLE_CONSOLE)
+  //   return;
   struct window *w = find_handle(handle);
   if (!w)
     return;
@@ -1411,7 +1796,7 @@ static void toggle_minimize(int handle) {
       break;
     }
   }
-  desktop_dirty = 1;
+  mark_dirty(w->x, w->y, outer_w(w), outer_h(w));
 }
 
 /* Toggle maximize/restore. Saves pre-max geometry in window struct so the
@@ -1421,8 +1806,8 @@ static void client_window_resize(int handle, int new_cw, int new_ch);
 static void win_set_pos(int handle, int x, int y);
 
 static void toggle_maximize(int handle) {
-  if (handle == HANDLE_CONSOLE)
-    return;
+  // if (handle == HANDLE_CONSOLE)
+  //   return;
   struct window *w = find_handle(handle);
   if (!w)
     return;
@@ -1441,7 +1826,7 @@ static void toggle_maximize(int handle) {
     client_window_resize(handle, max_cw, max_ch);
     w->maximized = 1;
   }
-  desktop_dirty = 1;
+  mark_dirty(w->x, w->y, outer_w(w), outer_h(w));
 }
 
 /* Walk the kernel proc table and reap any window whose owner is explicitly
@@ -1453,10 +1838,8 @@ static void toggle_maximize(int handle) {
  * address space. The kernel reclaims that pml4 when the task struct is
  * freed; the phys frames go back to PMM with it. */
 static void reap_dead_windows(void) {
-  /* MAX_WINDOWS is small but proc_list may report many tasks. Snapshot a
-   * fixed-size table; if there are more procs than fit we just skip the
-   * tail (worst case: late reap, not corruption). */
-  struct proc_info procs[32];
+  /* Increased to 256 so we don't miss processes if the system is busy */
+  struct proc_info procs[256];
   long n = proc_list(procs, (long)(sizeof(procs) / sizeof(procs[0])));
   if (n < 0)
     return;
@@ -1465,13 +1848,13 @@ static void reap_dead_windows(void) {
     if (!windows[i].in_use)
       continue;
     int owner = windows[i].owner_pid;
-    int terminal = 0;
+    int terminal = 1; /* Assume dead if not found in the list */
     for (long j = 0; j < n; j++) {
-      if (procs[j].pid != owner)
-        continue;
-      int s = procs[j].state;
-      terminal = (s == PROC_STATE_ZOMBIE || s == PROC_STATE_DEAD);
-      break;
+      if (procs[j].pid == owner) {
+        int s = procs[j].state;
+        terminal = (s == PROC_STATE_ZOMBIE || s == PROC_STATE_DEAD);
+        break;
+      }
     }
     if (terminal) {
       int h = windows[i].handle;
@@ -1491,7 +1874,7 @@ static void handle_set_title(int handle, const char *title) {
     i++;
   }
   w->title[i] = 0;
-  desktop_dirty = 1;
+  mark_dirty(w->x, w->y, outer_w(w), outer_h(w));
 }
 
 static void send_create_resp(int target_pid, int handle, uint64_t va,
@@ -1527,15 +1910,23 @@ static void pump_ipc(void) {
     case IPC_WM_DESTROY_REQ:
       handle_destroy(from, m.a);
       break;
-    case IPC_WM_INVALIDATE_REQ:
-      desktop_dirty = 1;
+    case IPC_WM_INVALIDATE_REQ: {
+      struct window *win = find_handle(m.a);
+      if (win)
+        mark_dirty(win->x, win->y, outer_w(win), outer_h(win));
       break;
+    }
     case IPC_WM_SET_TITLE_REQ:
       handle_set_title(m.a, m.str);
       break;
-    case IPC_PEER_EXITED:
-      destroy_windows_for_owner(m.a, "peer-exited");
+    case IPC_PEER_EXITED: {
+      // The dead PID might be in from_pid or m.a depending on your kernel
+      int dead_pid = (int)m.from_pid;
+      if (dead_pid <= 0)
+        dead_pid = (int)m.a;
+      destroy_windows_for_owner(dead_pid, "peer-exited");
       break;
+    }
     default:
       break;
     }
@@ -1571,84 +1962,221 @@ static void forward_input(int target_pid, int win_handle, const struct msg *m) {
 
 static void pump_input(void) {
   struct msg m;
+
   while (msg_get(&m)) {
     int forward = 1;
 
-    /* In-flight drag: suppress forwarding so the focused client doesn't
-     * see phantom cursor scribbles across its window. MOUSE_MOVE is a
-     * no-op here — the main loop polls mouse_pos and renders the ghost
-     * outline directly. We only act on MOUSE_UP, where we commit the
-     * final position or call the (expensive) resize once. */
+    /*
+     * Active move/resize operation.
+     */
     if (drag.active) {
       if (m.type == MSG_MOUSE_MOVE) {
         forward = 0;
       } else if (m.type == MSG_MOUSE_UP) {
         int dx = m.x - drag.grab_mx;
         int dy = m.y - drag.grab_my;
+
+        int old_x, old_y, old_cw, old_ch;
+        if (win_get_rect(drag.handle, &old_x, &old_y, &old_cw, &old_ch)) {
+          mark_dirty(old_x, old_y, outer_w_dims(old_cw), outer_h_dims(old_ch));
+        }
+
         if (drag.kind == HIT_TITLEBAR) {
           int nx = drag.orig_x + dx;
           int ny = drag.orig_y + dy;
+
           clamp_to_desktop(&nx, &ny, drag.orig_cw, drag.orig_ch);
+
           win_set_pos(drag.handle, nx, ny);
         } else if (drag.kind == HIT_GRIP) {
           int new_cw = drag.orig_cw + dx;
           int new_ch = drag.orig_ch + dy;
+
           if (drag.handle == HANDLE_CONSOLE) {
             console_resize(new_cw, new_ch);
           } else {
             client_window_resize(drag.handle, new_cw, new_ch);
           }
         }
+
         drag.active = 0;
-        desktop_dirty = 1;
+
+        int new_x, new_y, new_cw, new_ch;
+        if (win_get_rect(drag.handle, &new_x, &new_y, &new_cw, &new_ch)) {
+          mark_dirty(new_x, new_y, outer_w_dims(new_cw), outer_h_dims(new_ch));
+        }
+
         forward = 0;
       } else if (m.type == MSG_MOUSE_DOWN) {
-        /* Spurious extra down during drag — ignore. */
         forward = 0;
       }
-    } else if (m.type == MSG_MOUSE_DOWN) {
-      /* Taskbar wins over any window underneath: it's drawn always-on-top
-       * and its strip is opaque, so a click in the strip never belongs to
-       * a client even if a window's client area overlaps it. */
-      if (m.y >= taskbar_y()) {
-        int tb_handle = 0;
-        if (hit_taskbar(m.x, m.y, &tb_handle)) {
-          /* Taskbar click on a minimized window restores it. */
-          struct window *wt =
-              (tb_handle != HANDLE_CONSOLE) ? find_handle(tb_handle) : 0;
-          if (wt && wt->minimized)
-            wt->minimized = 0;
-          focused_handle = tb_handle;
-          z_bring_to_front(tb_handle);
-          desktop_dirty = 1;
-        }
-        /* Strip background also eats the click — don't forward. */
-        continue;
-      }
+    }
+
+    /*
+     * Begin processing a left mouse click.
+     */
+    else if (m.type == MSG_MOUSE_DOWN && m.param == MOUSE_BTN_LEFT) {
       int hit_handle = 0;
       int kind = hit_test_at(m.x, m.y, &hit_handle);
+
+      /*
+       * Window close button.
+       */
       if (kind == HIT_BTN_CLOSE) {
-        /* User-initiated close. Skip owner-check (UI is privileged).
-         * Console is built-in: refuse to destroy it. */
         if (hit_handle != HANDLE_CONSOLE) {
           printf("winman: close button -> destroy handle=%d\n", hit_handle);
+
           handle_destroy_internal(hit_handle, 0);
         }
+
         continue;
       }
+
+      /*
+       * Window maximize button.
+       */
       if (kind == HIT_BTN_MAX) {
         toggle_maximize(hit_handle);
         continue;
       }
+
+      /*
+       * Window minimize button.
+       */
       if (kind == HIT_BTN_MIN) {
         toggle_minimize(hit_handle);
+
+        mark_dirty(0, taskbar_y(), fb_w, TASKBAR_PX);
         continue;
       }
+
+      /*
+       * Start button.
+       */
+      if (kind == HIT_START_BTN) {
+        start_menu_open = !start_menu_open;
+        start_menu_hover = -1;
+
+        int menu_h = START_MENU_COUNT * START_MENU_ITEM_H + START_MENU_PAD * 2;
+
+        mark_dirty(0, taskbar_y() - menu_h, START_MENU_W, menu_h + TASKBAR_PX);
+
+        continue;
+      }
+
+      /*
+       * Taskbar window button.
+       */
+      if (kind == HIT_TASKBAR_BTN) {
+        int prev_focus = focused_handle;
+
+        if (hit_handle == HANDLE_CONSOLE) {
+          /*
+           * The console is not in windows[], so find_handle()
+           * cannot be used for it.
+           */
+          focused_handle = HANDLE_CONSOLE;
+          z_bring_to_front(HANDLE_CONSOLE);
+        } else {
+          struct window *wt = find_handle(hit_handle);
+
+          if (wt) {
+            if (wt->minimized) {
+              /*
+               * Restore a minimized window.
+               */
+              toggle_minimize(hit_handle);
+              focused_handle = hit_handle;
+              z_bring_to_front(hit_handle);
+            } else if (focused_handle == hit_handle) {
+              /*
+               * Clicking the focused taskbar button minimizes it.
+               */
+              toggle_minimize(hit_handle);
+              z_send_to_back(hit_handle);
+            } else {
+              /*
+               * Clicking an unfocused visible window raises it.
+               */
+              focused_handle = hit_handle;
+              z_bring_to_front(hit_handle);
+            }
+
+            mark_dirty(wt->x, wt->y, outer_w(wt), outer_h(wt));
+          }
+        }
+
+        /*
+         * Repaint the previously focused window.
+         * win_get_rect() also supports HANDLE_CONSOLE.
+         */
+        int x, y, cw, ch;
+
+        if (win_get_rect(prev_focus, &x, &y, &cw, &ch)) {
+          mark_dirty(x, y, outer_w_dims(cw), outer_h_dims(ch));
+        }
+
+        /*
+         * Repaint the newly selected taskbar window.
+         */
+        if (win_get_rect(hit_handle, &x, &y, &cw, &ch)) {
+          mark_dirty(x, y, outer_w_dims(cw), outer_h_dims(ch));
+        }
+
+        mark_dirty(0, taskbar_y(), fb_w, TASKBAR_PX);
+
+        continue;
+      }
+
+      /*
+       * Start menu item.
+       */
+      if (kind == HIT_START_MENU) {
+        int menu_h = START_MENU_COUNT * START_MENU_ITEM_H + START_MENU_PAD * 2;
+
+        int menu_y = taskbar_y() - menu_h;
+        int relative_y = m.y - menu_y - START_MENU_PAD;
+
+        int clicked_item = relative_y / START_MENU_ITEM_H;
+
+        if (clicked_item >= 0 && clicked_item < START_MENU_COUNT) {
+          struct program *prog = &start_menu_programs[clicked_item];
+
+          char *argv[] = {(char *)prog->path, 0};
+
+          long pid = spawn(prog->path, argv);
+
+          if (pid > 0) {
+            printf("winman: start menu spawned pid %ld\n", pid);
+          } else {
+            printf("winman: failed to spawn %s "
+                   "(code %ld)\n",
+                   prog->path, pid);
+          }
+        }
+
+        start_menu_open = false;
+        start_menu_hover = -1;
+
+        mark_dirty(0, menu_y, START_MENU_W, menu_h);
+
+        mark_dirty(0, taskbar_y(), TASKBAR_START_W, TASKBAR_PX);
+
+        continue;
+      }
+
+      /*
+       * Start moving or resizing a window.
+       */
       if (kind == HIT_TITLEBAR || kind == HIT_GRIP) {
         int x, y, cw, ch;
+
         if (win_get_rect(hit_handle, &x, &y, &cw, &ch)) {
+          int prev_focus = focused_handle;
+
           focused_handle = hit_handle;
           z_bring_to_front(hit_handle);
+
           drag.active = 1;
           drag.kind = kind;
           drag.handle = hit_handle;
@@ -1658,30 +2186,147 @@ static void pump_input(void) {
           drag.orig_y = y;
           drag.orig_cw = cw;
           drag.orig_ch = ch;
-          desktop_dirty = 1;
+
+          mark_dirty(x, y, outer_w_dims(cw), outer_h_dims(ch));
+
+          if (prev_focus != hit_handle &&
+              win_get_rect(prev_focus, &x, &y, &cw, &ch)) {
+            mark_dirty(x, y, outer_w_dims(cw), outer_h_dims(ch));
+          }
+
+          mark_dirty(0, taskbar_y(), fb_w, TASKBAR_PX);
         }
+
         forward = 0;
-      } else if (kind == HIT_CLIENT) {
+      }
+
+      /*
+       * Click inside a window's client area.
+       */
+      else if (kind == HIT_CLIENT) {
+        int prev_focus = focused_handle;
+
         focused_handle = hit_handle;
         z_bring_to_front(hit_handle);
-        desktop_dirty = 1;
-        /* Console clicks don't get forwarded — no client owns it. */
+
+        int x, y, cw, ch;
+
+        if (win_get_rect(hit_handle, &x, &y, &cw, &ch)) {
+          mark_dirty(x, y, outer_w_dims(cw), outer_h_dims(ch));
+        }
+
+        if (prev_focus != hit_handle &&
+            win_get_rect(prev_focus, &x, &y, &cw, &ch)) {
+          mark_dirty(x, y, outer_w_dims(cw), outer_h_dims(ch));
+        }
+
+        mark_dirty(0, taskbar_y(), fb_w, TASKBAR_PX);
+
+        /*
+         * The console consumes its input locally.
+         */
         if (hit_handle == HANDLE_CONSOLE)
           forward = 0;
-      } else {
+      }
+
+      /*
+       * Desktop background or desktop icon.
+       */
+      else if (kind == HIT_NONE) {
+        int clicked_icon = -1;
+
+        for (int i = 0; i < desktop_icon_count; i++) {
+          if (m.x >= desktop_icons[i].x &&
+              m.x < desktop_icons[i].x + desktop_icons[i].w &&
+              m.y >= desktop_icons[i].y &&
+              m.y < desktop_icons[i].y + desktop_icons[i].h) {
+            clicked_icon = i;
+            break;
+          }
+        }
+
+        if (clicked_icon >= 0) {
+          uint32_t current_tick = (uint32_t)get_ticks();
+
+          printf("winman: clicked icon %d\n", clicked_icon);
+
+          printf("winman: tick=%u, last_icon=%d, "
+                 "last_tick=%u\n",
+                 current_tick, last_clicked_icon, last_click_tick);
+
+          if (clicked_icon == last_clicked_icon &&
+              current_tick - last_click_tick < 370) {
+            struct program *prog = &desktop_icons[clicked_icon].program;
+
+            char *argv[] = {(char *)prog->path, 0};
+
+            long pid = spawn(prog->path, argv);
+
+            if (pid > 0) {
+              printf("winman: spawned pid %ld\n", pid);
+            } else {
+              printf("winman: failed to spawn %s "
+                     "(code %ld)\n",
+                     prog->path, pid);
+            }
+
+            /*
+             * Prevent a triple-click from launching twice.
+             */
+            last_clicked_icon = -1;
+            last_click_tick = 0;
+          } else {
+            last_clicked_icon = clicked_icon;
+            last_click_tick = current_tick;
+          }
+        } else {
+          /*
+           * Clicking elsewhere invalidates the pending
+           * desktop-icon double-click.
+           */
+          last_clicked_icon = -1;
+          last_click_tick = 0;
+        }
+
+        /*
+         * Desktop clicks remove the current window focus.
+         */
+        int prev_focus = focused_handle;
         focused_handle = 0;
-        desktop_dirty = 1;
+
+        int x, y, cw, ch;
+
+        if (win_get_rect(prev_focus, &x, &y, &cw, &ch)) {
+          mark_dirty(x, y, outer_w_dims(cw), outer_h_dims(ch));
+        }
+
+        mark_dirty(0, taskbar_y(), fb_w, TASKBAR_PX);
+
         forward = 0;
       }
     }
 
+    /*
+     * Consume events handled by the window manager.
+     */
     if (!forward)
       continue;
+
+    /*
+     * Console input is handled by the window manager rather than
+     * forwarded to a client process.
+     */
     if (focused_handle == HANDLE_CONSOLE)
       continue;
+
+    /*
+     * Forward unhandled input to the focused client window.
+     */
     struct window *focus = focused_handle ? find_handle(focused_handle) : 0;
-    if (focus)
+
+    if (focus) {
       forward_input(focus->owner_pid, focus->handle, &m);
+    }
   }
 }
 
@@ -1707,18 +2352,18 @@ int main(int argc, char **argv) {
   fb_h = (int)info.height;
   fb_stride = (int)(info.pitch / 4);
   fb_bytes = info.pitch * info.height;
+  fb_mapped_bytes = fb_bytes;
   printf("winman: fb %dx%d pitch=%d bytes=%d\n", fb_w, fb_h, fb_stride * 4,
          (int)fb_bytes);
 
-  size_t back_pages = (fb_bytes + 4095) / 4096;
-  fb = (uint32_t *)aligned_page_alloc(back_pages, &fb_raw);
-  if (!fb) {
+  if (backbuffer_reserve(fb_bytes) != 0) {
     printf("winman: back buffer alloc failed\n");
     return 4;
   }
-  printf("winman: back buffer @%p pages=%d\n", (void *)fb, (int)back_pages);
+  printf("winman: back buffer @%p bytes=%d\n", (void *)fb, (int)fb_capacity);
 
   cursor_load();
+  desktop_load();
 
   memset(windows, 0, sizeof(windows));
   focused_handle = 0;
@@ -1726,6 +2371,7 @@ int main(int argc, char **argv) {
   printf("winman: con.enabled=%d surface=%p w=%d h=%d\n", con.enabled,
          (void *)con.surface, con.client_w, con.client_h);
   present_full_desktop();
+  printf("winman: ready\n");
 
   int self_pid = (int)get_pid();
   int tick = 0;
@@ -1746,22 +2392,25 @@ int main(int argc, char **argv) {
     {
       struct fb_info cur;
       if (fb_info(&cur) == 0 &&
-          ((int)cur.width != fb_w || (int)cur.height != fb_h)) {
-        fb_hw = (uint32_t *)fb_map();
-        if (fb_hw) {
+          ((int)cur.width != fb_w || (int)cur.height != fb_h ||
+           (int)(cur.pitch / 4) != fb_stride)) {
+        size_t new_bytes = cur.pitch * cur.height;
+        uint32_t *new_fb_hw = fb_hw;
+
+        /* The physical pool is stable. Only growing beyond the prefix this
+         * process already mapped needs another fb_map syscall. */
+        if (new_bytes > fb_mapped_bytes) {
+          new_fb_hw = (uint32_t *)fb_map();
+          if (new_fb_hw)
+            fb_mapped_bytes = new_bytes;
+        }
+
+        if (new_fb_hw && backbuffer_reserve(new_bytes) == 0) {
+          fb_hw = new_fb_hw;
           fb_w = (int)cur.width;
           fb_h = (int)cur.height;
           fb_stride = (int)(cur.pitch / 4);
-          fb_bytes = cur.pitch * cur.height;
-
-          if (fb_raw)
-            free(fb_raw);
-          size_t back_pages = (fb_bytes + 4095) / 4096;
-          fb = (uint32_t *)aligned_page_alloc(back_pages, &fb_raw);
-          if (!fb) {
-            printf("winman: back buffer realloc failed\n");
-            return 5;
-          }
+          fb_bytes = new_bytes;
           present_full_desktop();
           have_last = 0;
           printf("winman: rebound fb to %dx%d\n", fb_w, fb_h);
@@ -1828,13 +2477,14 @@ int main(int argc, char **argv) {
       drag.have_ghost = 0;
     }
 
-    /* Halve the repaint rate: a dirty desktop composites on even ticks. */
-    int recompose = desktop_dirty && (tick % 2 == 0);
+    int recompose = desktop_dirty;
     if (recompose) {
-      present_full_desktop();
-      have_last = 0; /* cursor was clobbered by present */
-    } else if (have_last) {
-      /* erase cursor by restoring back buffer over its old rect */
+      present_dirty();
+    }
+
+    /* ALWAYS erase the old cursor if we have one. If present_dirty()
+       already drew over it, this just harmlessly redraws the same pixels. */
+    if (have_last) {
       int s = cursor_scale();
       present_rect(last_cx, last_cy, cursor_w() * s, cursor_h() * s);
     }

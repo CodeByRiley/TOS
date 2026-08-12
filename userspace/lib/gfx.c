@@ -17,11 +17,26 @@ extern void *memcpy(void *, const void *, size_t);
 
 /* ---------------- Rectangles -------------------------------------------- */
 
+struct gfx_rect gfx_rect_offset(struct gfx_rect r, int dx, int dy) {
+    return gfx_rect_make(r.x + dx, r.y + dy, r.w, r.h);
+}
+
 struct gfx_rect gfx_rect_intersect(struct gfx_rect a, struct gfx_rect b) {
     int x0 = a.x > b.x ? a.x : b.x;
     int y0 = a.y > b.y ? a.y : b.y;
     int x1 = (a.x + a.w) < (b.x + b.w) ? (a.x + a.w) : (b.x + b.w);
     int y1 = (a.y + a.h) < (b.y + b.h) ? (a.y + a.h) : (b.y + b.h);
+    return gfx_rect_make(x0, y0, x1 - x0, y1 - y0);
+}
+
+struct gfx_rect gfx_rect_union(struct gfx_rect a, struct gfx_rect b) {
+    if (gfx_rect_empty(a)) return b;
+    if (gfx_rect_empty(b)) return a;
+
+    int x0 = a.x < b.x ? a.x : b.x;
+    int y0 = a.y < b.y ? a.y : b.y;
+    int x1 = (a.x + a.w) > (b.x + b.w) ? (a.x + a.w) : (b.x + b.w);
+    int y1 = (a.y + a.h) > (b.y + b.h) ? (a.y + a.h) : (b.y + b.h);
     return gfx_rect_make(x0, y0, x1 - x0, y1 - y0);
 }
 
@@ -320,6 +335,51 @@ int gfx_text_fit(const char *str, int scale, int max_w) {
     int n = 0;
     while (str[n] && (n + 1) * cell <= max_w) n++;
     return n;
+}
+
+static int text_box_common(struct gfx_surface *s, struct gfx_rect box,
+                           const char *str, uint32_t fg, uint32_t bg,
+                           int have_bg, int scale, int pad,
+                           enum gfx_text_align align) {
+    if (!s || !str || gfx_rect_empty(box)) return 0;
+    if (scale < 1) scale = 1;
+    if (pad < 0) pad = 0;
+
+    if (have_bg)
+        gfx_fill(s, box, bg);
+
+    int avail = box.w - 2 * pad;
+    if (avail <= 0) return 0;
+
+    int n = gfx_text_fit(str, scale, avail);
+    if (n <= 0) return 0;
+
+    int tw = n * GFX_GLYPH_W * scale;
+    int th = GFX_GLYPH_H * scale;
+    int x = box.x + pad;
+    if (align == GFX_TEXT_CENTER)
+        x = box.x + (box.w - tw) / 2;
+    else if (align == GFX_TEXT_RIGHT)
+        x = box.x + box.w - pad - tw;
+
+    int y = box.y + (box.h - th) / 2;
+
+    struct gfx_rect prev = gfx_clip_push(s, box);
+    gfx_text_n(s, x, y, str, (size_t)n, fg, scale);
+    gfx_clip_set(s, prev);
+    return n;
+}
+
+int gfx_text_box(struct gfx_surface *s, struct gfx_rect box,
+                 const char *str, uint32_t fg, int scale,
+                 int pad, enum gfx_text_align align) {
+    return text_box_common(s, box, str, fg, 0, 0, scale, pad, align);
+}
+
+int gfx_text_box_bg(struct gfx_surface *s, struct gfx_rect box,
+                    const char *str, uint32_t fg, uint32_t bg, int scale,
+                    int pad, enum gfx_text_align align) {
+    return text_box_common(s, box, str, fg, bg, 1, scale, pad, align);
 }
 
 /* ---------------- Masks and images ----------------------------------------- */

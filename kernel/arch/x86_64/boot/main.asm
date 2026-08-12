@@ -9,6 +9,7 @@
 ; 64-bit. Total runtime: roughly one blink.
 
 global start
+global page_table_l4
 extern long_mode_start
 section .boot.text progbits alloc exec nowrite align=16
 bits 32

@@ -54,6 +54,7 @@ static const char *state_name(int s) {
     case PROC_STATE_READY:    return "RDY ";
     case PROC_STATE_DEAD:     return "DEAD";
     case PROC_STATE_SLEEPING: return "SLP ";
+    case PROC_STATE_LOADING:  return "LOAD";
     default:                  return "??? ";
     }
 }

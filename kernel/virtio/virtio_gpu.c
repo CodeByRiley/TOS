@@ -1,8 +1,8 @@
 /* kernel/virtio/virtio_gpu.c — virtio-gpu (2D scanout) driver.
  *
  * Owns the host-side resource id + scanout. framebuffer.c owns the
- * kernel-side pixel buffer; they cooperate via set_scanout_2d (attach
- * backing) and flush_rect (push pixels).
+ * kernel-side pixel buffer; they cooperate via create_scanout_2d (attach
+ * backing), resize_scanout_2d, and flush_rect (push pixels).
  *
  * Single global instance — the kernel only ever drives one GPU. Submits
  * commands on the controlq, polls for responses synchronously (no
@@ -16,7 +16,6 @@
 #include "memory/pmm.h"
 #include "memory/hhdm.h"
 #include "memory/vmm.h"
-#include "sched/sched.h"
 #include "utilities/log.h"
 #include "utilities/string.h"
 #include <stdint.h>
@@ -104,7 +103,6 @@ struct gpu_attach_backing_hdr {
 } __attribute__((packed));
 
 static int submit_two_buf(uint32_t req_len, uint32_t resp_len) {
-    /* Build a 2-descriptor chain: req (RO), resp (WO). Reap synchronously. */
     uint16_t d0 = virtq_alloc_desc(&controlq);
     uint16_t d1 = virtq_alloc_desc(&controlq);
     if (d0 == 0xFFFF || d1 == 0xFFFF) {
@@ -125,22 +123,17 @@ static int submit_two_buf(uint32_t req_len, uint32_t resp_len) {
     virtq_submit(&controlq, d0);
     virtio_queue_notify(&vdev, &controlq);
 
-    /* Wait for the used ring to advance. Fast path: pause-spin for ~1024
-     * cycles in case the device replies immediately (host usually does on
-     * an unloaded VM). Slow path: yield to the scheduler each iteration so
-     * we don't monopolise the CPU while waiting for a sluggish host. We
-     * cap total wait at ~10000 yields so a buggy host can't lock us. */
     uint16_t got_id = 0;
     uint32_t got_len = 0;
 
-    for (uint32_t i = 0; i < 1024; i++) {
+    /* Busy-wait for 1,000,000 iterations. QEMU processes virtio-gpu commands
+     * almost instantly on an unloaded VM, so this loop usually exits in
+     * under a microsecond. No sleeps, no yields, no 10ms delays! */
+    for (uint32_t i = 0; i < 1000000; i++) {
         if (virtq_reap(&controlq, &got_id, &got_len)) goto done;
         __asm__ volatile ("pause");
     }
-    for (uint32_t i = 0; i < 10000u; i++) {
-        if (virtq_reap(&controlq, &got_id, &got_len)) goto done;
-        task_yield();
-    }
+
     log_write("gpu: command timed out", KERNEL, LOG_ERROR);
     return -1;
 done:
@@ -325,6 +318,8 @@ int virtio_gpu_init(void) {
     gpu_state.scanout_w = w;
     gpu_state.scanout_h = h;
     gpu_state.resource_id = 0;
+    gpu_state.resource_w = 0;
+    gpu_state.resource_h = 0;
     gpu_state.ready = 1;
     log_write_hex("gpu: scanout w =", w, KERNEL, LOG_INFO);
     log_write_hex("gpu: scanout h =", h, KERNEL, LOG_INFO);
@@ -338,26 +333,53 @@ int virtio_gpu_get_dims(uint32_t *w, uint32_t *h) {
     return 0;
 }
 
-int virtio_gpu_set_scanout_2d(uint32_t w, uint32_t h,
-                              const uint64_t *page_phys, uint32_t n_pages) {
+int virtio_gpu_create_scanout_2d(uint32_t resource_w, uint32_t resource_h,
+                                 uint32_t scanout_w, uint32_t scanout_h,
+                                 const uint64_t *page_phys, uint32_t n_pages) {
     if (!gpu_state.ready) return -1;
+    if (resource_w == 0 || resource_h == 0 || scanout_w == 0 || scanout_h == 0)
+        return -1;
+    if (scanout_w > resource_w || scanout_h > resource_h) return -1;
+    if ((uint64_t)n_pages * 4096 <
+        (uint64_t)resource_w * (uint64_t)resource_h * 4) return -1;
 
     /* Tear down the previous resource if any. SET_SCANOUT with resource_id=0
      * detaches the scanout cleanly per spec; UNREF then drops the resource. */
     if (gpu_state.resource_id) {
-        do_set_scanout(0, 0, w, h);
+        do_set_scanout(0, 0, 0, 0);
         do_resource_unref(gpu_state.resource_id);
         gpu_state.resource_id = 0;
+        gpu_state.resource_w = 0;
+        gpu_state.resource_h = 0;
     }
 
     uint32_t rid = 1;   /* virtio-gpu resource IDs are driver-assigned; 1 is fine. */
-    if (do_resource_create_2d(rid, VIRTIO_GPU_FORMAT_B8G8R8X8_UNORM, w, h) != 0) return -1;
-    if (do_attach_backing(rid, page_phys, n_pages) != 0) return -1;
-    if (do_set_scanout(0, rid, w, h) != 0) return -1;
+    if (do_resource_create_2d(rid, VIRTIO_GPU_FORMAT_B8G8R8X8_UNORM,
+                              resource_w, resource_h) != 0) return -1;
+    if (do_attach_backing(rid, page_phys, n_pages) != 0) {
+        do_resource_unref(rid);
+        return -1;
+    }
+    if (do_set_scanout(0, rid, scanout_w, scanout_h) != 0) {
+        do_resource_unref(rid);
+        return -1;
+    }
 
     gpu_state.resource_id = rid;
-    gpu_state.scanout_w   = w;
-    gpu_state.scanout_h   = h;
+    gpu_state.resource_w  = resource_w;
+    gpu_state.resource_h  = resource_h;
+    gpu_state.scanout_w   = scanout_w;
+    gpu_state.scanout_h   = scanout_h;
+    return 0;
+}
+
+int virtio_gpu_resize_scanout_2d(uint32_t w, uint32_t h) {
+    if (!gpu_state.ready || !gpu_state.resource_id) return -1;
+    if (w == 0 || h == 0 || w > gpu_state.resource_w || h > gpu_state.resource_h)
+        return -1;
+    if (do_set_scanout(0, gpu_state.resource_id, w, h) != 0) return -1;
+    gpu_state.scanout_w = w;
+    gpu_state.scanout_h = h;
     return 0;
 }
 
@@ -374,7 +396,8 @@ int virtio_gpu_flush_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h) {
         q->r.y         = y;
         q->r.width     = w;
         q->r.height    = h;
-        q->offset      = (uint64_t)y * (uint64_t)gpu_state.scanout_w * 4 + (uint64_t)x * 4;
+        q->offset      = (uint64_t)y * (uint64_t)gpu_state.resource_w * 4 +
+                         (uint64_t)x * 4;
         q->resource_id = gpu_state.resource_id;
         uint32_t t = do_cmd(sizeof(*q), sizeof(struct gpu_ctrl_hdr));
         if (t != VIRTIO_GPU_RESP_OK_NODATA) {
@@ -413,7 +436,7 @@ int virtio_gpu_poll_display_event(void) {
 
     /* Re-read display info so subsequent virtio_gpu_get_dims reflects the
      * new size. The actual scanout still has the old resource attached;
-     * caller is expected to virtio_gpu_set_scanout_2d with the new size. */
+     * caller is expected to resize its visible rectangle. */
     uint32_t w = 0, h = 0;
     if (do_get_display_info(&w, &h) == 0) {
         gpu_state.scanout_w = w;

@@ -45,8 +45,15 @@ static inline int gfx_rect_contains(struct gfx_rect r, int x, int y) {
     return x >= r.x && y >= r.y && x < r.x + r.w && y < r.y + r.h;
 }
 
+/* Same size, moved by (dx, dy). */
+struct gfx_rect gfx_rect_offset(struct gfx_rect r, int dx, int dy);
+
 /* Overlap of two rectangles. Empty (w or h <= 0) when they miss. */
 struct gfx_rect gfx_rect_intersect(struct gfx_rect a, struct gfx_rect b);
+
+/* Smallest rectangle containing both inputs. Empty inputs are ignored, so
+ * union(empty, r) == r. */
+struct gfx_rect gfx_rect_union(struct gfx_rect a, struct gfx_rect b);
 
 /* Rectangle shrunk by `n` on every side. Useful for insetting a border. */
 struct gfx_rect gfx_rect_inset(struct gfx_rect r, int n);
@@ -137,6 +144,24 @@ void gfx_text_size(const char *str, int scale, int *out_w, int *out_h);
 
 /* How many characters of `str` fit in `max_w` pixels. */
 int  gfx_text_fit(const char *str, int scale, int max_w);
+
+enum gfx_text_align {
+    GFX_TEXT_LEFT   = 0,
+    GFX_TEXT_CENTER = 1,
+    GFX_TEXT_RIGHT  = 2,
+};
+
+/* Draw one clipped line inside `box`, fitting whole glyph cells only.
+ * Padding is applied on both horizontal sides. Returns the number of
+ * characters drawn, which is useful for tests and status widgets. */
+int  gfx_text_box(struct gfx_surface *s, struct gfx_rect box,
+                  const char *str, uint32_t fg, int scale,
+                  int pad, enum gfx_text_align align);
+
+/* As gfx_text_box, but fills the box with `bg` before drawing. */
+int  gfx_text_box_bg(struct gfx_surface *s, struct gfx_rect box,
+                     const char *str, uint32_t fg, uint32_t bg, int scale,
+                     int pad, enum gfx_text_align align);
 
 /* ---------------- Masks and images ---------------------------------------- */
 

@@ -17,6 +17,9 @@ payloads=(
 	"rootfs/music/beethoven.wav::music/beethoven.wav"
 	"rootfs/system/fonts/SansDisplayStatic.ttf::system/fonts/sansdisplaystatic.ttf"
 	"rootfs/system/fonts/SansDisplayVariable.ttf::system/fonts/sansdisplayvariable.ttf"
+	"rootfs/system/wallpaper.bmp::system/wallpaper.bmp"
+	"rootfs/system/icons/DOOM.bmp::system/icons/doom.bmp"
+	"rootfs/system/icons/shelf.bmp::system/icons/shelf.bmp"
 	"userspace/bin/hello/hello.elf::hello.elf"
 	"userspace/bin/ls/ls.elf::ls.elf"
 	"userspace/bin/cat/cat.elf::cat.elf"
@@ -42,7 +45,7 @@ payloads=(
 # build the same root filesystem without them.
 optional_payloads=(
 	"rootfs/games/doom/doom.wad::games/doom/doom.wad"
-	"userspace/bin/doom/doom.elf::doom.elf"
+	"userspace/bin/doom/doom.elf::games/doom/doom.elf"
 	"rootfs/firmware/gsp_ga10x.bin::firmware/gsp_ga10x.bin"
 	"rootfs/firmware/gsp_tu10x.bin::firmware/gsp_tu10x.bin"
 	"rootfs/firmware/ucodes_ga10x.bin::firmware/ucodes_ga10x.bin"

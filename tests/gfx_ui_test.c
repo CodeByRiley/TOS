@@ -17,7 +17,7 @@
 #include "gfx.h"
 #include "ui.h"
 #include "syscall.h"
-#include "../userspace/include/font8x8.h"
+#include "../userspace/include/fonts/font8x8.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -85,11 +85,20 @@ static void test_rects(void) {
     struct gfx_rect a = gfx_rect_make(0, 0, 10, 10);
     struct gfx_rect b = gfx_rect_make(5, 5, 10, 10);
 
+    struct gfx_rect moved = gfx_rect_offset(a, -2, 3);
+    expect(moved.x == -2 && moved.y == 3 &&
+           moved.w == 10 && moved.h == 10, "offset keeps size");
+
     struct gfx_rect i = gfx_rect_intersect(a, b);
     expect(i.x == 5 && i.y == 5 && i.w == 5 && i.h == 5, "overlap");
 
     struct gfx_rect miss = gfx_rect_intersect(a, gfx_rect_make(50, 50, 4, 4));
     expect(gfx_rect_empty(miss), "disjoint rects give an empty overlap");
+
+    struct gfx_rect u = gfx_rect_union(a, b);
+    expect(u.x == 0 && u.y == 0 && u.w == 15 && u.h == 15, "union covers both");
+    expect(gfx_rect_union(gfx_rect_make(0, 0, 0, 0), b).x == b.x,
+           "union ignores empty inputs");
 
     struct gfx_rect in = gfx_rect_inset(a, 2);
     expect(in.x == 2 && in.y == 2 && in.w == 6 && in.h == 6, "inset");
@@ -287,6 +296,20 @@ static void test_text(void) {
     expect(guard_intact(&g), "text past the edge stays in bounds");
 
     guarded_free(&g);
+
+    guarded_init(&g, 48, 20);
+
+    int drawn = gfx_text_box(&g.s, gfx_rect_make(0, 0, 40, 12),
+                             "abcdef", 0x00FFFFFFu, 1, 4, GFX_TEXT_RIGHT);
+    expect(drawn == 4, "text box fits whole characters inside padding");
+    expect(px_at(&g, 4, 0) == 0, "right-aligned text leaves the left pad empty");
+    expect(guard_intact(&g), "text box stays in bounds");
+
+    gfx_text_box_bg(&g.s, gfx_rect_make(0, 12, 20, 8),
+                    "x", 0x00FFFFFFu, 0x00333333u, 1, 2, GFX_TEXT_LEFT);
+    expect(px_at(&g, 19, 19) == 0x00333333u, "text box background fills box");
+
+    guarded_free(&g);
 }
 
 /* masks and sprites */
@@ -401,6 +424,51 @@ static void test_ui_button(void) {
     guarded_free(&g);
 }
 
+static void test_ui_explicit_ids(void) {
+    struct guarded g;
+    guarded_init(&g, 80, 40);
+
+    struct ui_context ui;
+    memset(&ui, 0, sizeof(ui));
+    struct gfx_rect a = gfx_rect_make(4, 4, 28, 16);
+    struct gfx_rect b = gfx_rect_make(40, 4, 28, 16);
+
+    /* Press button B after drawing A then B. */
+    frame(&ui, &g.s, 46, 10, 1);
+    ui_button_id(&ui, 10, a, "A");
+    ui_button_id(&ui, 20, b, "B");
+    ui_end(&ui);
+
+    /* Release while drawing B before A. With explicit ids, B still owns the
+     * active press; call-order ids would have changed meaning here. */
+    frame(&ui, &g.s, 46, 10, 0);
+    expect(ui_button_id(&ui, 20, b, "B") == 1,
+           "explicit button id survives draw-order changes");
+    expect(ui_button_id(&ui, 10, a, "A") == 0,
+           "other explicit id does not inherit the click");
+    ui_end(&ui);
+
+    /* id 0 is reserved for 'no widget', so it must never become clickable. */
+    frame(&ui, &g.s, 10, 10, 1);
+    ui_button_id(&ui, 0, a, "bad");
+    ui_end(&ui);
+    frame(&ui, &g.s, 10, 10, 0);
+    expect(ui_button_id(&ui, 0, a, "bad") == 0,
+           "zero id is non-interactive");
+    ui_end(&ui);
+
+    static const uint8_t icon[4] = { 1, 0, 0, 1 };
+    frame(&ui, &g.s, 8, 28, 0);
+    ui_icon_button_id(&ui, 30, gfx_rect_make(4, 24, 16, 16),
+                      icon, 2, 2, 0x00FF00FFu);
+    ui_end(&ui);
+    expect(px_at(&g, 11, 31) == 0x00FF00FFu,
+           "icon button centers and draws its mask");
+
+    expect(guard_intact(&g), "explicit-id widgets stay in bounds");
+    guarded_free(&g);
+}
+
 static void test_ui_widgets(void) {
     struct guarded g;
     guarded_init(&g, 64, 64);
@@ -470,6 +538,7 @@ int main(void) {
     test_text();
     test_masks();
     test_ui_button();
+    test_ui_explicit_ids();
     test_ui_widgets();
     test_ui_layout();
 

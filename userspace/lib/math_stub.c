@@ -1,29 +1,60 @@
 /* userspace/lib/math_stub.c — minimal libm subset for DOOM.
  *
- * Only the handful of functions actually called by DOOM's renderer +
- * sound code. sqrt() uses Newton's method; trig is stubbed because the
- * core gameplay path doesn't hit it. Replace with a real libm before
- * shipping anything else that needs accurate math.
+ * Implements the handful of functions actually called by DOOM's renderer +
+ * sound code. Uses small approximations rather than full IEEE-754 libm
+ * implementations.
  */
 #include "../include/math.h"
+#include <limits.h>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+#ifndef M_PI_2
+#define M_PI_2 1.57079632679489661923
+#endif
+#ifndef M_PI_4
+#define M_PI_4 0.78539816339744830962
+#endif
 
 #define TWO_PI 6.28318530717958647692
 #define LN2 0.69314718055994530942
+#define HUGE_VAL 1.0e308
 
-/*
- * Freestanding math helpers. These are small approximations, not a full IEEE
- * libm, but they never lower back into the public symbols below. That matters
- * in kernel code: a wrapper like floor() { return __builtin_floor(x); } can
- * compile into "call floor" and recurse until the boot stack is exhausted.
- */
+double sqrt(double x) {
+  if (x <= 0.0)
+    return 0.0;
+  double r = x;
+  for (int i = 0; i < 20; i++)
+    r = 0.5 * (r + x / r);
+  return r;
+}
+
+double fabs(double x) { return x < 0 ? -x : x; }
+
+double floor(double x) {
+  if (x != x) return x; /* NaN check */
+  if (x >= (double)LLONG_MAX || x <= (double)LLONG_MIN)
+    return x;
+  long long n = (long long)x;
+  return (x < 0 && (double)n != x) ? (double)(n - 1) : (double)n;
+}
+
+double ceil(double x) {
+  if (x != x) return x; /* NaN check */
+  if (x >= (double)LLONG_MAX || x <= (double)LLONG_MIN)
+    return x;
+  long long n = (long long)x;
+  return (x > 0 && (double)n != x) ? (double)(n + 1) : (double)n;
+}
 
 double fmod(double x, double y) {
   if (y == 0.0)
     return 0.0;
 
   double qd = x / y;
-  if (qd >= 9223372036854775807.0 || qd <= -9223372036854775807.0)
-    return 0.0;
+  if (qd >= (double)LLONG_MAX || qd <= (double)LLONG_MIN)
+    return x;
 
   long long q = (long long)qd;
   return x - (double)q * y;
@@ -48,9 +79,9 @@ static double ipow(double base, long long expn) {
 
   if (expn < 0) {
     if (base == 0.0)
-      return 0.0;
+      return HUGE_VAL;
     base = 1.0 / base;
-    e = (unsigned long long)(-expn);
+    e = -(unsigned long long)expn;
   } else {
     e = (unsigned long long)expn;
   }
@@ -93,7 +124,7 @@ double log(double x) {
 
 double exp(double x) {
   if (x > 709.0)
-    return 1.0e308;
+    return HUGE_VAL;
   if (x < -745.0)
     return 0.0;
 
@@ -129,7 +160,7 @@ double pow(double base, double expn) {
   if (expn == 0.0)
     return 1.0;
   if (base == 0.0)
-    return expn > 0.0 ? 0.0 : 0.0;
+    return (expn > 0.0) ? 0.0 : HUGE_VAL;
 
   long long i = (long long)expn;
   if ((double)i == expn)
@@ -156,14 +187,16 @@ double sin(double x) {
   x = reduce_angle(x);
   double x2 = x * x;
   return x * (1.0 - x2 / 6.0 + (x2 * x2) / 120.0 - (x2 * x2 * x2) / 5040.0 +
-              (x2 * x2 * x2 * x2) / 362880.0);
+              (x2 * x2 * x2 * x2) / 362880.0 -
+              (x2 * x2 * x2 * x2 * x2) / 39916800.0);
 }
 
 double cos(double x) {
   x = reduce_angle(x);
   double x2 = x * x;
   return 1.0 - x2 / 2.0 + (x2 * x2) / 24.0 - (x2 * x2 * x2) / 720.0 +
-         (x2 * x2 * x2 * x2) / 40320.0;
+         (x2 * x2 * x2 * x2) / 40320.0 -
+         (x2 * x2 * x2 * x2 * x2) / 3628800.0;
 }
 
 double tan(double x) {
@@ -174,27 +207,22 @@ double tan(double x) {
 }
 
 static double atan_unit(double x) {
-  double sign = x < 0.0 ? -1.0 : 1.0;
-  x = fabs(x);
-
+  if (x < 0.0)
+    return -atan_unit(-x);
   if (x > 1.0)
-    return sign * (M_PI_2 - atan_unit(1.0 / x));
+    return M_PI_2 - atan_unit(1.0 / x);
+  if (x > 0.5)
+    return M_PI_4 + atan_unit((x - 1.0) / (x + 1.0));
 
   double x2 = x * x;
   double term = x;
   double sum = x;
-  int add = 0;
 
   for (int n = 3; n <= 31; n += 2) {
     term *= x2;
-    if (add)
-      sum += term / (double)n;
-    else
-      sum -= term / (double)n;
-    add = !add;
+    sum += (n % 4 == 1) ? (term / (double)n) : -(term / (double)n);
   }
-
-  return sign * sum;
+  return sum;
 }
 
 double atan2(double y, double x) {

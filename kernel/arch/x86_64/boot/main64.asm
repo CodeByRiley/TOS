@@ -10,6 +10,7 @@
 ; deduped — the 32-bit copy literally cannot link against the 64-bit
 ; one. Six lines of `mov` vs. a weekend with a linker script.
 extern kernel_main
+extern ap_main
 
 section .boot.text progbits alloc exec nowrite align=16
 bits 64
@@ -71,6 +72,18 @@ section .text
 bits 64
 
 global high_half_start
+global ap_long_mode_handoff
+
+; Stackless AP address-space handoff.
+; rdi: cpu_id, rsi: target CR3, rdx: target kernel RSP
+;
+; The low trampoline reaches this stub through the bootstrap PML4's kernel
+; alias. Both page-table roots map this higher-half text, so CR3 can change
+; here before anything touches the target-root-only kernel stack.
+ap_long_mode_handoff:
+    mov cr3, rsi
+    mov rsp, rdx
+    jmp ap_main
 
 ; High-half kernel entry.
 ; rdi: mb2 info pointer

@@ -95,12 +95,27 @@ static long sys_fb_map(void) {
     }
   }
 
-  /* Re-map every call: process_exec wipes user PDPT between programs,
-     so the static "mapped" cache would lie. vmm_map overwrites cleanly.
-     The backing may be scatter-gather (virtio-gpu mode), so walk the
-     per-page phys list rather than assuming contiguity. */
+  /* Framebuffer mappings form a prefix at USER_FB_BASE. Find the first page
+     that is absent or points at stale backing, then map only that suffix.
+     This remains correct across process_exec (the first probe misses) while
+     making a resize that merely exposes more rows proportional to the growth. */
   uint32_t pages = framebuffer_num_pages();
-  for (uint32_t i = 0; i < pages; i++) {
+  uint32_t first_missing = 0;
+  if (t && t->user_pml4) {
+    uint32_t lo = 0, hi = pages;
+    while (lo < hi) {
+      uint32_t mid = lo + (hi - lo) / 2;
+      uint64_t va = USER_FB_BASE + (uint64_t)mid * 4096;
+      uint64_t phys = framebuffer_phys_for_page(mid);
+      if (phys && vmm_translate_in(t->user_pml4, va) == phys)
+        lo = mid + 1;
+      else
+        hi = mid;
+    }
+    first_missing = lo;
+  }
+
+  for (uint32_t i = first_missing; i < pages; i++) {
     uint64_t phys = framebuffer_phys_for_page(i);
     if (!phys)
       return -1;

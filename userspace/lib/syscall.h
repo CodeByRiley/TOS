@@ -153,6 +153,7 @@ _Static_assert(offsetof(struct proc_info, name) == 20,
 #define PROC_STATE_READY    3
 #define PROC_STATE_DEAD     4
 #define PROC_STATE_SLEEPING 5
+#define PROC_STATE_LOADING  6
 
 /* Physical memory accounting (SYS_MEM_STATS). */
 struct mem_stats {

@@ -6,11 +6,11 @@
  *   3. user_stack_alloc_in()    — populate the user stack pages
  *   4. argv marshal             — copy argv strings + pointer array onto
  *                                  the user stack
- *   5. task_spawn_user()        — queue the new task ready to run
+ *   5. task activation          — publish the reserved task as runnable
  *
  * process_exec blocks until the child exits and returns its code.
- * process_spawn_async returns the child's pid immediately so daemons
- * (winman) can run alongside a foreground shell.
+ * process_spawn_async snapshots the request, reserves the child's final pid,
+ * and queues the expensive image work on the BSP loader task before returning.
  */
 #include "utilities/string.h"
 #include "utilities/log.h"
@@ -129,6 +129,8 @@ int user_stack_alloc_in(uint64_t *pml4) {
             user_stack_rollback(pml4, i);
             return -1;
         }
+        if ((i & 31) == 31)
+            task_yield();
     }
     return 0;
 }
@@ -191,155 +193,203 @@ uint64_t *process_pml4_create(void) {
     return pml4;
 }
 
-/* Common front-end shared by process_exec (synchronous) and
- * process_spawn_async (fire-and-forget). Returns the spawned child's pid
- * or -1 on failure. Caller decides whether to block on the result. */
-static int process_spawn_common(const char *path, char *const argv[]) {
-    /* Snapshot path into kernel-side storage. A syscall caller can yield or
-     * exit after this function returns, so no child state should retain the
-     * caller's user pointer. */
-    char saved_path[ARG_LEN_MAX];
-    {
-        size_t i = 0;
-        if (path) {
-            while (i < ARG_LEN_MAX - 1 && path[i]) {
-                saved_path[i] = path[i];
-                i++;
-            }
+struct spawn_request {
+    struct task *reserved;
+    struct spawn_request *next;
+    int argc;
+    int cancelled;
+    long cancel_code;
+    char path[ARG_LEN_MAX];
+    char args[ARGV_MAX][ARG_LEN_MAX];
+};
+
+struct loaded_image {
+    uint64_t *pml4;
+    uint64_t entry;
+    uint64_t user_rsp;
+};
+
+static struct spawn_request *load_head;
+static struct spawn_request *load_tail;
+static struct spawn_request *load_active;
+static struct task *loader_task;
+
+static struct spawn_request *snapshot_request(const char *path,
+                                               char *const argv[]) {
+    if (!path || !path[0])
+        return 0;
+
+    struct spawn_request *req = (struct spawn_request *)kmalloc(sizeof(*req));
+    if (!req)
+        return 0;
+    memset(req, 0, sizeof(*req));
+
+    size_t n = 0;
+    while (n < sizeof(req->path) - 1 && path[n]) {
+        req->path[n] = path[n];
+        n++;
+    }
+    req->path[n] = 0;
+
+    while (argv && req->argc < ARGV_MAX && argv[req->argc]) {
+        const char *src = argv[req->argc];
+        size_t len = 0;
+        while (len < ARG_LEN_MAX - 1 && src[len]) {
+            req->args[req->argc][len] = src[len];
+            len++;
         }
-        saved_path[i] = 0;
+        req->args[req->argc][len] = 0;
+        req->argc++;
+    }
+    return req;
+}
+
+static void set_process_name(struct task *task, const char *path) {
+    const char *base = path;
+    for (const char *p = path; *p; p++) {
+        if (*p == '/' || *p == '\\')
+            base = p + 1;
     }
 
-    // snapshot argv into kernel heap
-    int    argc = 0;
-    char  *saved[ARGV_MAX] = {0};
-    if (argv) {
-        while (argc < ARGV_MAX && argv[argc]) {
-            size_t len = 0;
-            const char *s = argv[argc];
-            while (s[len] && len < ARG_LEN_MAX - 1) len++;
-            char *copy = (char*)kmalloc(len + 1);
-            if (!copy) {
-                log_write("process_spawn: argv snapshot allocation failed",
-                          KERNEL, LOG_ERROR);
-                for (int i = 0; i < argc; i++) kfree(saved[i]);
-                return -1;
-            }
-            memcpy(copy, s, len);
-            copy[len] = 0;
-            saved[argc++] = copy;
-        }
+    char name[16];
+    size_t n = 0;
+    while (n < sizeof(name) - 1 && base[n] && base[n] != '.') {
+        char c = base[n];
+        if (c >= 'A' && c <= 'Z')
+            c = (char)(c + ('a' - 'A'));
+        name[n++] = c;
     }
+    name[n] = 0;
+    task_set_name(task, name);
+}
 
-    uint64_t *child_pml4 = process_pml4_create();
-    if (!child_pml4) {
+static int load_request_image(struct spawn_request *req,
+                              struct loaded_image *image) {
+    memset(image, 0, sizeof(*image));
+    image->pml4 = process_pml4_create();
+    if (!image->pml4) {
         log_write("process_spawn: pml4 alloc failed", KERNEL, LOG_ERROR);
-        for (int i = 0; i < argc; i++) kfree(saved[i]);
         return -1;
     }
 
-    uint8_t magic[16];
-    FILE *sniff = fopen(saved_path, "r");
+    uint8_t magic[16] = {0};
+    FILE *sniff = fopen(req->path, "r");
     if (!sniff) {
         log_write("process_spawn: fopen failed", KERNEL, LOG_ERROR);
-        free_user_pml4(child_pml4);
-        for (int i = 0; i < argc; i++) kfree(saved[i]);
-        return -1;
+        goto fail;
     }
-    size_t read = fread(magic, 1, 16, sniff);
-    uint64_t entry;
-    // Check for PE magic
-    if(read == 16) {
-    	if(magic[0] == 'M' && magic[1] == 'Z') {
-      	entry = pe_load(saved_path, child_pml4);
-    	} else if (magic[0] == 0x7F && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F') {
-      	entry = elf_load(saved_path, child_pml4);
-    	} else {
-    		log_write("process_spawn: unknown magic", KERNEL, LOG_ERROR);
-    	}
-    }
+    size_t read = fread(magic, 1, sizeof(magic), sniff);
     fclose(sniff);
-    if (!entry) {
-        log_write("process_spawn: load failed", KERNEL, LOG_ERROR);
-        free_user_pml4(child_pml4);
-        for (int i = 0; i < argc; i++) kfree(saved[i]);
-        return -1;
-    }
-    if (user_stack_alloc_in(child_pml4) != 0) {
-        free_user_pml4(child_pml4);
-        for (int i = 0; i < argc; i++) kfree(saved[i]);
-        return -1;
-    }
 
-    uint64_t user_rsp = USER_STACK_TOP;
-    uint64_t pstr[ARGV_MAX];
-
-    for (int i = 0; i < argc; i++) {
-        size_t len = strlen(saved[i]) + 1;
-        user_rsp -= len;
-        if (copy_to_user_pml4(child_pml4, user_rsp, saved[i], len) != 0) {
-            log_write("process_spawn: argv string copy failed",
-                      KERNEL, LOG_ERROR);
-            for (int j = i; j < argc; j++) kfree(saved[j]);
-            free_user_pml4(child_pml4);
-            return -1;
-        }
-        pstr[i] = user_rsp;
-        kfree(saved[i]);
+    if (read == sizeof(magic) && magic[0] == 'M' && magic[1] == 'Z') {
+        image->entry = pe_load(req->path, image->pml4);
+    } else if (read == sizeof(magic) && magic[0] == 0x7f &&
+               magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F') {
+        image->entry = elf_load(req->path, image->pml4);
+    } else {
+        log_write("process_spawn: unknown or truncated executable", KERNEL,
+                  LOG_ERROR);
     }
-    user_rsp &= ~0xFULL;
+    if (!image->entry || req->cancelled)
+        goto fail;
 
-    /* Build argc/argv contiguously so alignment padding cannot appear
-     * between argc and argv[0]. _start expects argc at [rsp]. */
+    if (user_stack_alloc_in(image->pml4) != 0 || req->cancelled)
+        goto fail;
+
+    image->user_rsp = USER_STACK_TOP;
+    uint64_t arg_ptrs[ARGV_MAX];
+    for (int i = 0; i < req->argc; i++) {
+        size_t len = strlen(req->args[i]) + 1;
+        image->user_rsp -= len;
+        if (copy_to_user_pml4(image->pml4, image->user_rsp,
+                              req->args[i], len) != 0)
+            goto fail;
+        arg_ptrs[i] = image->user_rsp;
+    }
+    image->user_rsp &= ~0xFULL;
+
     uint64_t initial_stack[ARGV_MAX + 2];
-    initial_stack[0] = (uint64_t)argc;
-    for (int i = 0; i < argc; i++)
-        initial_stack[i + 1] = pstr[i];
-    initial_stack[argc + 1] = 0;
+    initial_stack[0] = (uint64_t)req->argc;
+    for (int i = 0; i < req->argc; i++)
+        initial_stack[i + 1] = arg_ptrs[i];
+    initial_stack[req->argc + 1] = 0;
 
-    size_t initial_bytes = (size_t)(argc + 2) * sizeof(uint64_t);
+    size_t initial_bytes = (size_t)(req->argc + 2) * sizeof(uint64_t);
     if (initial_bytes & 0xF)
-        user_rsp -= sizeof(uint64_t);              /* padding below strings */
-    user_rsp -= initial_bytes;
-    if (copy_to_user_pml4(child_pml4, user_rsp, initial_stack,
-                          initial_bytes) != 0) {
-        log_write("process_spawn: initial stack copy failed",
-                  KERNEL, LOG_ERROR);
-        free_user_pml4(child_pml4);
-        return -1;
-    }
+        image->user_rsp -= sizeof(uint64_t);
+    image->user_rsp -= initial_bytes;
+    if (copy_to_user_pml4(image->pml4, image->user_rsp, initial_stack,
+                          initial_bytes) != 0)
+        goto fail;
+    return 0;
 
-    int parent_pid = task_current()->pid;
-    struct task *child = task_spawn_user(child_pml4, entry, user_rsp,
-                                         parent_pid);
+fail:
+    free_user_pml4(image->pml4);
+    memset(image, 0, sizeof(*image));
+    return -1;
+}
+
+static int spawn_request_now(struct spawn_request *req) {
+    struct loaded_image image;
+    if (load_request_image(req, &image) != 0)
+        return -1;
+
+    struct task *parent = task_current();
+    struct task *child = task_spawn_user(image.pml4, image.entry,
+                                         image.user_rsp,
+                                         parent ? parent->pid : 0);
     if (!child) {
-        log_write("process_spawn: task_spawn_user failed", KERNEL, LOG_ERROR);
-        free_user_pml4(child_pml4);
+        free_user_pml4(image.pml4);
         return -1;
     }
-
-    /* Derive a display name from the basename of the ELF path, stripping
-     * directory components and the trailing extension. "BIN/SH.ELF" -> "sh". */
-    const char *base = saved_path;
-    for (const char *p = saved_path; *p; p++) {
-        if (*p == '/' || *p == '\\') base = p + 1;
-    }
-    char name[16];
-    size_t ni = 0;
-    while (ni < sizeof(name) - 1 && base[ni] && base[ni] != '.') {
-        char c = base[ni];
-        if (c >= 'A' && c <= 'Z') c = (char)(c + 32);
-        name[ni] = c;
-        ni++;
-    }
-    name[ni] = 0;
-    task_set_name(child, name);
-
+    set_process_name(child, req->path);
     return child->pid;
 }
 
+static void loader_worker(void) {
+    for (;;) {
+        struct spawn_request *req = load_head;
+        if (!req) {
+            task_sleep_ticks(1);
+            continue;
+        }
+
+        load_head = req->next;
+        if (!load_head)
+            load_tail = 0;
+        req->next = 0;
+        load_active = req;
+
+        struct loaded_image image;
+        int loaded = load_request_image(req, &image);
+        if (req->cancelled) {
+            if (loaded == 0)
+                free_user_pml4(image.pml4);
+            task_fail_reserved_user(req->reserved, req->cancel_code);
+        } else if (loaded != 0) {
+            task_fail_reserved_user(req->reserved, -1);
+        } else if (task_activate_reserved_user(req->reserved, image.pml4,
+                                               image.entry,
+                                               image.user_rsp) != 0) {
+            free_user_pml4(image.pml4);
+            task_fail_reserved_user(req->reserved, -1);
+        } else {
+            log_write_hex("process_spawn: ready pid =",
+                          (uint64_t)req->reserved->pid, USER, LOG_INFO);
+        }
+
+        load_active = 0;
+        kfree(req);
+        task_yield();
+    }
+}
+
 long process_exec(const char *path, char *const argv[]) {
-    int child_pid = process_spawn_common(path, argv);
+    struct spawn_request *req = snapshot_request(path, argv);
+    if (!req)
+        return -1;
+    int child_pid = spawn_request_now(req);
+    kfree(req);
     if (child_pid < 0) return -1;
 
     task_block(child_pid);
@@ -355,7 +405,62 @@ long process_exec(const char *path, char *const argv[]) {
 }
 
 long process_spawn_async(const char *path, char *const argv[]) {
-    return process_spawn_common(path, argv);
+    struct spawn_request *req = snapshot_request(path, argv);
+    if (!req)
+        return -1;
+
+    if (!loader_task) {
+        loader_task = task_spawn(loader_worker);
+        if (!loader_task) {
+            kfree(req);
+            return -1;
+        }
+        task_set_name(loader_task, "loader");
+    }
+
+    struct task *parent = task_current();
+    req->reserved = task_reserve_user(parent ? parent->pid : 0);
+    if (!req->reserved) {
+        kfree(req);
+        return -1;
+    }
+    set_process_name(req->reserved, req->path);
+
+    if (load_tail)
+        load_tail->next = req;
+    else
+        load_head = req;
+    load_tail = req;
+    log_write_hex("process_spawn: queued pid =",
+                  (uint64_t)req->reserved->pid, USER, LOG_INFO);
+    return req->reserved->pid;
+}
+
+int process_cancel_async(int pid, long code) {
+    if (load_active && load_active->reserved &&
+        load_active->reserved->pid == pid) {
+        load_active->cancelled = 1;
+        load_active->cancel_code = code;
+        return 0;
+    }
+
+    struct spawn_request *prev = 0;
+    for (struct spawn_request *req = load_head; req; req = req->next) {
+        if (!req->reserved || req->reserved->pid != pid) {
+            prev = req;
+            continue;
+        }
+        if (prev)
+            prev->next = req->next;
+        else
+            load_head = req->next;
+        if (load_tail == req)
+            load_tail = prev;
+        task_fail_reserved_user(req->reserved, code);
+        kfree(req);
+        return 0;
+    }
+    return -1;
 }
 
 long process_kill(long pid, int signal) {

@@ -16,7 +16,9 @@
 #include "memory/pmm.h"
 #include "sched/sched.h"
 #include "utilities/log.h"
+#include "utilities/panic.h"
 #include "devices/serial.h"
+#include "devices/lapic.h"
 #include "interrupts/pic.h"
 #include "memory/vmm.h"
 #include <stdint.h>
@@ -28,6 +30,11 @@ static struct idt_entry idt[MAX_IDT_ENTRIES];
 static struct idt_ptr idtr;
 
 extern uint64_t isr_stub_table[48];
+extern void isr240(void);
+extern void isr255(void);
+
+#define VEC_SMP_WORK_IPI 240
+#define VEC_LAPIC_SPURIOUS 255
 
 /* IST index 1 is the double-fault stack installed by gdt_install_tss. Any
  * other vector uses ist=0, meaning "keep the current stack". */
@@ -52,6 +59,8 @@ void idt_init(void) {
     for (int i = 0; i < 48; i++) {
         idt_set(i, isr_stub_table[i]);
     }
+    idt_set(VEC_SMP_WORK_IPI, (uint64_t)isr240);
+    idt_set(VEC_LAPIC_SPURIOUS, (uint64_t)isr255);
     /* #DF is the last chance to say anything before a triple fault resets
      * the machine. Give it a stack that cannot itself be the problem —
      * a stack overflow or a bad rsp0 otherwise reboots with no output. */
@@ -123,18 +132,6 @@ uint64_t exception_recovery_err_code(void) {
 uint64_t exception_recovery_rip(void) {
     return exception_recovery.rip;
 }
-
-struct registers {
-    uint64_t r15, r14, r13, r12, r11, r10, r9, r8;
-    uint64_t rdi, rsi, rbp, rbx, rdx, rcx, rax;
-    uint64_t int_num;
-    uint64_t err_code;
-    uint64_t rip;
-    uint64_t cs;
-    uint64_t rflags;
-    uint64_t rsp;
-    uint64_t ss;
-};
 
 static const char *exception_names[32] = {
     "divide error", "debug", "NMI", "breakpoint",
@@ -213,7 +210,7 @@ static const char *fault_address_region(uint64_t address) {
     return "kernel image range";
 }
 
-static uint64_t interrupted_rsp(const struct registers *r) {
+static uint64_t interrupted_rsp(const struct interrupt_frame *r) {
     if ((r->cs & 3) == 3)
         return r->rsp;
 
@@ -338,7 +335,8 @@ static void page_fault_walk(uint64_t address, uint64_t cr3) {
               (entry & PF_ADDR_MASK) | (address & 0xFFF));
 }
 
-static void page_fault_report(const struct registers *r, uint64_t address) {
+static void page_fault_report(const struct interrupt_frame *r,
+                              uint64_t address) {
     uint64_t error = r->err_code;
     uint64_t cr0;
     uint64_t cr4;
@@ -417,7 +415,7 @@ static void page_fault_report(const struct registers *r, uint64_t address) {
     page_fault_walk(address, cr3);
 }
 
-void isr_handler(struct registers *r) {
+void isr_handler(struct interrupt_frame *r) {
   if (r->int_num < 32) {
     const char *name = "unknown";
 
@@ -425,8 +423,8 @@ void isr_handler(struct registers *r) {
       name = exception_names[r->int_num];
     }
 
-    log_write_exception(r->int_num, name, r->err_code, r->rip);
     if (exception_recovery.armed) {
+      log_write_exception(r->int_num, name, r->err_code, r->rip);
       exception_recovery.armed = 0;
       exception_recovery.faulted = 1;
       exception_recovery.int_num = r->int_num;
@@ -437,19 +435,22 @@ void isr_handler(struct registers *r) {
       return;
     }
 
+    uint64_t cr2 = 0;
     if (r->int_num == 14) {
-        uint64_t cr2;
         __asm__ volatile ("mov %%cr2, %0" : "=r"(cr2));
         page_fault_report(r, cr2);
     }
 
-    log_write("kernel panic: unhandled exception", KERNEL, LOG_FATAL);
-    for (;;) __asm__ volatile ("cli; hlt");
+    panic_from_exception(name, r, cr2, r->int_num == 14);
   } else if (r->int_num < 48) {
     uint8_t irq = r->int_num - 32;
     if (irq_handlers[irq])
       irq_handlers[irq]();
     pic_send_eoi(irq);
+  } else if (r->int_num == VEC_SMP_WORK_IPI) {
+    lapic_eoi();
+  } else if (r->int_num == VEC_LAPIC_SPURIOUS) {
+    /* Intel specifies that a spurious LAPIC interrupt must not be EOIed. */
   }
   // if (r->int_num < 32) {
   //     serial_write_str("\n!! exception ");

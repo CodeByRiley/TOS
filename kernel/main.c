@@ -193,9 +193,8 @@ void kernel_main(uint64_t mb2_addr) {
 
   __asm__ volatile("sti");
 
-  /* Bring up Application Processors. Needs PIT IRQs running (smp_delay_us
-   * counts ticks) so it has to happen after sti. APs land in ap_main and
-   * halt — they'll join the scheduler in a later stage. */
+  /* Bring up Application Processors after PIT timing is available. APs run
+   * the SMP-safe kernel work queue; userspace scheduling remains on the BSP. */
   smp_boot_aps();
 
   log_write("kernel booted", KERNEL, LOG_INFO);
@@ -209,6 +208,9 @@ void kernel_main(uint64_t mb2_addr) {
   long winman_pid = process_spawn_async("winman.elf", winman_argv);
   if (winman_pid < 0) {
     log_write("winman: launch failed — TTY-only mode", USER, LOG_INFO);
+  } else {
+    log_write_hex("winman: spawn returned pid =", (uint64_t)winman_pid,
+                  USER, LOG_INFO);
   }
 
   char *sh_argv[] = {(char *)"sh", 0};

@@ -30,7 +30,10 @@
 #define FB_VIRT_BASE  0xFFFFE00000000000ULL
 /* Upper bound on FB size — 64 MiB. Covers 4K@32bpp (33 MiB) with headroom.
  * Anything bigger fails attach_virtio cleanly rather than corrupting state. */
-#define FB_MAX_PAGES  (64ULL * 1024 * 1024 / 4096)
+#define FB_MAX_BYTES  (64ULL * 1024 * 1024)
+#define FB_MAX_PAGES  (FB_MAX_BYTES / 4096)
+#define FB_MIN_RESOURCE_W 2048U
+#define FB_MIN_RESOURCE_H 2048U
 
 #define FB_MODE_NONE   0
 #define FB_MODE_MB2    1
@@ -141,7 +144,12 @@ static void mark_full_damage(void) {
  * contiguous MMIO range. In virtio mode it's the scattered PMM frames
  * handed to RESOURCE_ATTACH_BACKING. */
 static uint64_t  fb_pages[FB_MAX_PAGES];
-static uint32_t  fb_n_pages = 0;
+static uint32_t  fb_n_pages = 0;       /* visible span exposed by sys_fb_map */
+static uint32_t  fb_mapped_pages = 0;  /* prefix mapped at FB_VIRT_BASE */
+static uint32_t  fb_owned_pages = 0;   /* PMM frames owned by virtio mode */
+static uint64_t  fb_pool_phys = 0;     /* contiguous virtio backing base */
+static uint32_t  fb_resource_w = 0;
+static uint32_t  fb_resource_h = 0;
 static uint64_t  fb_mb2_phys = 0;   /* preserved so phys() still answers in MB2 mode */
 
 uint64_t framebuffer_phys(void) {
@@ -214,6 +222,7 @@ int framebuffer_init(uint64_t mb2_addr) {
         fb_pages[i] = t->addr + (uint64_t)i * 4096;
     }
     fb_n_pages = (uint32_t)pages;
+    fb_mapped_pages = fb_n_pages;
 
     if (map_pages_at_vbase(fb_pages, fb_n_pages, /*cacheable=*/0) != 0) {
         log_write("FB: MB2 map failed", KERNEL, LOG_ERROR);
@@ -255,52 +264,147 @@ struct gfx_surface framebuffer_get_gfx_surface(void) {
  * mode also free the underlying PMM frames. MB2 frames are MMIO, not owned by
  * pmm, so leave them alone. */
 static void teardown_current(int free_virtio_pages) {
-    if (fb_n_pages == 0) return;
-    unmap_pages_at_vbase(fb_n_pages);
-    if (free_virtio_pages && fb_mode == FB_MODE_VIRTIO) {
-        for (uint32_t i = 0; i < fb_n_pages; i++) pmm_free_frame(fb_pages[i]);
-    }
+    if (fb_mapped_pages > 0) unmap_pages_at_vbase(fb_mapped_pages);
+    if (free_virtio_pages && fb_mode == FB_MODE_VIRTIO && fb_pool_phys)
+        pmm_free_contiguous(fb_pool_phys, fb_owned_pages);
     fb_n_pages = 0;
+    fb_mapped_pages = 0;
+    fb_owned_pages = 0;
+    fb_pool_phys = 0;
 }
 
-/* Allocate `n_pages` of pmm-backed pixel buffer, populate fb_pages, map at
- * FB_VIRT_BASE (cacheable), and zero the new buffer. Caller has already
- * cleared the previous mapping. Returns 0 on success. */
-static int alloc_and_map_virtio(uint32_t n_pages) {
-    if (n_pages > FB_MAX_PAGES) {
-        log_write_hex("FB: virtio backing too large, pages =", n_pages, KERNEL, LOG_ERROR);
+/* Allocate one maximum-sized pool. The host resource keeps all of it attached,
+ * while the kernel and userspace map only the prefix needed by visible rows. */
+static int alloc_and_map_virtio(uint32_t visible_pages) {
+    if (visible_pages > FB_MAX_PAGES) {
+        log_write_hex("FB: virtio visible span too large, pages =", visible_pages,
+                      KERNEL, LOG_ERROR);
         return -1;
     }
-    for (uint32_t i = 0; i < n_pages; i++) {
-        uint64_t p = pmm_alloc_frame();
-        if (!p) {
-            log_write("FB: pmm exhausted during attach", KERNEL, LOG_ERROR);
-            for (uint32_t j = 0; j < i; j++) pmm_free_frame(fb_pages[j]);
-            return -1;
-        }
-        fb_pages[i] = p;
+
+    /* One contiguous allocation avoids O(n^2) repeated first-fit scans and
+     * guarantees RESOURCE_ATTACH_BACKING fits in one memory entry. */
+    fb_pool_phys = pmm_alloc_contiguous_below(UINT64_MAX, FB_MAX_PAGES);
+    if (!fb_pool_phys) {
+        log_write("FB: no contiguous 64 MiB backing pool", KERNEL, LOG_ERROR);
+        return -1;
     }
-    fb_n_pages = n_pages;
-    if (map_pages_at_vbase(fb_pages, fb_n_pages, /*cacheable=*/1) != 0) {
+    for (uint32_t i = 0; i < FB_MAX_PAGES; i++)
+        fb_pages[i] = fb_pool_phys + (uint64_t)i * 4096;
+    fb_owned_pages = FB_MAX_PAGES;
+
+    if (map_pages_at_vbase(fb_pages, visible_pages, 1) != 0) {
         log_write("FB: virtio map failed", KERNEL, LOG_ERROR);
-        for (uint32_t i = 0; i < n_pages; i++) pmm_free_frame(fb_pages[i]);
-        fb_n_pages = 0;
+        pmm_free_contiguous(fb_pool_phys, FB_MAX_PAGES);
+        fb_pool_phys = 0;
+        fb_owned_pages = 0;
         return -1;
     }
-    memset((void*)FB_VIRT_BASE, 0, (uint64_t)n_pages * 4096);
+    fb_n_pages = visible_pages;
+    fb_mapped_pages = visible_pages;
+    return 0;
+}
+
+static uint32_t visible_page_count(uint32_t pitch, uint32_t h) {
+    uint64_t bytes = (uint64_t)pitch * (uint64_t)h;
+    return (uint32_t)((bytes + 4095) / 4096);
+}
+
+/* Resize growth maps only the newly-visible suffix. Shrinking leaves mappings
+ * in place so a later grow does not repeat page-table work. */
+static int ensure_visible_pages(uint32_t pages) {
+    if (pages > fb_owned_pages) return -1;
+    while (fb_mapped_pages < pages) {
+        uint32_t i = fb_mapped_pages;
+        if (vmm_map(FB_VIRT_BASE + (uint64_t)i * 4096, fb_pages[i],
+                    VMM_PRESENT | VMM_WRITE) != 0) return -1;
+        fb_mapped_pages++;
+    }
+    return 0;
+}
+
+static uint32_t resource_dimension(uint32_t value, uint32_t minimum) {
+    uint32_t result = minimum;
+    while (result < value && result <= UINT32_MAX / 2)
+        result *= 2;
+    return result;
+}
+
+/* Reserve power-of-two headroom so a normal drag changes only SET_SCANOUT.
+ * If rounding would exceed the 64 MiB pool, use the exact dimensions. */
+static int choose_resource_size(uint32_t w, uint32_t h,
+                                uint32_t *resource_w, uint32_t *resource_h) {
+    if (w == 0 || h == 0 || (uint64_t)w * (uint64_t)h * 4 > FB_MAX_BYTES)
+        return -1;
+    uint32_t rounded_w = resource_dimension(w, FB_MIN_RESOURCE_W);
+    uint32_t rounded_h = resource_dimension(h, FB_MIN_RESOURCE_H);
+    if (rounded_w < w || rounded_h < h ||
+        (uint64_t)rounded_w * (uint64_t)rounded_h * 4 > FB_MAX_BYTES) {
+        *resource_w = w;
+        *resource_h = h;
+    } else {
+        *resource_w = rounded_w;
+        *resource_h = rounded_h;
+    }
+    return 0;
+}
+
+static uint32_t resource_page_count(uint32_t w, uint32_t h) {
+    return visible_page_count(w * 4, h);
+}
+
+static int do_resize(uint32_t w, uint32_t h) {
+    if (fb_mode != FB_MODE_VIRTIO) return -1;
+    uint32_t resource_w = fb_resource_w;
+    uint32_t resource_h = fb_resource_h;
+    int recreate = w > resource_w || h > resource_h;
+    if (recreate && choose_resource_size(w, h, &resource_w, &resource_h) != 0)
+        return -1;
+
+    uint32_t pitch = resource_w * 4;
+    uint32_t pages = visible_page_count(pitch, h);
+    if (ensure_visible_pages(pages) != 0) return -1;
+
+    int rc;
+    if (recreate) {
+        uint32_t resource_pages = resource_page_count(resource_w, resource_h);
+        rc = virtio_gpu_create_scanout_2d(resource_w, resource_h, w, h,
+                                          fb_pages, resource_pages);
+    } else {
+        rc = virtio_gpu_resize_scanout_2d(w, h);
+    }
+    if (rc != 0) {
+        log_write("FB: virtio resize scanout failed", KERNEL, LOG_ERROR);
+        return -1;
+    }
+
+    fb_n_pages = pages;
+    fb_resource_w = resource_w;
+    fb_resource_h = resource_h;
+    fb_w     = w;
+    fb_h     = h;
+    fb_pitch = pitch;
+    fb       = (uint32_t*)FB_VIRT_BASE;
+    mouse_set_bounds(fb_w, fb_h);
+    mark_full_damage();
+    fb_resize_generation++;
     return 0;
 }
 
 int framebuffer_attach_virtio(void) {
     uint32_t w = 0, h = 0;
     if (virtio_gpu_get_dims(&w, &h) != 0) return -1;
-    uint64_t bytes = (uint64_t)w * (uint64_t)h * 4;
-    uint32_t pages = (uint32_t)((bytes + 4095) / 4096);
+    uint32_t resource_w = 0, resource_h = 0;
+    if (choose_resource_size(w, h, &resource_w, &resource_h) != 0) return -1;
+    uint32_t pitch = resource_w * 4;
+    uint32_t pages = visible_page_count(pitch, h);
 
     teardown_current(/*free_virtio_pages=*/1);
     if (alloc_and_map_virtio(pages) != 0) return -1;
 
-    if (virtio_gpu_set_scanout_2d(w, h, fb_pages, fb_n_pages) != 0) {
+    uint32_t resource_pages = resource_page_count(resource_w, resource_h);
+    if (virtio_gpu_create_scanout_2d(resource_w, resource_h, w, h,
+                                     fb_pages, resource_pages) != 0) {
         log_write("FB: virtio set_scanout failed", KERNEL, LOG_ERROR);
         return -1;
     }
@@ -308,37 +412,13 @@ int framebuffer_attach_virtio(void) {
     fb       = (uint32_t*)FB_VIRT_BASE;
     fb_w     = w;
     fb_h     = h;
-    fb_pitch = w * 4;
+    fb_pitch = pitch;
+    fb_resource_w = resource_w;
+    fb_resource_h = resource_h;
     fb_mode  = FB_MODE_VIRTIO;
     mark_full_damage();
     log_write_hex("FB: virtio attached, w =", fb_w, KERNEL, LOG_INFO);
     log_write_hex("FB: virtio attached, h =", fb_h, KERNEL, LOG_INFO);
-    return 0;
-}
-
-static int do_resize(uint32_t w, uint32_t h) {
-    if (fb_mode != FB_MODE_VIRTIO) return -1;
-    uint64_t bytes = (uint64_t)w * (uint64_t)h * 4;
-    uint32_t pages = (uint32_t)((bytes + 4095) / 4096);
-
-    /* Userspace may still have USER_FB_BASE mapped to the previous backing
-     * until its next fb_map() call. Keep old frames allocated so stale
-     * mappings cannot scribble over newly reused PMM pages. */
-    teardown_current(/*free_virtio_pages=*/0);
-    if (alloc_and_map_virtio(pages) != 0) return -1;
-    if (virtio_gpu_set_scanout_2d(w, h, fb_pages, fb_n_pages) != 0) {
-        log_write("FB: virtio resize set_scanout failed", KERNEL, LOG_ERROR);
-        return -1;
-    }
-    fb_w     = w;
-    fb_h     = h;
-    fb_pitch = w * 4;
-    fb       = (uint32_t*)FB_VIRT_BASE;
-    mouse_set_bounds(fb_w, fb_h);
-    mark_full_damage();
-    fb_resize_generation++;
-    log_write_hex("FB: resized, w =", fb_w, KERNEL, LOG_INFO);
-    log_write_hex("FB: resized, h =", fb_h, KERNEL, LOG_INFO);
     return 0;
 }
 
@@ -349,9 +429,7 @@ int framebuffer_check_resize(void) {
     uint32_t w = 0, h = 0;
     if (virtio_gpu_get_dims(&w, &h) != 0) return 0;
     if (w == fb_w && h == fb_h) return 0;
-
-    if (do_resize(w, h) != 0) return 0;
-    return 1;
+    return do_resize(w, h) == 0;
 }
 
 void framebuffer_present(void) {

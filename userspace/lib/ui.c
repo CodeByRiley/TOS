@@ -57,6 +57,12 @@ static int ui_next_id(struct ui_context *c) {
 /* Shared hit/press bookkeeping. Returns 1 on a completed click. */
 static int ui_interact(struct ui_context *c, int id, struct gfx_rect r,
                        int *out_hover, int *out_held) {
+    if (id <= 0) {
+        if (out_hover) *out_hover = 0;
+        if (out_held)  *out_held  = 0;
+        return 0;
+    }
+
     int hover = gfx_rect_contains(r, c->mx, c->my) && !gfx_rect_empty(r);
     if (hover) c->hot = id;
 
@@ -131,21 +137,8 @@ static void text_in(struct ui_context *c, struct gfx_rect r,
                     const char *text, uint32_t color, int centered) {
     if (!text || gfx_rect_empty(r)) return;
     const struct ui_theme *t = c->theme;
-
-    int avail = r.w - 2 * t->pad;
-    if (avail <= 0) return;
-
-    int n = gfx_text_fit(text, t->scale, avail);
-    if (n <= 0) return;
-
-    int tw = n * GFX_GLYPH_W * t->scale;
-    int th = GFX_GLYPH_H * t->scale;
-    int x = centered ? r.x + (r.w - tw) / 2 : r.x + t->pad;
-    int y = r.y + (r.h - th) / 2;
-
-    struct gfx_rect prev = gfx_clip_push(c->s, r);
-    gfx_text_n(c->s, x, y, text, (size_t)n, color, t->scale);
-    gfx_clip_set(c->s, prev);
+    gfx_text_box(c->s, r, text, color, t->scale, t->pad,
+                 centered ? GFX_TEXT_CENTER : GFX_TEXT_LEFT);
 }
 
 void ui_label(struct ui_context *c, struct gfx_rect r, const char *text) {
@@ -165,7 +158,11 @@ void ui_label_muted(struct ui_context *c, struct gfx_rect r,
 /* Widgets */
 
 int ui_button(struct ui_context *c, struct gfx_rect r, const char *label) {
-    int id = ui_next_id(c);
+    return ui_button_id(c, ui_next_id(c), r, label);
+}
+
+static int button_box(struct ui_context *c, int id, struct gfx_rect r,
+                      int *out_held) {
     if (gfx_rect_empty(r)) return 0;
 
     int hover, held;
@@ -180,6 +177,16 @@ int ui_button(struct ui_context *c, struct gfx_rect r, const char *label) {
     if (held) gfx_bevel(c->s, r, t->dark, t->light, t->border);
     else      gfx_bevel(c->s, r, t->light, t->dark, t->border);
 
+    if (out_held) *out_held = held;
+    return clicked;
+}
+
+int ui_button_id(struct ui_context *c, int id, struct gfx_rect r,
+                 const char *label) {
+    const struct ui_theme *t = c->theme;
+    int held = 0;
+    int clicked = button_box(c, id, r, &held);
+
     struct gfx_rect lr = r;
     if (held) { lr.x += 1; lr.y += 1; }
     text_in(c, lr, label, t->text, 1);
@@ -187,9 +194,41 @@ int ui_button(struct ui_context *c, struct gfx_rect r, const char *label) {
     return clicked;
 }
 
+int ui_icon_button(struct ui_context *c, struct gfx_rect r,
+                   const uint8_t *mask, int mw, int mh,
+                   uint32_t icon_color) {
+    return ui_icon_button_id(c, ui_next_id(c), r, mask, mw, mh, icon_color);
+}
+
+int ui_icon_button_id(struct ui_context *c, int id, struct gfx_rect r,
+                      const uint8_t *mask, int mw, int mh,
+                      uint32_t icon_color) {
+    int held = 0;
+    int clicked = button_box(c, id, r, &held);
+
+    if (mask && mw > 0 && mh > 0 && !gfx_rect_empty(r)) {
+        const struct ui_theme *t = c->theme;
+        struct gfx_rect inner = gfx_rect_inset(r, t->border + 1);
+        int scale = t->scale < 1 ? 1 : t->scale;
+        while (scale > 1 && (mw * scale > inner.w || mh * scale > inner.h))
+            scale--;
+
+        int ix = r.x + (r.w - mw * scale) / 2;
+        int iy = r.y + (r.h - mh * scale) / 2;
+        if (held) { ix += 1; iy += 1; }
+        gfx_mask(c->s, ix, iy, mask, mw, mh, icon_color, scale);
+    }
+
+    return clicked;
+}
+
 int ui_checkbox(struct ui_context *c, struct gfx_rect r,
                 const char *label, int *value) {
-    int id = ui_next_id(c);
+    return ui_checkbox_id(c, ui_next_id(c), r, label, value);
+}
+
+int ui_checkbox_id(struct ui_context *c, int id, struct gfx_rect r,
+                   const char *label, int *value) {
     if (gfx_rect_empty(r)) return 0;
 
     int hover, held;

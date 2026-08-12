@@ -17,10 +17,14 @@
  *     ui_checkbox(&ui, ui_layout_row(&col, 16), "Loop", &looping);
  *     ui_end(&ui);
  *
- * Widgets are identified by call order within a frame, so the sequence of
- * calls must be stable between frames. Branching around a widget shifts
- * every later id by one; keep conditional widgets at the end, or draw
+ * The simple widgets are identified by call order within a frame, so the
+ * sequence of calls must be stable between frames. Branching around a widget
+ * shifts every later id by one; keep conditional widgets at the end, or draw
  * them disabled instead of skipping them.
+ *
+ * Dynamic callers such as winman can use the *_id variants instead. Those
+ * take caller-owned, non-zero ids, so a taskbar button can use a window
+ * handle and keep its hover/press state even when other windows reorder.
  *
  * Implementation: userspace/lib/ui.c.
  */
@@ -112,10 +116,23 @@ void ui_label_muted(struct ui_context *c, struct gfx_rect r,
 /* Returns 1 on the frame the button is released with the pointer still
  * inside it. A press that drags off and releases elsewhere returns 0. */
 int  ui_button(struct ui_context *c, struct gfx_rect r, const char *label);
+int  ui_button_id(struct ui_context *c, int id, struct gfx_rect r,
+                  const char *label);
+
+/* Beveled button with a centered mask icon. Every non-zero mask byte draws
+ * `icon_color`; dimensions are in source mask bytes before scaling. */
+int  ui_icon_button(struct ui_context *c, struct gfx_rect r,
+                    const uint8_t *mask, int mw, int mh,
+                    uint32_t icon_color);
+int  ui_icon_button_id(struct ui_context *c, int id, struct gfx_rect r,
+                       const uint8_t *mask, int mw, int mh,
+                       uint32_t icon_color);
 
 /* Toggles *value and returns 1 on the frame it changed. */
 int  ui_checkbox(struct ui_context *c, struct gfx_rect r,
                  const char *label, int *value);
+int  ui_checkbox_id(struct ui_context *c, int id, struct gfx_rect r,
+                    const char *label, int *value);
 
 /* Fills `r` proportionally; percent is clamped to 0..100. When `label` is
  * non-NULL it is centred over the bar. */

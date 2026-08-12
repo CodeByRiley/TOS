@@ -19,6 +19,7 @@
 #include "loader/elf.h"
 #include "loader/process.h"
 #include "fs/stdio.h"
+#include "sched/sched.h"
 
 /* USER_IMAGE_MAX (loader/process.h) bounds the image region: it sits below
  * the mmap arena so a segment can never land on mmap or shmem, and it
@@ -107,6 +108,7 @@ uint64_t elf_load(const char *path, uint64_t *pml4) {
          * segment used to be. ELFs are aligned enough that this almost never
          * actually fires in practice, which is exactly the kind of bug that
          * shows up months later wearing a costume. */
+        int mapped_since_yield = 0;
         for (uint64_t va = va_start; va < va_end; va += 4096) {
             if (!vmm_translate_in(pml4, va)) {
                 uint64_t phys = pmm_alloc_frame();
@@ -126,12 +128,17 @@ uint64_t elf_load(const char *path, uint64_t *pml4) {
                     return 0;
                 }
             }
+            if (++mapped_since_yield == 32) {
+                mapped_since_yield = 0;
+                task_yield();
+            }
         }
 
         /* Copy file bytes a page at a time through the HHDM. Consecutive
          * user vaddrs are not consecutive physical frames, so this cannot
          * be one flat read. BSS (memsz > filesz) keeps the zeros above. */
         fseek(fp, ph.p_offset, SEEK_SET);
+        int copied_since_yield = 0;
         for (uint64_t done = 0; done < ph.p_filesz; ) {
             uint64_t va    = ph.p_vaddr + done;
             /* Page-aligned vaddr in, so the return is a clean frame base
@@ -150,6 +157,10 @@ uint64_t elf_load(const char *path, uint64_t *pml4) {
                 return 0;
             }
             done += chunk;
+            if (++copied_since_yield == 32) {
+                copied_since_yield = 0;
+                task_yield();
+            }
         }
 
     }

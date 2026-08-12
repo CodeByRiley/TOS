@@ -41,10 +41,9 @@ uint32_t  framebuffer_pitch(void);
 uint32_t  framebuffer_num_pages(void);
 uint64_t  framebuffer_phys_for_page(uint32_t idx);
 
-/* One-shot switch to the virtio-gpu backend. Allocates a fresh scatter-
- * gather pixel buffer sized to the current scanout, attaches it as the
- * host resource, and re-points the active mappings. Must be called after
- * virtio_gpu_init succeeds. On failure the MB2 buffer stays active. */
+/* One-shot switch to the virtio-gpu backend. Allocates a reusable 64 MiB
+ * backing pool and an oversized host resource so ordinary resizes only change
+ * the scanout rectangle. Must be called after virtio_gpu_init succeeds. */
 int       framebuffer_attach_virtio(void);
 
 /* Poll virtio-gpu for a host-side window resize. Returns 1 if rebound

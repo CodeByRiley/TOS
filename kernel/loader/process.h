@@ -2,7 +2,8 @@
  *
  * Wraps PML4 creation, user-stack allocation, ELF load, and task spawn
  * into one entry point. exec() blocks the caller until the child exits;
- * spawn_async() returns the child's pid immediately without waiting.
+ * spawn_async() reserves the final child pid and queues image loading on a
+ * kernel worker before returning.
  *
  * Implementation: kernel/loader/process.c.
  */
@@ -48,12 +49,12 @@ int user_stack_alloc_in(uint64_t *pml4);
 /* Synchronous exec: blocks until the child exits and returns its code. */
 long process_exec(const char *path, char *const argv[]);
 
-/* Fire-and-forget spawn: returns child pid (>0) without waiting. Caller
- * has no claim on the exit code; the child reaches zombie state and is
- * reaped by future improvements (currently — no reaper, leaks the slot
- * on exit). Used for daemons like winman that must run alongside a
- * foreground shell. */
+/* Fire-and-forget spawn: reserves and returns the final child pid (>0), then
+ * loads the image on the BSP loader task. The task is visible as LOADING until
+ * activation and is reaped normally if loading fails. */
 long process_spawn_async(const char *path, char *const argv[]);
+/* Cancel a queued or in-progress async load. Used by kill(). */
+int process_cancel_async(int pid, long code);
 long process_kill(long pid, int signal);
 
 /* Allocate a fresh PML4 for a new process. Shares the kernel-low

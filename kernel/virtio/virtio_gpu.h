@@ -2,8 +2,8 @@
  *
  * QEMU exposes virtio-gpu as PCI vendor 0x1AF4 device 0x1050. This driver
  * owns the host-side resource; framebuffer.c owns the kernel-side pixel
- * buffer. They cooperate via virtio_gpu_set_scanout_2d (attach backing)
- * and virtio_gpu_flush_rect (push pixels).
+ * buffer. They cooperate via virtio_gpu_create_scanout_2d (attach backing),
+ * virtio_gpu_resize_scanout_2d, and virtio_gpu_flush_rect (push pixels).
  *
  * Pixel format is fixed at B8G8R8X8 (0xXXRRGGBB stored little-endian
  * matches the existing framebuffer layout).
@@ -68,6 +68,8 @@ struct virtio_gpu_config {
 struct virtio_gpu {
     int      ready;
     uint32_t resource_id;        /* current scanout-resource id, 0 if none */
+    uint32_t resource_w;
+    uint32_t resource_h;
     uint32_t scanout_w;
     uint32_t scanout_h;
 };
@@ -79,11 +81,16 @@ int  virtio_gpu_init(void);
 
 int  virtio_gpu_get_dims(uint32_t *w, uint32_t *h);
 
-/* Replace the scanout's backing with the supplied scatter-gather list of
- * physical pages. n_pages * 4096 must be >= w*h*4. Internally drops +
- * recreates the resource id. Returns 0 on success. */
-int  virtio_gpu_set_scanout_2d(uint32_t w, uint32_t h,
-                               const uint64_t *page_phys, uint32_t n_pages);
+/* Create one backed resource and display its top-left scanout_w x scanout_h
+ * rectangle. Keeping the resource larger than the current scanout lets a
+ * later host resize use only SET_SCANOUT instead of recreating the resource. */
+int  virtio_gpu_create_scanout_2d(uint32_t resource_w, uint32_t resource_h,
+                                  uint32_t scanout_w, uint32_t scanout_h,
+                                  const uint64_t *page_phys, uint32_t n_pages);
+
+/* Change the visible rectangle of the existing resource. The requested size
+ * must fit inside resource_w x resource_h. */
+int  virtio_gpu_resize_scanout_2d(uint32_t w, uint32_t h);
 
 /* Push (x, y, w, h) from the kernel-side pixel buffer to the host
  * scanout. Wraps TRANSFER_TO_HOST_2D + RESOURCE_FLUSH. */

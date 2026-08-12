@@ -81,5 +81,6 @@ void     lapic_eoi(void);
  * SIPI per Intel SDM). */
 void lapic_send_init(uint8_t apic_id);
 void lapic_send_startup(uint8_t apic_id, uint8_t vector);
+void lapic_send_fixed(uint8_t apic_id, uint8_t vector);
 
 #endif

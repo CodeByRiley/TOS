@@ -27,6 +27,12 @@ static inline void wrmsr(uint32_t msr, uint64_t val) {
     __asm__ volatile ("wrmsr" :: "c"(msr), "a"(lo), "d"(hi) : "memory");
 }
 
+static inline uint64_t rdmsr(uint32_t msr) {
+    uint32_t lo, hi;
+    __asm__ volatile ("rdmsr" : "=a"(lo), "=d"(hi) : "c"(msr));
+    return ((uint64_t)hi << 32) | lo;
+}
+
 static void set_gs_base(struct cpu_local *c) {
     /* Set both GS_BASE and KERNEL_GS_BASE to the same value. We don't use
      * SWAPGS (userspace doesn't touch gs), but staging the same pointer
@@ -84,5 +90,19 @@ struct cpu_local *percpu_this(void) {
     return c;
 }
 
-int  percpu_cpu_count(void)      { return cpu_count; }
-void percpu_set_count(int n)     { if (n >= 1 && n <= MAX_CPUS) cpu_count = n; }
+int percpu_current_id(void) {
+    uint64_t base = rdmsr(MSR_GS_BASE);
+    for (int i = 0; i < MAX_CPUS; i++) {
+        if (base == (uint64_t)(uintptr_t)&cpus[i])
+            return i;
+    }
+    return 0;
+}
+
+int percpu_cpu_count(void) { return cpu_count; }
+
+void percpu_set_count(int n) {
+    if (n < 1) n = 1;
+    if (n > MAX_CPUS) n = MAX_CPUS;
+    cpu_count = n;
+}

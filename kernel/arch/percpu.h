@@ -71,6 +71,10 @@ void              percpu_arm_gs_this(int cpu_id);
 struct cpu_local *percpu_get(int cpu_id);
 struct cpu_local *percpu_this(void);
 
+/* Read IA32_GS_BASE and identify the calling CPU without dereferencing GS.
+ * Safe for panic reporting even if GS has not been armed yet. */
+int               percpu_current_id(void);
+
 /* Active CPU count and BSP-only setter (called once after acpi_init). */
 int               percpu_cpu_count(void);
 void              percpu_set_count(int n);

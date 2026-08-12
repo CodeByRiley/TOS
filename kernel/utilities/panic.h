@@ -1,9 +1,9 @@
 /* kernel/utilities/panic.h — unrecoverable-error surface.
  *
- * panic() logs at LOG_FATAL with the call site attached and then halts this
- * CPU for good. Use it for invariant violations the kernel cannot continue
- * past — the alternative is usually a silent hang, which is far harder to
- * diagnose from a boot log.
+ * panic() emits a structured serial report with the call site, CPU/task and
+ * bounded backtrace, draws a restart-style framebuffer screen when possible,
+ * and then halts this CPU for good. Use it for invariant violations the
+ * kernel cannot continue past.
  *
  * Implementation: kernel/utilities/panic.c.
  */
@@ -12,9 +12,19 @@
 
 #include "devices/io.h"
 
+struct interrupt_frame;
+
 /* Never returns. Prefer the panic() macro so the call site fills itself in. */
 __attribute__((noreturn))
 void panic_at(const char *msg, const char *file, int line, const char *func);
+
+/* Fatal CPU exception entry. The IDT recovery path handles recoverable probe
+ * faults before calling this, so this function never returns. */
+__attribute__((noreturn))
+void panic_from_exception(const char *name,
+                          const struct interrupt_frame *frame,
+                          uint64_t fault_address,
+                          int has_fault_address);
 
 #define panic(msg) panic_at((msg), __FILE__, __LINE__, __func__)
 

@@ -3,8 +3,9 @@
 ; Copied verbatim to physical address 0x8000 by the BSP before sending
 ; SIPI. The AP wakes in 16-bit real mode at CS=0x0800, IP=0x0000 (linear
 ; 0x8000) and trampolines itself up to 64-bit long mode, then jumps to a
-; C entry point whose pointer is patched in at well-known offsets near
-; the end of this blob.
+; higher-half handoff whose pointer is patched in at well-known offsets near
+; the end of this blob. That handoff switches to the final kernel CR3 before
+; installing the AP's heap-backed stack and entering C.
 ;
 ; Page tables: we use the *existing* kernel PML4 (its physical address is
 ; patched in below) because boot identity-maps the low 1 GiB, which covers
@@ -14,8 +15,9 @@
 ; Patch layout (offsets from 0x8000):
 ;   ap_pml4_phys  : dword — kernel PML4 physical address (32-bit fits, we're
 ;                            below 4 GiB at this point in boot)
-;   ap_stack_top  : qword — top of this AP's kernel stack
-;   ap_c_entry    : qword — virtual address of ap_main()
+;   ap_stack_top  : qword — ABI-adjusted AP kernel stack
+;   ap_handoff    : qword — virtual address of ap_long_mode_handoff()
+;   ap_target_cr3 : qword — final kernel PML4 physical address
 ;
 ; Assembled with `nasm -f bin` so addresses are 0x8000-relative.
 
@@ -47,9 +49,19 @@ ap_pmode_start:
     mov gs, ax
     mov ss, ax
 
+    ; Every AP must establish the x87/SSE state assumed by the x86-64 ABI.
+    mov eax, cr0
+    and eax, ~(1 << 2)           ; clear CR0.EM
+    and eax, ~(1 << 3)           ; clear CR0.TS
+    or  eax, 1 << 1              ; CR0.MP
+    mov cr0, eax
+
     mov eax, cr4
-    or  eax, 1 << 5             ; CR4.PAE
+    or  eax, (1 << 5) | (1 << 9) | (1 << 10) ; PAE | OSFXSR | OSXMMEXCPT
     mov cr4, eax
+
+    fninit
+    ldmxcsr [ap_mxcsr_default]
 
     mov eax, [ap_pml4_phys]
     mov cr3, eax
@@ -77,11 +89,16 @@ ap_lmode_start:
     mov gs, ax
     mov ss, ax
 
-    mov rsp, [ap_stack_top]
-    mov rax, [ap_c_entry]
-    ; Pass our cpu_id via rdi. BSP patched it at ap_cpu_id.
+    ; Keep all handoff state in registers. The linked higher-half stub changes
+    ; CR3 before loading RSP, so the bootstrap root need not map the AP stack.
+    mov rsi, [ap_target_cr3]
+    mov rdx, [ap_stack_top]
+    mov rax, [ap_handoff]
     mov edi, [ap_cpu_id]
     jmp rax
+
+align 4
+ap_mxcsr_default: dd 0x1F80
 
 ; ---------------------------------------------------------------- GDTs
 
@@ -110,7 +127,8 @@ align 8
 ap_pml4_phys:   dd 0
 ap_cpu_id:      dd 0
 ap_stack_top:   dq 0
-ap_c_entry:     dq 0
+ap_handoff:     dq 0
+ap_target_cr3:  dq 0
 
 ; Export the patch-slot offsets so C can poke them via well-known constants.
 ; nasm doesn't expose these names to ld in -f bin, so we publish them via

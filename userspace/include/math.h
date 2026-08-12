@@ -1,14 +1,10 @@
-/* userspace/include/math.h — minimal libm header.
- *
- * Only the entry points actually called by ported code (DOOM). All bodies
- * live in lib/math_stub.c. sqrt/fabs/floor/ceil work; the trig + pow are
- * stubs that return safe defaults. Replace with real libm when needed.
- */
 #ifndef MATH_H
 #define MATH_H
 
-#define M_PI   3.14159265358979323846
-#define M_PI_2 1.57079632679489661923
+#define LN2             0.69314718055994530942
+#define M_PI            3.14159265358979323846
+#define M_PI_DIV_2      1.57079632679489661923
+#define M_PI_2          6.28318530717958647692
 #define M_RAD_TO_DEG(x) ((x) * 180.0 / M_PI)
 #define M_DEG_TO_RAD(x) ((x) * M_PI / 180.0)
 

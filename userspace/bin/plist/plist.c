@@ -22,6 +22,7 @@ static const char *state_str(int s) {
     case PROC_STATE_READY:    return "READY";
     case PROC_STATE_DEAD:     return "DEAD";
     case PROC_STATE_SLEEPING: return "SLEEPING";
+    case PROC_STATE_LOADING:  return "LOADING";
     default:                  return "UNKNOWN";
     }
 }

@@ -6,6 +6,7 @@
 #include "loader/pe.h"
 #include "loader/process.h"
 #include "fs/stdio.h"
+#include "sched/sched.h"
 
 #define IMAGE_SCN_MEM_EXECUTE 0x20000000
 #define IMAGE_SCN_MEM_READ    0x40000000
@@ -109,6 +110,7 @@ uint64_t pe_load(const char *path, uint64_t *pml4) {
         if (!(sh.characteristics & IMAGE_SCN_MEM_EXECUTE)) flags |= VMM_NX;
 
         /* Map missing pages and zero them, just like ELF */
+        int mapped_since_yield = 0;
         for (uint64_t va = va_start; va < va_end; va += 4096) {
             if (!vmm_translate_in(pml4, va)) {
                 uint64_t phys = pmm_alloc_frame();
@@ -125,11 +127,16 @@ uint64_t pe_load(const char *path, uint64_t *pml4) {
                     return 0;
                 }
             }
+            if (++mapped_since_yield == 32) {
+                mapped_since_yield = 0;
+                task_yield();
+            }
         }
 
         /* Copy file bytes a page at a time through the HHDM */
         if (filesz > 0) {
             fseek(fp, sh.pointerToRawData, SEEK_SET);
+            int copied_since_yield = 0;
             for (uint64_t done = 0; done < filesz; ) {
                 uint64_t va    = va_base + done;
                 uint64_t phys  = vmm_translate_in(pml4, va & ~0xFFFULL);
@@ -146,6 +153,10 @@ uint64_t pe_load(const char *path, uint64_t *pml4) {
                     return 0;
                 }
                 done += chunk;
+                if (++copied_since_yield == 32) {
+                    copied_since_yield = 0;
+                    task_yield();
+                }
             }
         }
 

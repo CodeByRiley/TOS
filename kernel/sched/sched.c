@@ -1,9 +1,9 @@
 /* kernel/sched/sched.c — task table + scheduler.
  *
- * Single ready queue with PIT-driven preemption. Tasks have explicit
+ * Cooperative BSP ready queue. Tasks have explicit
  * states (RUNNING/READY/BLOCKED/SLEEPING/ZOMBIE/DEAD); sleeping tasks
  * sit off the ready queue and get re-queued by sched_wake_sleepers when
- * their wake_tick hits.
+ * their wake_tick hits. APs run the separate SMP-safe kernel work queue.
  *
  * Task lifecycle:
  *   - task_spawn         — kernel thread, runs `entry` until task_exit
@@ -121,6 +121,7 @@ static struct task *idle_task = 0;
 
 static void user_task_trampoline(void);
 static void idle_thread(void);
+static void mark_task_exited(struct task *task, long code);
 
 static void ready_push(struct task *t) {
   t->next = 0;
@@ -365,6 +366,68 @@ struct task *task_spawn_user(uint64_t *user_pml4, uint64_t entry,
 
   ready_push(t);
   return t;
+}
+
+struct task *task_reserve_user(int parent_pid) {
+  struct task *t = alloc_slot();
+  if (!t) {
+    log_write("sched: task table full", KERNEL, LOG_ERROR);
+    return 0;
+  }
+
+  void *stack_base = kmalloc(KSTACK_BYTES);
+  if (!stack_base) {
+    log_write("sched: reserved user kstack alloc failed", KERNEL, LOG_ERROR);
+    return 0;
+  }
+
+  memset(t, 0, sizeof(*t));
+  uint64_t stack_top = kstack_aligned_top(stack_base);
+  t->saved_rsp = build_initial_frame(stack_base, user_task_trampoline);
+  t->cr3 = virt_to_phys(kernel_pml4);
+  t->syscall_kstack_top = stack_top;
+  t->state = TASK_LOADING;
+  t->pid = next_pid++;
+  t->parent_pid = parent_pid;
+  t->kstack = stack_base;
+  t->input_owner_restore_pid = -1;
+  task_inherit_cwd(t, task_current());
+
+  if (alloc_rings_for(t) != 0) {
+    kfree(stack_base);
+    memset(t, 0, sizeof(*t));
+    log_write("sched: reserved user ring alloc failed", KERNEL, LOG_ERROR);
+    return 0;
+  }
+  fxstate_init(t->fxstate);
+  return t;
+}
+
+int task_activate_reserved_user(struct task *t, uint64_t *user_pml4,
+                                uint64_t entry, uint64_t user_rsp) {
+  if (!t || t->state != TASK_LOADING || !user_pml4 || !entry)
+    return -1;
+
+  int *refs = (int *)kmalloc(sizeof(int));
+  if (!refs)
+    return -1;
+  *refs = 1;
+
+  t->cr3 = virt_to_phys(user_pml4);
+  t->user_pml4 = user_pml4;
+  t->pml4_ref_count = refs;
+  t->user_entry = entry;
+  t->user_rsp_initial = user_rsp;
+  t->user_rsp_saved = user_rsp;
+  t->state = TASK_READY;
+  ready_push(t);
+  return 0;
+}
+
+void task_fail_reserved_user(struct task *t, long code) {
+  if (!t || t->state != TASK_LOADING)
+    return;
+  mark_task_exited(t, code);
 }
 
 struct task *task_spawn_thread(uint64_t entry, uint64_t user_stack) {
@@ -655,6 +718,9 @@ static void mark_task_exited(struct task *task, long code) {
 
 int task_kill(int pid, long code) {
   struct task *target = task_find(pid);
+  if (target && target->state == TASK_LOADING) {
+    return process_cancel_async(pid, code);
+  }
   /* Kernel threads and already-dead tasks are not killable from userspace. */
   if (!target || !target->user_pml4 || target->state == TASK_ZOMBIE
       || target->state == TASK_DEAD)
