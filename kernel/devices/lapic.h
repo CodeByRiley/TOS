@@ -29,18 +29,40 @@
 #define LAPIC_REG_TIMER_CURR 0x390
 #define LAPIC_REG_TIMER_DIV  0x3E0
 
-#define LAPIC_SVR_ENABLE     0x100      /* software enable bit */
+/* Spurious Interrupt Vector Register (SVR, 0x0F0) */
+//
+// Bits | Name             | Description
+// 31-12| Reserved         |
+// 11-9 | Reserved         |
+// 8    | APIC Enable      | 0 = LAPIC disabled entirely; must be set to use it
+// 7-0  | Spurious Vector  | Vector delivered for a spurious interrupt
+#define LAPIC_SVR_ENABLE     0x100
 
-/* --- ICR delivery modes + flags ------------------------------------- */
+/* Interrupt Command Register, low dword (ICR_LOW, 0x300)
+ *
+ * Writing this dword is what sends the IPI, so ICR_HIGH (target APIC id in
+ * bits 31-24) must be written first. */
+//
+// Bits  | Name              | Description
+// 31-20 | Reserved          |
+// 19-18 | Dest Shorthand    | 0 = Use ICR_HIGH, 1 = Self, 2 = All, 3 = All but self
+// 17-16 | Reserved          |
+// 15    | Trigger Mode      | 0 = Edge, 1 = Level
+// 14    | Level             | 1 = Assert, 0 = De-assert (INIT de-assert only)
+// 13    | Reserved          |
+// 12    | Delivery Status   | Read-only: 1 = a previous IPI is still in flight
+// 11    | Dest Mode         | 0 = Physical (APIC id), 1 = Logical
+// 10-8  | Delivery Mode     | 0 = Fixed, 4 = NMI, 5 = INIT, 6 = Startup (SIPI)
+// 7-0   | Vector            | Vector, or the SIPI start page for mode 6
 #define LAPIC_ICR_FIXED       (0u << 8)
 #define LAPIC_ICR_INIT        (5u << 8)
 #define LAPIC_ICR_STARTUP     (6u << 8)
 #define LAPIC_ICR_PHYSICAL    (0u << 11)
+#define LAPIC_ICR_PENDING     (1u << 12)
 #define LAPIC_ICR_ASSERT      (1u << 14)
 #define LAPIC_ICR_DEASSERT    (0u << 14)
 #define LAPIC_ICR_LEVEL_EDGE  (0u << 15)
 #define LAPIC_ICR_LEVEL_LEVEL (1u << 15)
-#define LAPIC_ICR_PENDING     (1u << 12)
 
 /* BSP entry: map MMIO and enable for this CPU. */
 void     lapic_init(uint64_t mmio_phys);

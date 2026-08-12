@@ -11,7 +11,7 @@
  * the source that corresponds to it.
  */
 #include "gfx.h"
-#include "../include/font8x8.h"
+#include "../include/fonts/font8x8.h"
 
 extern void *memcpy(void *, const void *, size_t);
 

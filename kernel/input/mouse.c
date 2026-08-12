@@ -1,9 +1,10 @@
-/* kernel/input/mouse.c — PS/2 mouse driver.
+/* kernel/input/mouse.c — mouse input driver.
  *
  * IRQ12 handler reads 3-byte (or 4-byte if intelliMouse) packets from
  * the AUX channel, converts them into relative motion + button mask,
  * updates the driver-tracked absolute cursor (clamped by
- * mouse_set_bounds), and posts MSG_MOUSE_* events to the input owner.
+ * mouse_set_bounds), and posts MSG_MOUSE_* events to the input owner. USB HID
+ * boot mice enter through mouse_hid_report() and use the same event path.
  *
  * Packet framing recovers from desync by looking for the "always 1" bit
  * in the first byte; we drop bytes until alignment looks plausible.
@@ -16,24 +17,85 @@
 #include "utilities/log.h"
 #include <stdint.h>
 
+/* Port 0x60 is data for both devices; 0x64 is status on read, command on
+ * write. Which device a byte came from is only knowable from the status
+ * register's AUX bit, latched at the same time as the data. */
 #define PS2_DATA   0x60
 #define PS2_STATUS 0x64
 #define PS2_CMD    0x64
 
+/* PS/2 Status Register (read 0x64) */
+//
+// Bits | Name          | Description
+// 7    | Parity Error  | 1 = Parity error on the last byte
+// 6    | Timeout Error | 1 = Device did not respond in time
+// 5    | AUX Data      | 1 = Byte in the output buffer came from the mouse
+// 4    | Inhibit       | 0 = Keyboard locked
+// 3    | Command/Data  | 0 = Last write went to 0x60, 1 = to 0x64
+// 2    | System Flag   | Set after a successful POST
+// 1    | Input Full    | 1 = Controller has not consumed our last write yet
+// 0    | Output Full   | 1 = A byte is waiting to be read from 0x60
+//
+// "Input" and "Output" are from the controller's perspective: wait for
+// Input Full to clear before writing, and for Output Full to set before
+// reading.
 #define PS2_STATUS_OUT_FULL 0x01
 #define PS2_STATUS_IN_FULL  0x02
 #define PS2_STATUS_AUX      0x20
 
-/* Controller commands */
+/* Controller commands (write 0x64) */
+//
+// 0x20 | Read Controller Configuration Byte  | Result appears on 0x60
+// 0x60 | Write Controller Configuration Byte | Next 0x60 write is the value
+// 0xA8 | Enable AUX port                     | Mouse port is disabled at boot
+// 0xD4 | Write to AUX device                 | Next 0x60 write goes to the mouse
+//
+// Without the 0xD4 prefix a byte written to 0x60 goes to the keyboard, so
+// every mouse command needs it — one prefix per byte, not per sequence.
 #define CTRL_READ_CCB    0x20
 #define CTRL_WRITE_CCB   0x60
 #define CTRL_ENABLE_AUX  0xA8
 #define CTRL_WRITE_AUX   0xD4
 
-/* Mouse commands */
+/* Controller Configuration Byte (read/written by 0x20 / 0x60) */
+//
+// Bits | Name             | Description
+// 7    | Reserved         |
+// 6    | Translation      | 1 = Translate keyboard to scancode set 1
+// 5    | AUX Clock Off    | 1 = Mouse clock disabled
+// 4    | KBD Clock Off    | 1 = Keyboard clock disabled
+// 3    | Reserved         |
+// 2    | System Flag      | Mirrors status bit 2
+// 1    | AUX Interrupt    | 1 = Mouse raises IRQ12
+// 0    | KBD Interrupt    | 1 = Keyboard raises IRQ1
+#define CCB_AUX_IRQ      0x02
+#define CCB_AUX_CLOCK_ON 0x20
+
+/* Mouse commands (sent through CTRL_WRITE_AUX). Each is answered with
+ * MOUSE_ACK, which must be consumed before sending the next one. */
 #define MOUSE_SET_DEFAULTS 0xF6
 #define MOUSE_ENABLE       0xF4
 #define MOUSE_ACK          0xFA
+
+/* Mouse packet, byte 0 */
+//
+// Bits | Name          | Description
+// 7    | Y Overflow    | 1 = Y movement exceeded the 9-bit range
+// 6    | X Overflow    | 1 = X movement exceeded the 9-bit range
+// 5    | Y Sign        | Sign bit for byte 2
+// 4    | X Sign        | Sign bit for byte 1
+// 3    | Always One    | Reads 1 on a valid first byte — the only framing marker
+// 2    | Middle Button |
+// 1    | Right Button  |
+// 0    | Left Button   |
+//
+// Bit 3 is the whole resync story: the stream carries no other framing, so a
+// dropped byte is only detectable by byte 0 arriving without it set.
+#define MOUSE_PKT_ALWAYS_ONE 0x08
+#define MOUSE_PKT_X_SIGN     0x10
+#define MOUSE_PKT_Y_SIGN     0x20
+#define MOUSE_PKT_X_OVERFLOW 0x40
+#define MOUSE_PKT_Y_OVERFLOW 0x80
 
 #define MOUSE_RING_SIZE 64
 #define MOUSE_RING_MASK (MOUSE_RING_SIZE - 1)
@@ -110,45 +172,23 @@ static void push_event(int16_t dx, int16_t dy, uint8_t buttons) {
     mouse_head = next;
 }
 
-static void parse_packet(void) {
-    uint8_t b0 = pkt[0];
-    /* Bit 3 of byte 0 is always set on a valid first packet byte. If it's
-     * cleared we lost sync — drop and let the state machine recover. */
-    if (!(b0 & 0x08)) {
-        pkt_idx = 0;
-        return;
-    }
+static int32_t clamp_axis(int32_t v, int32_t bound) {
+    if (bound <= 0) return v;
+    if (v < 0) return 0;
+    if (v > bound - 1) return bound - 1;
+    return v;
+}
 
-    /* Discard packets the mouse flagged as overflowing. */
-    if (b0 & 0xC0) {
-        pkt_idx = 0;
-        return;
-    }
+static int16_t delta_i16(int32_t d) {
+    if (d < -32768) return -32768;
+    if (d > 32767)  return 32767;
+    return (int16_t)d;
+}
 
-    int16_t dx = (int16_t)pkt[1];
-    int16_t dy = (int16_t)pkt[2];
-    if (b0 & 0x10) dx |= (int16_t)0xFF00;          /* sign-extend X */
-    if (b0 & 0x20) dy |= (int16_t)0xFF00;          /* sign-extend Y */
-    /* PS/2 reports +Y as "up", we want screen coords (+Y down). */
-    dy = -dy;
-
-    uint8_t buttons = 0;
-    if (b0 & 0x01) buttons |= MOUSE_BTN_LEFT;
-    if (b0 & 0x02) buttons |= MOUSE_BTN_RIGHT;
-    if (b0 & 0x04) buttons |= MOUSE_BTN_MIDDLE;
-
+static void submit_at(int16_t dx, int16_t dy, int32_t nx, int32_t ny,
+                      uint8_t buttons) {
     uint8_t old_buttons = cur_buttons;
     cur_buttons = buttons;
-    int32_t nx = cur_x + dx;
-    int32_t ny = cur_y + dy;
-    if (bound_w > 0) {
-        if (nx < 0)              nx = 0;
-        if (nx > bound_w - 1)    nx = bound_w - 1;
-    }
-    if (bound_h > 0) {
-        if (ny < 0)              ny = 0;
-        if (ny > bound_h - 1)    ny = bound_h - 1;
-    }
     cur_x = nx;
     cur_y = ny;
 
@@ -178,6 +218,82 @@ static void parse_packet(void) {
     }
 }
 
+static void submit_relative(int16_t dx, int16_t dy, uint8_t buttons) {
+    int32_t nx = clamp_axis(cur_x + dx, bound_w);
+    int32_t ny = clamp_axis(cur_y + dy, bound_h);
+    submit_at(dx, dy, nx, ny, buttons);
+}
+
+static void submit_absolute(int32_t nx, int32_t ny, uint8_t buttons) {
+    nx = clamp_axis(nx, bound_w);
+    ny = clamp_axis(ny, bound_h);
+    submit_at(delta_i16(nx - cur_x), delta_i16(ny - cur_y), nx, ny, buttons);
+}
+
+static void parse_packet(void) {
+    uint8_t b0 = pkt[0];
+    /* Lost sync — drop and let the state machine recover. */
+    if (!(b0 & MOUSE_PKT_ALWAYS_ONE)) {
+        pkt_idx = 0;
+        return;
+    }
+
+    /* Discard packets the mouse flagged as overflowing. */
+    if (b0 & (MOUSE_PKT_X_OVERFLOW | MOUSE_PKT_Y_OVERFLOW)) {
+        pkt_idx = 0;
+        return;
+    }
+
+    /* Movement is 9-bit two's complement: 8 bits of magnitude in bytes 1-2
+     * and the sign carried back in byte 0. */
+    int16_t dx = (int16_t)pkt[1];
+    int16_t dy = (int16_t)pkt[2];
+    if (b0 & MOUSE_PKT_X_SIGN) dx |= (int16_t)0xFF00;
+    if (b0 & MOUSE_PKT_Y_SIGN) dy |= (int16_t)0xFF00;
+    /* PS/2 reports +Y as "up", we want screen coords (+Y down). */
+    dy = -dy;
+
+    uint8_t buttons = 0;
+    if (b0 & 0x01) buttons |= MOUSE_BTN_LEFT;
+    if (b0 & 0x02) buttons |= MOUSE_BTN_RIGHT;
+    if (b0 & 0x04) buttons |= MOUSE_BTN_MIDDLE;
+
+    submit_relative(dx, dy, buttons);
+}
+
+void mouse_hid_report(const uint8_t *report, uint16_t len) {
+    if (!report || len < 3) return;
+
+    uint8_t buttons = 0;
+    if (report[0] & 0x01) buttons |= MOUSE_BTN_LEFT;
+    if (report[0] & 0x02) buttons |= MOUSE_BTN_RIGHT;
+    if (report[0] & 0x04) buttons |= MOUSE_BTN_MIDDLE;
+
+    /* HID boot mice report signed relative X/Y in screen orientation:
+     * +X is right, +Y is down. Wheel and extra buttons are ignored here. */
+    submit_relative((int16_t)(int8_t)report[1],
+                    (int16_t)(int8_t)report[2], buttons);
+}
+
+void mouse_hid_tablet_report(const uint8_t *report, uint16_t len) {
+    if (!report || len < 5) return;
+
+    uint8_t buttons = 0;
+    if (report[0] & 0x01) buttons |= MOUSE_BTN_LEFT;
+    if (report[0] & 0x02) buttons |= MOUSE_BTN_RIGHT;
+    if (report[0] & 0x04) buttons |= MOUSE_BTN_MIDDLE;
+
+    uint32_t raw_x = (uint32_t)report[1] | ((uint32_t)report[2] << 8);
+    uint32_t raw_y = (uint32_t)report[3] | ((uint32_t)report[4] << 8);
+    int32_t nx = bound_w > 1 ? (int32_t)((raw_x * (uint32_t)(bound_w - 1)) /
+                                         0x7FFFu)
+                             : (int32_t)raw_x;
+    int32_t ny = bound_h > 1 ? (int32_t)((raw_y * (uint32_t)(bound_h - 1)) /
+                                         0x7FFFu)
+                             : (int32_t)raw_y;
+    submit_absolute(nx, ny, buttons);
+}
+
 static void mouse_handler(void) {
     /* Sanity: the ISR fires for IRQ12, but on some controllers spurious
      * shared writes can show up. Confirm aux bit before consuming the byte. */
@@ -188,8 +304,7 @@ static void mouse_handler(void) {
     uint8_t b = inb(PS2_DATA);
     pkt[pkt_idx++] = b;
 
-    /* On byte 0, bit 3 must be set; resync if not. */
-    if (pkt_idx == 1 && !(b & 0x08)) {
+    if (pkt_idx == 1 && !(b & MOUSE_PKT_ALWAYS_ONE)) {
         pkt_idx = 0;
         return;
     }

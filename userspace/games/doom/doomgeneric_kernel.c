@@ -125,6 +125,8 @@ void DG_DrawFrame(void) {
         uint32_t *dst = (uint32_t*)((uint8_t*)fb + (oy + y) * fbi.pitch + ox * 4);
         for (uint32_t x = 0; x < DOOMGENERIC_RESX; x++) dst[x] = src[x];
     }
+    fb_damage(ox, oy, DOOMGENERIC_RESX, DOOMGENERIC_RESY);
+    yield();
 }
 
 /* Busy-wait `ms` milliseconds against the tick counter. */
@@ -161,11 +163,11 @@ void DG_SetWindowTitle(const char *title) {
     (void)title;
 }
 
-/* Entry point. Hard-codes the DOOM1.WAD path because there's no argv
+/* Entry point. Hard-codes the games/doom/doom.wad path because there's no argv
  * propagation from the shell into ELF children yet. */
 int main(int argc, char **argv) {
     (void)argc; (void)argv;
-    char *fake_argv[] = { (char*)"doom", (char*)"-iwad", (char*)"DOOM1.WAD", 0 };
+    char *fake_argv[] = { (char*)"doom", (char*)"-iwad", (char*)"games/doom/doom.wad", 0 };
     doomgeneric_Create(3, fake_argv);
     while (1) {
         doomgeneric_Tick();

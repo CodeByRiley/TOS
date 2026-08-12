@@ -20,6 +20,20 @@
 #include "utilities/log.h"
 #include <stdint.h>
 
+/* Scancode set 1 byte */
+//
+// Bits | Name | Description
+// 7    | Break | 0 = Key pressed (make), 1 = Key released (break)
+// 6-0  | Code  | Key identity; identical for the make and break of one key
+//
+// Two bytes are prefixes rather than keys: 0xE0 introduces a one-byte
+// extended code (arrows, right-hand modifiers), and 0xE1 introduces the
+// six-byte Pause sequence, which has no break code at all.
+#define KBD_SC_BREAK      0x80
+#define KBD_SC_CODE_MASK  0x7F
+#define KBD_SC_PREFIX_E0  0xE0
+#define KBD_SC_PREFIX_E1  0xE1
+
 #define KBD_RING_SIZE 64
 #define KBD_RING_MASK (KBD_RING_SIZE - 1)
 /* KBD_RING_SIZE must be a power of two — we mask instead of % so the IRQ
@@ -131,11 +145,14 @@ static void kbd_handler(void) {
         return;
     }
 
-    if (sc == 0xE0) { extended = 1; return; }
-    if (sc == 0xE1) { pause_remaining = 5; return; }
+    if (sc == KBD_SC_PREFIX_E0) { extended = 1; return; }
+    if (sc == KBD_SC_PREFIX_E1) { pause_remaining = 5; return; }
 
-    int      pressed = !(sc & 0x80);
-    uint8_t  code    = sc & 0x7F;
+    /* Bit 7 is the make/break flag, bits 6-0 the key. So a release is the
+     * press code with 0x80 set, which is why both tables are only 128
+     * entries — the release code indexes the same slot. */
+    int      pressed = !(sc & KBD_SC_BREAK);
+    uint8_t  code    = sc & KBD_SC_CODE_MASK;
     uint16_t key     = extended ? sc_extended[code] : sc_normal[code];
     extended = 0;
 

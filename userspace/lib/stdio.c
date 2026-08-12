@@ -76,7 +76,10 @@ size_t fwrite(const void *buf, size_t sz, size_t n, FILE *fp) {
 /* Reposition fd offset per `whence` (SEEK_SET / CUR / END). */
 int fseek(FILE *fp, long off, int whence) {
     if (!fp) return -1;
-    return (int)lseek(fp->fd, off, whence);
+    long rc = lseek(fp->fd, off, whence);
+    if (rc < 0) return -1;
+    fp->eof = 0;
+    return 0;
 }
 
 /* Current fd offset. */

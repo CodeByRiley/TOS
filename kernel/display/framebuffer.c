@@ -17,6 +17,7 @@
  */
 #include "display/framebuffer.h"
 #include "boot/multiboot2.h"
+#include "display/graphics.h"
 #include "input/mouse.h"
 #include "memory/vmm.h"
 #include "memory/pmm.h"
@@ -228,6 +229,26 @@ int framebuffer_init(uint64_t mb2_addr) {
     log_write_hex("DISPLAY: pitch     =", fb_pitch, KERNEL, LOG_INFO);
     log_write_hex("DISPLAY: bpp       =", t->bpp,   KERNEL, LOG_INFO);
     return 0;
+}
+
+struct gfx_surface framebuffer_get_gfx_surface(void) {
+    struct gfx_surface s;
+    s.px = framebuffer_buffer();
+    s.w = framebuffer_width();
+    s.h = framebuffer_height();
+
+    // framebuffer_pitch() returns bytes per row.
+    // gfx_surface.stride expects pixels per row.
+    s.stride = framebuffer_pitch() / sizeof(uint32_t);
+
+    // Assuming gfx_rect is defined as {x, y, w, h}.
+    // Set the clip to the full screen bounds.
+    s.clip.x = 0;
+    s.clip.y = 0;
+    s.clip.w = s.w;
+    s.clip.h = s.h;
+
+    return s;
 }
 
 /* Tear down the current backing: unmap pages from FB_VIRT_BASE, and in virtio

@@ -18,21 +18,18 @@
  * Context switch: assembly in kernel/arch/x86_64/sched/switch.asm. Saves
  * callee-saved + rsp, swaps to the new task's saved_rsp.
  */
-// #region INCLUDES
 
 #include "sched/sched.h"
+#include "devices/pit.h"
 #include "loader/process.h"
 #include "memory/hhdm.h"
 #include "arch/gdt.h"
 #include "memory/heap.h"
 #include "msg/msg.h"
 #include "utilities/log.h"
+#include "utilities/panic.h"
 #include "utilities/string.h"
 #include <stdint.h>
-
-// #endregion INCLUDES
-
-// #region TASK PATH RESOLUTION
 
 static void task_set_cwd_root(struct task *t) {
     if (!t) return;
@@ -54,10 +51,6 @@ void task_inherit_cwd(struct task *child, struct task *parent) {
     }
     child->cwd[i] = 0;
 }
-
-// #endregion TASK PATH RESOLUTION
-
-// #region EXTERNS + FXSTATE
 
 extern void context_switch(uint64_t *old_rsp_ptr, uint64_t new_rsp,
                            uint64_t new_cr3,
@@ -81,10 +74,6 @@ extern uint64_t user_rsp_save;      /* syscall.asm */
 /* Free a process PML4 — defined in loader/process.c. */
 extern void free_user_pml4(uint64_t *pml4);
 
-// #endregion EXTERNS + FXSTATE
-
-// #region TASK TABLE
-
 static struct task tasks[MAX_TASKS];
 static int next_pid = 1;
 static struct task *current = 0;
@@ -95,10 +84,6 @@ static struct task *ready_tail = 0;
  * every tick when nothing is asleep — which is the common case. */
 static int n_sleeping = 0;
 
-// #endregion TASK TABLE
-
-
-// #region RING ALLOCATION
 
 /* Allocate per-task message + IPC rings. Each task owns its own so the
  * kernel can route inputs to a single foreground process without
@@ -128,9 +113,6 @@ static void free_rings_for(struct task *t) {
     if (t->input_ring) { kfree(t->input_ring); t->input_ring = 0; }
     if (t->ipc_ring)   { kfree(t->ipc_ring);   t->ipc_ring   = 0; }
 }
-// #endregion RING ALLOCATION
-
-// #region READY QUEUE
 
 /* Idle task lives outside the normal ready queue. ready_pop returns it as
  * a floor when the queue is empty so the CPU always has something to hlt
@@ -180,10 +162,6 @@ static int ready_remove(struct task *target) {
   return -1;
 }
 
-// #endregion READY QUEUE
-
-// #region SLOT + TRAMPOLINE
-
 static struct task *alloc_slot(void) {
   for (int i = 0; i < MAX_TASKS; i++) {
     if (tasks[i].pid == 0)
@@ -211,11 +189,18 @@ static void kthread_trampoline(void) {
   task_exit(0);
 }
 
+static uint64_t kstack_aligned_top(void *kstack_base) {
+  return ((uint64_t)kstack_base + KSTACK_BYTES) & ~0xFULL;
+}
+
 /* Build a kernel-stack frame matching context_switch's epilogue, which
  * pops r15, r14, r13, r12, rbp, rbx, ret. So we lay out (low → high):
  * [r15][r14][r13][r12][rbp][rbx][ret]. saved_rsp points at r15. */
 static uint64_t build_initial_frame(void *kstack_base, void (*trampoline)(void)) {
-  uint64_t *sp = (uint64_t *)((uint8_t *)kstack_base + KSTACK_BYTES);
+  /* context_switch enters a fresh task with ret, not call. After that ret,
+   * the trampoline still has to look like a normal SysV C callee: rsp % 16
+   * must be 8 on function entry. */
+  uint64_t *sp = (uint64_t *)(kstack_aligned_top(kstack_base) - 8);
   *--sp = (uint64_t)trampoline;     /* ret addr */
   *--sp = 0;                         /* rbx */
   *--sp = 0;                         /* rbp */
@@ -225,10 +210,6 @@ static uint64_t build_initial_frame(void *kstack_base, void (*trampoline)(void))
   *--sp = 0;                         /* r15 */
   return (uint64_t)sp;
 }
-
-// #endregion SLOT + TRAMPOLINE
-
-// #region SCHED INIT
 
 void sched_init(void) {
   memset(tasks, 0, sizeof(tasks));
@@ -261,10 +242,6 @@ void sched_init(void) {
   if (idle) task_set_name(idle, "idle");
   log_write("sched: idle task spawned", KERNEL, LOG_INFO);
 }
-
-// #endregion SCHED INIT
-
-// #region TASK LOOKUP + SNAPSHOT
 
 struct task *task_current(void) { return current; }
 
@@ -306,10 +283,6 @@ struct task *task_find(int pid) {
   return 0;
 }
 
-// #endregion TASK LOOKUP + SNAPSHOT
-
-// #region TASK SPAWN
-
 struct task *task_spawn(void (*entry)(void)) {
   struct task *t = alloc_slot();
   if (!t) {
@@ -323,9 +296,10 @@ struct task *task_spawn(void (*entry)(void)) {
     return 0;
   }
 
+  uint64_t stack_top = kstack_aligned_top(stack_base);
   t->saved_rsp = build_initial_frame(stack_base, kthread_trampoline);
   t->cr3 = virt_to_phys(kernel_pml4);
-  t->syscall_kstack_top = (uint64_t)stack_base + KSTACK_BYTES;
+  t->syscall_kstack_top = stack_top;
   t->user_rsp_saved = 0;
   t->user_entry = 0;
   t->user_rsp_initial = 0;
@@ -361,9 +335,10 @@ struct task *task_spawn_user(uint64_t *user_pml4, uint64_t entry,
     return 0;
   }
 
+  uint64_t stack_top = kstack_aligned_top(stack_base);
   t->saved_rsp = build_initial_frame(stack_base, user_task_trampoline);
   t->cr3 = virt_to_phys(user_pml4);
-  t->syscall_kstack_top = (uint64_t)stack_base + KSTACK_BYTES;
+  t->syscall_kstack_top = stack_top;
   t->user_rsp_saved = user_rsp;
   t->user_entry = entry;
   t->user_rsp_initial = user_rsp;
@@ -408,23 +383,23 @@ struct task *task_spawn_thread(uint64_t entry, uint64_t user_stack) {
         return 0;
     }
 
-    // Use the static functions directly inside sched.c
+    uint64_t stack_top = kstack_aligned_top(stack_base);
     t->saved_rsp = build_initial_frame(stack_base, user_task_trampoline);
 
-    // Share the address space
+    /* A thread shares its parent's address space rather than owning one, so
+     * take a reference — whoever exits last frees the PML4. */
     t->cr3 = parent->cr3;
     t->user_pml4 = parent->user_pml4;
-
     t->pml4_ref_count = parent->pml4_ref_count;
     __atomic_add_fetch(t->pml4_ref_count, 1, __ATOMIC_ACQ_REL);
 
-    // Set up trampoline targets
-    t->syscall_kstack_top = (uint64_t)stack_base + KSTACK_BYTES;
+    /* Its kernel stack is its own, though: two threads sharing one would
+     * corrupt each other the first time both entered a syscall. */
+    t->syscall_kstack_top = stack_top;
     t->user_rsp_saved = user_stack;
     t->user_entry = entry;
     t->user_rsp_initial = user_stack;
 
-    // Task metadata
     t->state = TASK_READY;
     t->pid = next_pid++;
     t->parent_pid = parent->pid;
@@ -441,10 +416,6 @@ struct task *task_spawn_thread(uint64_t entry, uint64_t user_stack) {
     ready_push(t);
     return t;
 }
-
-// #endregion TASK SPAWN
-
-// #region CONTEXT STAGING
 
 /* Stage SYSCALL/ring-3 IRQ globals for `next` immediately before the
  * stack swap. These values are consumed by:
@@ -464,10 +435,6 @@ static void stage_for(struct task *next) {
 static void capture_from(struct task *prev) {
   prev->user_rsp_saved = user_rsp_save;
 }
-
-// #endregion CONTEXT STAGING
-
-// #region YIELD + BLOCK + WAKEUP
 
 void task_yield(void) {
   struct task *next = ready_pop();
@@ -531,10 +498,6 @@ int task_wake_futex(uint64_t phys) {
   return 0;
 }
 
-// #endregion YIELD + BLOCK + WAKEUP
-
-// #region SLEEP + WAKE SLEEPERS
-
 void task_sleep_ticks(uint64_t ticks) {
   extern uint64_t pit_ticks(void);
   if (ticks == 0) return;
@@ -582,9 +545,36 @@ void sched_wake_sleepers(void) {
   }
 }
 
-// #endregion SLEEP + WAKE SLEEPERS
+/* Block the calling task for `ms`. Requires interrupts.
+ *
+ * The wakeup comes from sched_wake_sleepers() off IRQ0,
+ * so with IF clear this task would sleep forever and take the kernel with it.
+ * Callers running before the boot-time sti want sleep_ms_busy(). */
+void sleep_ms(uint32_t ms) {
+    REQUIRE_INTERRUPTS();
 
-// #region IDLE THREAD
+    if (ms == 0) {
+        task_yield();
+        return;
+    }
+
+    /* Round up: a sub-tick sleep must still yield at least one tick, or
+     * sleep_ms(1) at 100 Hz would return immediately. */
+    uint32_t freq = pit_get_freq();
+    uint64_t ticks_to_sleep = ((uint64_t)ms * freq + 999) / 1000;
+
+    task_sleep_ticks(ticks_to_sleep);
+}
+
+/* Spin for `ms` without yielding.
+ *
+ * Deliberately does NOT wait on pit_ticks(): callers are device bring-up
+ * paths (USB/PCI controller resets) that run before the boot-time sti, where
+ * IRQ0 never fires, the tick counter never advances, and a hlt loop hangs the
+ * kernel outright. Channel 2 is polled, so it works with interrupts off. */
+void sleep_ms_busy(uint32_t ms) {
+    pit_delay_ms(ms);
+}
 
 /* Always-runnable lowest-priority task: hlts until the next IRQ, then
  * yields so any newly-ready task can run. Without this, task_yield would
@@ -607,10 +597,6 @@ static void idle_thread(void) {
     task_yield();
   }
 }
-
-// #endregion IDLE THREAD
-
-// #region TASK EXIT + REAP
 
 static void mark_task_exited(struct task *task, long code) {
   /* A direct framebuffer process can temporarily take ownership from winman.
@@ -713,9 +699,9 @@ void task_exit(long code) {
 
 void task_exit_thread(void) {
     current->state = TASK_ZOMBIE;
-    current->unclaimed = 1; // Let the idle reaper clean it up
+    current->unclaimed = 1; /* nobody joins a bare thread; idle reaps it */
 
-    // NEW: Wake up any thread that is blocked waiting on our PID!
+    /* Wake anything blocked in thread_join on our pid. */
     for (int i = 0; i < MAX_TASKS; i++) {
         struct task *t = &tasks[i];
         if (t->pid == 0) continue;
@@ -763,7 +749,7 @@ static void task_release_address_space(struct task *t) {
 
   int *refs = t->pml4_ref_count;
 
-  // Atomically decrement!
+  /* Atomic: sibling threads can reach this concurrently on different CPUs. */
   int new_count = __atomic_sub_fetch(refs, 1, __ATOMIC_ACQ_REL);
   if (new_count < 0) {
     log_write("sched: pml4 refcount underflow", KERNEL, LOG_ERROR);
@@ -816,10 +802,6 @@ int task_reap_unclaimed(void) {
   }
   return reaped;
 }
-
-// #endregion TASK EXIT + REAP
-
-// #region USER TRAMPOLINE
 
 /* User-task first-run trampoline. Runs in ring 0 on the new task's kstack
  * after its first context_switch. Builds an iretq frame using the entry
@@ -874,4 +856,3 @@ static void user_task_trampoline(void) {
   );
   __builtin_unreachable();
 }
-// #endregion USER TRAMPOLINE

@@ -336,7 +336,7 @@ static long sys_munmap(uint64_t addr, long len) {
     /* Mask to bits 12-51: VMM_NX lives at bit 63, so stripping the low
      * flag bits alone would hand the PMM an address with it still set. */
     if (!(entry & VMM_SHARED))
-      pmm_free_frame(entry & 0x000FFFFFFFFFF000ULL);
+      pmm_free_frame(entry & VMM_ADDR_MASK);
   }
 
   if (addr >= USER_MMAP_BASE && addr + bytes <= USER_MMAP_LIMIT)
@@ -1057,16 +1057,18 @@ static long sys_thread_exit(void) {
     struct task *t = task_current();
     if (!t) return -1;
 
-    // Atomically decrement the shared counter!
+    /* Threads share one PML4, so the last one out frees it. The decrement
+     * must be atomic: two threads exiting concurrently would otherwise both
+     * read the same count and either double-free or leak the address space. */
     int new_count = __atomic_sub_fetch(t->pml4_ref_count, 1, __ATOMIC_ACQ_REL);
 
     if (new_count <= 0) {
-        // Last thread! Safe to free the PML4 and the counter itself.
         kfree(t->pml4_ref_count);
         t->pml4_ref_count = 0;
-        task_exit(0);
+        task_exit(0);            /* tears down the address space too */
     } else {
-        // Just kill this thread.
+        /* Detach from the shared PML4 first — task_exit_thread must not
+         * reap an address space its siblings are still running on. */
         t->user_pml4 = 0;
         t->pml4_ref_count = 0;
         task_exit_thread();
@@ -1079,43 +1081,42 @@ static long sys_thread_join(long tid) {
     struct task *target = task_find((int)tid);
     if (!target) return -1;
 
-    // If it's already dead, we don't need to wait
     if (target->state == TASK_ZOMBIE) {
         return 0;
     }
 
-    // Block until the target thread exits.
-    // task_block takes the PID we are waiting for.
     task_block((int)tid);
     return 0;
 }
 
-// Sleep on a futex if *addr == expected
+/* Block until *addr changes away from `expected`.
+ *
+ * The comparison and the block have to look atomic to userspace: if the value
+ * changed between the caller's own check and ours, returning immediately is
+ * what stops the caller sleeping through a wake it already missed. */
 static long sys_futex_wait(uint32_t *addr, uint32_t expected) {
     struct task *t = task_current();
     if (!t || !t->user_pml4) return -1;
     if (!addr) return -1;
 
-    // Validate pointer is in user range
     if ((uint64_t)addr >= USER_VA_MAX) return -1;
 
-    // Translate to physical address (ignoring the NX bit at bit 63)
+    /* Futexes key on the physical frame, so two tasks with the same page
+     * mapped at different VAs still queue on the same futex. */
     uint64_t phys = vmm_translate_in(t->user_pml4, (uint64_t)addr);
     if (!phys) return -1;
-    phys &= 0x000FFFFFFFFFF000ULL;
+    phys &= VMM_ADDR_MASK;
 
-    // CRITICAL: Check the value atomically before blocking
-    // If it changed, return immediately so userspace can retry
     if (*addr != expected) {
         return -1;
     }
 
     t->futex_addr = phys;
-    task_block(0); // 0 means indefinite wait
+    task_block(0); /* 0 = indefinite; only a futex wake releases us */
     return 0;
 }
 
-// Wake up ONE thread waiting on this address
+/* Wake exactly one waiter. Callers needing wake-all must loop. */
 static long sys_futex_wake(uint32_t *addr) {
     struct task *me = task_current();
     if (!me || !me->user_pml4) return -1;
@@ -1123,7 +1124,7 @@ static long sys_futex_wake(uint32_t *addr) {
 
     uint64_t phys = vmm_translate_in(me->user_pml4, (uint64_t)addr);
     if (!phys) return -1;
-    phys &= 0x000FFFFFFFFFF000ULL;
+    phys &= VMM_ADDR_MASK;
 
     return task_wake_futex(phys);
 }
@@ -1133,15 +1134,9 @@ long syscall_dispatch(struct syscall_frame *f) {
   long a1 = (long)f->rdi;
   long a2 = (long)f->rsi;
   long a3 = (long)f->rdx;
-  // args 4-6 use r10/r8/r9 in syscall ABI
+  /* r10, not rcx: the syscall instruction clobbers rcx with the return RIP,
+   * so the ABI substitutes r10 for the fourth argument. */
   long a4 = (long)f->r10;
-
-  // static int trace_count = 0;
-  // if (trace_count < 60) {
-  //   log_write_hex("sysenter num=", num, KERNEL, LOG_INFO);
-  //   log_write_hex("sysenter pid=", task_current() ? task_current()->pid : -1,
-  //   KERNEL, LOG_INFO); trace_count++;
-  // }
 
   long ret = -1;
   switch (num) {

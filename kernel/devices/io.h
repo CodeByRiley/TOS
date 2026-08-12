@@ -9,12 +9,10 @@
 
 #include <stdint.h>
 
-/* Write a byte to an I/O port. */
 static inline void outb(uint16_t port, uint8_t val) {
     __asm__ volatile ("outb %0, %1" : : "a"(val), "Nd"(port));
 }
 
-/* Read a byte from an I/O port. */
 static inline uint8_t inb(uint16_t port) {
     uint8_t ret;
     __asm__ volatile ("inb %1, %0" : "=a"(ret) : "Nd"(port));
@@ -41,6 +39,15 @@ static inline uint32_t inl(uint16_t port) {
     uint32_t ret;
     __asm__ volatile ("inl %1, %0" : "=a"(ret) : "Nd"(port));
     return ret;
+}
+
+/* Read RFLAGS and test the Interrupt Flag (bit 9). Anything that waits on the
+ * PIT tick counter, blocks, or yields needs this to be true: with IF clear,
+ * IRQ0 never fires, the tick never advances, and the wait never ends. */
+static inline int interrupts_enabled(void) {
+    uint64_t flags;
+    __asm__ volatile ("pushfq; popq %0" : "=r"(flags));
+    return (flags & (1ULL << 9)) != 0;
 }
 
 /* "Wait one ISA bus cycle" — write to BIOS POST diagnostic port 0x80,

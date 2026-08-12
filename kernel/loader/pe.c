@@ -52,9 +52,6 @@ uint64_t pe_load(const char *path, uint64_t *pml4) {
     uint32_t size_of_image = nt.optionalHeader.sizeOfImage;
     uint32_t entry_rva = nt.optionalHeader.addressOfEntryPoint;
 
-    log_write_hex("pe: image base =", image_base, KERNEL, LOG_INFO);
-    log_write_hex("pe: size of image =", size_of_image, KERNEL, LOG_INFO);
-
     /* In ELF, PT_LOAD segments are typically under 0x70000000.
      * In 64-bit PE, ImageBase is usually 0x140000000 (5 GiB).
      * We must allow it to land in the MAP_FIXED region.
@@ -152,9 +149,6 @@ uint64_t pe_load(const char *path, uint64_t *pml4) {
             }
         }
 
-        log_write_hex("pe: loaded section va =", va_base, KERNEL, LOG_INFO);
-        log_write_hex("pe: filesz           =", filesz, KERNEL, LOG_INFO);
-        log_write_hex("pe: memsz            =", memsz, KERNEL, LOG_INFO);
     }
 
     fclose(fp);

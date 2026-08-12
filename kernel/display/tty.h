@@ -25,6 +25,8 @@
 #define TTY_CTRL_ZOOM_IN  0x1E /* increase glyph scale by one step       */
 #define TTY_CTRL_ZOOM_OUT 0x1F /* decrease glyph scale by one step       */
 
+extern struct ttf_font *g_sys_font;
+
 void tty_init(void);
 void tty_putc(char c);
 void tty_write(const char *buf, size_t n);

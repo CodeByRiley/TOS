@@ -29,7 +29,7 @@
 
 #include "gfx.h"
 
-/* ---------------- Theme --------------------------------------------------- */
+/* Theme */
 
 struct ui_theme {
     uint32_t face;          /* button and panel fill                      */
@@ -50,7 +50,7 @@ struct ui_theme {
  * uses, so widgets sit next to it without clashing. */
 extern const struct ui_theme ui_theme_default;
 
-/* ---------------- Context -------------------------------------------------- */
+/* Context */
 
 struct ui_context {
     struct gfx_surface    *s;
@@ -77,7 +77,7 @@ void ui_begin(struct ui_context *c, struct gfx_surface *s,
  * a press that ends outside its widget cancels rather than clicking. */
 void ui_end(struct ui_context *c);
 
-/* ---------------- Layout ---------------------------------------------------- */
+/* Layout */
 
 /* A vertical stack. ui_layout_row hands out full-width bands top to
  * bottom; when the area is used up it returns empty rects, which every
@@ -95,7 +95,7 @@ struct gfx_rect ui_layout_row(struct ui_layout *l, int h);
 /* Divide a row into `n` equal columns and return column `i`. */
 struct gfx_rect ui_layout_column(struct gfx_rect row, int n, int i, int gap);
 
-/* ---------------- Widgets ---------------------------------------------------- */
+/* Widgets */
 
 /* Beveled background panel. Draw before the widgets that sit on it. */
 void ui_panel(struct ui_context *c, struct gfx_rect r);

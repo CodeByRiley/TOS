@@ -7,9 +7,24 @@
 #include <stdint.h>
 
 #define PAGE_SIZE 4096ULL
+
+/* The shadow copy the system BIOS leaves at the legacy option-ROM window.
+ * Used as a fallback when the card's own ROM BAR cannot be read. */
 #define LEGACY_VBIOS_PHYS 0x000C0000ULL
 #define LEGACY_VBIOS_SIZE 0x00020000ULL
 
+/* ROM image signatures. Most of these are ASCII read back as a little-endian
+ * word, which is why they look like arbitrary hex:
+ *
+ *   0xAA55     | "\x55\xAA" | Standard PCI option ROM header
+ *   0x4E56     | "VN"       | NVIDIA-specific ROM header variant
+ *   0xBB77     | —          | NVIDIA extended ROM header variant
+ *   0x52494350 | "PCIR"     | PCI Data Structure
+ *   0x5344504E | "NPDS"     | NVIDIA Data Structure
+ *   0x53494752 | "RGIS"     | NVIDIA signed-image Data Structure
+ *   0x4544504E | "NPDE"     | NVIDIA extended Data Structure
+ *   0x00544942 | "BIT\0"    | BIOS Information Table
+ */
 #define PCI_ROM_SIGNATURE       0xAA55u
 #define PCI_ROM_SIGNATURE_NV    0x4E56u
 #define PCI_ROM_SIGNATURE_NV2   0xBB77u
@@ -19,7 +34,12 @@
 #define PCI_DATA_EXT_SIGNATURE  0x4544504Eu
 #define PCI_DATA_EXT_REV_10     0x0100u
 #define PCI_DATA_EXT_REV_11     0x0101u
+
+/* Indicator byte in the PCI Data Structure: set on the final image of the
+ * ROM, so image walking stops there. */
 #define PCI_ROM_LAST_IMAGE      0x80u
+
+/* ROM image lengths are counted in 512-byte blocks, not bytes. */
 #define PCI_ROM_BLOCK_SIZE      512u
 
 #define BIT_HEADER_ID        0xB8FFu

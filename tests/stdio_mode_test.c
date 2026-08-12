@@ -98,7 +98,7 @@ int main(void) {
 
     expect(fat_init(image, image_size) == 0, "initialize synthetic image");
 
-    /* --- mode strings --------------------------------------------------- */
+    /* mode strings */
     expect(fopen("/MISSING.TXT", "r") == 0, "\"r\" on a missing file fails");
     expect(fopen("/MISSING.TXT", "r+") == 0,
            "\"r+\" does not create a missing file");
@@ -118,7 +118,7 @@ int main(void) {
     expect(file_size("/KEEP.TXT") == 17, "\"r+\" did not truncate");
     if (fp) fclose(fp);
 
-    /* --- item counts, not bytes ---------------------------------------- */
+    /* item counts, not bytes */
     struct { uint32_t a; uint32_t b; uint64_t c; } recs[4], back[4];
     for (int i = 0; i < 4; i++) {
         recs[i].a = (uint32_t)i;
@@ -161,7 +161,7 @@ int main(void) {
         fclose(fp);
     }
 
-    /* --- degenerate arguments ------------------------------------------- */
+    /* degenerate arguments */
     fp = fopen("/RECS.BIN", "r");
     if (fp) {
         expect(fread(back, 0, 4, fp) == 0, "size 0 is not a divide by zero");
@@ -171,7 +171,7 @@ int main(void) {
         fclose(fp);
     }
 
-    /* --- access rights --------------------------------------------------- */
+    /* access rights */
     fp = fopen("/WONLY.TXT", "w");
     if (fp) {
         expect(fread(back, 1, 4, fp) == 0, "fread on a write-only handle");
@@ -184,7 +184,7 @@ int main(void) {
     }
     expect(file_size("/KEEP.TXT") == 17, "read-only handle wrote nothing");
 
-    /* --- truncate keeps the file ---------------------------------------- */
+    /* truncate keeps the file */
     fp = fopen("/KEEP.TXT", "w");
     expect(fp != 0, "\"w\" reopens an existing file");
     expect(file_size("/KEEP.TXT") == 0, "\"w\" truncated in place");
@@ -195,8 +195,6 @@ int main(void) {
         fclose(fp);
     }
     expect(file_size("/KEEP.TXT") == 3, "truncated file holds new contents");
-
-    /* --- append forces writes to EOF ------------------------------------ */
     write_file("/LOG.TXT", "AAAA");
     fp = fopen("/LOG.TXT", "a");
     expect(fp != 0, "open for append");
@@ -218,7 +216,6 @@ int main(void) {
     expect(memcmp(tail, "AAAABB", 6) == 0,
            "append landed at EOF despite the seek");
 
-    /* --- append creates when missing ------------------------------------ */
     fp = fopen("/NEWLOG.TXT", "a");
     expect(fp != 0, "\"a\" creates a missing file");
     if (fp) {

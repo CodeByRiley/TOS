@@ -20,10 +20,10 @@
 /* Probe MB2 tag 8 and prep the contiguous-page backend. */
 int       framebuffer_init(uint64_t mb2_addr);
 
-/* Flat-fill the scanout. */
-void      framebuffer_clear(uint32_t color);
+struct gfx_surface framebuffer_get_gfx_surface(void);
 
-/* Single-pixel write. */
+/* Both mark their own damage; callers do not need a separate mark call. */
+void      framebuffer_clear(uint32_t color);
 void      framebuffer_putpixel(uint32_t x, uint32_t y, uint32_t color);
 
 uint32_t  framebuffer_width(void);

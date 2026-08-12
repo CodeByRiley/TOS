@@ -38,7 +38,7 @@ static void expect(int cond, const char *what) {
     failed = 1;
 }
 
-/* ---------------- surface with guard margin ------------------------------ */
+/* surface with guard margin */
 
 #define GUARD 4
 #define SENTINEL 0xDEADBEEFu
@@ -79,7 +79,7 @@ static uint32_t px_at(const struct guarded *g, int x, int y) {
 
 static void guarded_free(struct guarded *g) { free(g->base); }
 
-/* ---------------- rectangles --------------------------------------------- */
+/* rectangles */
 
 static void test_rects(void) {
     struct gfx_rect a = gfx_rect_make(0, 0, 10, 10);
@@ -100,7 +100,7 @@ static void test_rects(void) {
     expect(!gfx_rect_contains(a, 0, 10), "excludes its bottom edge");
 }
 
-/* ---------------- fills and clipping ------------------------------------- */
+/* fills and clipping */
 
 static void test_fill_clip(void) {
     struct guarded g;
@@ -157,7 +157,7 @@ static void test_clip_stack(void) {
     guarded_free(&g);
 }
 
-/* ---------------- blending ------------------------------------------------ */
+/* blending */
 
 static void test_blend(void) {
     struct guarded g;
@@ -183,7 +183,7 @@ static void test_blend(void) {
     guarded_free(&g);
 }
 
-/* ---------------- blits ---------------------------------------------------- */
+/* blits */
 
 static void test_blit(void) {
     struct guarded dst;
@@ -234,7 +234,7 @@ static void test_blit(void) {
     guarded_free(&dst);
 }
 
-/* ---------------- text ------------------------------------------------------ */
+/* text */
 
 static void test_text(void) {
     int w, h;
@@ -289,7 +289,7 @@ static void test_text(void) {
     guarded_free(&g);
 }
 
-/* ---------------- masks and sprites ------------------------------------------ */
+/* masks and sprites */
 
 static void test_masks(void) {
     struct guarded g;
@@ -339,7 +339,7 @@ static void test_masks(void) {
     guarded_free(&g);
 }
 
-/* ---------------- ui -------------------------------------------------------- */
+/* ui */
 
 /* One frame with the given pointer state. */
 static void frame(struct ui_context *c, struct gfx_surface *s,

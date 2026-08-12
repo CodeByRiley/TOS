@@ -1,6 +1,6 @@
 /* userspace/bin/ls/ls.c — list filesystem entries.
  *
- * Walks a root-relative FAT16 directory. Directory names returned by the
+ * Walks a root-relative FAT directory. Directory names returned by the
  * kernel carry a trailing slash.
  *
  * The readdir buffer holds a packed sequence of NUL-terminated names; the
@@ -12,7 +12,7 @@
 extern int printf(const char *, ...);
 extern size_t strlen(const char *);
 
-#define BUF_SIZE 256
+#define BUF_SIZE 1024
 
 /* Print every entry under path. */
 void list_directory(const char *path) {

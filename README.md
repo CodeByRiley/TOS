@@ -1,8 +1,7 @@
 # TOS
 
-A hobby x86_64 operating system: long-mode kernel, SMP bring-up, FAT16 root
-filesystem, preemptive scheduler, syscall ABI, framebuffer window manager, and
-a small userspace (shell, coreutils, DOOM).
+A hobby x86_64 operating system: long-mode kernel, SMP bring-up, FAT32 root filesystem with support FAT16.
+preemptive scheduler, syscall ABI, framebuffer window manager, and a small prebuilt userspace including a ported version of DOOM
 
 ## Layout
 

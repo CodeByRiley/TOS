@@ -11,8 +11,9 @@
  * flips active back on and the shell-fallback path stays visible.
  */
 #include "display/tty.h"
+#include "display/fonts/ttf.h"
 #include "display/framebuffer.h"
-#include "display/font8x8.h"
+#include "display/fonts/font8x8.h"
 #include "memory/heap.h"
 #include "msg/msg.h"
 #include "sched/sched.h"
@@ -28,6 +29,32 @@
 #define TTY_SCALE_MAX 4
 #define DRAIN_RING_SIZE 4096
 #define DRAIN_RING_MASK (DRAIN_RING_SIZE - 1)
+
+#define TTF_PX_SIZE  16
+#define TTF_CELL_W   9
+#define TTF_CELL_H   18
+
+/* Font-derived cell metrics, filled on first TTF draw. The font is
+ * proportional but the grid is fixed, so each glyph is centred in its cell;
+ * TTF_CELL_W/H are only the fallback if the metrics look nonsensical. */
+static int ttf_cell_w = TTF_CELL_W;
+static int ttf_cell_h = TTF_CELL_H;
+static int ttf_ascent, ttf_descent;
+static int ttf_metrics_ready = 0;
+
+static void ttf_measure(void) {
+    if (ttf_metrics_ready || !g_sys_font) return;
+
+    ttf_vmetrics(g_sys_font, TTF_PX_SIZE, &ttf_ascent, &ttf_descent, 0);
+    if (ttf_ascent <= 0) ttf_ascent = (TTF_PX_SIZE * 3) / 4;
+
+    int w = ttf_cell_width(g_sys_font, TTF_PX_SIZE);
+    ttf_cell_w = w > 0 ? w : TTF_CELL_W;
+    ttf_cell_h = TTF_PX_SIZE + 3;
+    ttf_metrics_ready = 1;
+}
+
+
 _Static_assert((DRAIN_RING_SIZE & DRAIN_RING_MASK) == 0, "ring must be pow2");
 
 static int     cols, rows;
@@ -54,8 +81,15 @@ static char    drain_buf[DRAIN_RING_SIZE];
 static volatile int drain_head = 0;
 static volatile int drain_tail = 0;
 
-static int cell_width(void)  { return FONT_GLYPH_W * scale; }
-static int cell_height(void) { return FONT_GLYPH_H * scale; }
+/* Modify cell_width and cell_height to check for TTF */
+static int cell_width(void) {
+    if (g_sys_font) { ttf_measure(); return ttf_cell_w; }
+    return FONT_GLYPH_W * scale;
+}
+static int cell_height(void) {
+    if (g_sys_font) { ttf_measure(); return ttf_cell_h; }
+    return FONT_GLYPH_H * scale;
+}
 
 static void build_glyph_lut(void) {
     for (int b = 0; b < 256; b++) {
@@ -72,6 +106,31 @@ static void draw_glyph(int gx, int gy, char c) {
     int px = TTY_PAD + gx * cw;
     int py = TTY_PAD + gy * ch;
     if (px + cw > px_w || py + ch > px_h) return;
+
+    if (g_sys_font) {
+        /* Clear the cell first: unlike the font8x8 path there is no per-pixel
+         * background write, so an overwritten or erased cell would otherwise
+         * keep the old glyph. */
+        for (int y = 0; y < ch; y++) {
+            uint32_t *row = (uint32_t*)((uint8_t*)fb +
+                                        (uint32_t)(py + y) * (uint32_t)stride) + px;
+            for (int i = 0; i < cw; i++) row[i] = TTY_BG;
+        }
+
+        if ((unsigned char)c < 32 || (unsigned char)c > 126 || c == ' ') return;
+
+        struct gfx_surface s;
+        gfx_surface_init(&s, fb, px_w, px_h, stride / 4);
+
+        /* Sit the baseline so the ascender/descender band is centred in the
+         * cell instead of guessing at 3/4 of the way down. */
+        int band = ttf_ascent - ttf_descent;
+        int baseline = py + (ch - band) / 2 + ttf_ascent;
+
+        ttf_draw_glyph_cell(&s, g_sys_font, px, baseline, cw,
+                            (unsigned char)c, TTF_PX_SIZE, TTY_FG);
+        return;
+    }
 
     const uint8_t *glyph;
     static const uint8_t blank[FONT_GLYPH_H] = {0};

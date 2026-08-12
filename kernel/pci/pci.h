@@ -41,15 +41,46 @@
 #define PCI_CFG_INT_LINE        0x3C
 #define PCI_CFG_INT_PIN         0x3D
 
-/* PCI command register bits. */
+/* Command Register (offset 0x04) */
+//
+// Bits  | Name              | Description
+// 15-11 | Reserved          |
+// 10    | Interrupt Disable | 1 = Device may not assert INTx
+// 9     | Fast B2B Enable   |
+// 8     | SERR# Enable      |
+// 7     | Reserved          |
+// 6     | Parity Error Resp |
+// 5     | VGA Palette Snoop |
+// 4     | Mem Write & Inval |
+// 3     | Special Cycles    |
+// 2     | Bus Master        | 1 = Device may initiate DMA
+// 1     | Memory Space      | 1 = MMIO BARs decode
+// 0     | I/O Space         | 1 = I/O BARs decode
+//
+// Space bits gate decoding entirely: with I/O Space clear, every inb/outb to
+// an I/O BAR reads 0xFF and drops writes, silently. Bus Master gates DMA the
+// same way — a device with descriptors queued simply never fetches them.
 #define PCI_CMD_IO              (1u << 0)
 #define PCI_CMD_MEM             (1u << 1)
 #define PCI_CMD_BUS_MASTER      (1u << 2)
 #define PCI_CMD_INT_DISABLE     (1u << 10)
 
+/* Status Register (offset 0x06). Bit 4 is the only one we consume: it says
+ * whether offset 0x34 holds a valid capability-list pointer. */
 #define PCI_STATUS_CAP_LIST     (1u << 4)
 
-/* BAR layout bits. */
+/* Base Address Register (offsets 0x10-0x24)
+ *
+ * MMIO BAR:                       I/O BAR:
+ *   31-4 | Base address             31-2 | Base address
+ *   3    | Prefetchable             1    | Reserved
+ *   2-1  | Type: 0=32b, 2=64b       0    | Always 1
+ *   0    | Always 0
+ *
+ * A 64-bit MMIO BAR consumes the following slot as its high dword, so BAR
+ * indices are not always contiguous. Size is discovered by writing all ones
+ * and reading back the mask — which is why a BAR must be saved and restored,
+ * and why decoding should be off while probing. */
 #define PCI_BAR_IO              (1u << 0)
 #define PCI_BAR_TYPE_MASK       (3u << 1)
 #define PCI_BAR_TYPE_32         (0u << 1)

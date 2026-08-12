@@ -20,8 +20,10 @@
 
 #define PAGE_SIZE 4096
 #define ENTRIES_PER_TABLE 512
-#define ADDR_MASK 0x000FFFFFFFFFF000ULL    /* bits 12-51 = frame addr */
-#define PAGE_PS   (1ULL << 7)              /* huge-page bit (PDPT=1GiB, PD=2MiB) */
+/* Short local aliases; the entry layout is documented in vmm.h. PAGE_PS is
+ * the huge-page bit at PDPT (1 GiB) and PD (2 MiB) level. */
+#define ADDR_MASK VMM_ADDR_MASK
+#define PAGE_PS   VMM_PS
 
 uint64_t *kernel_pml4 = 0;
 

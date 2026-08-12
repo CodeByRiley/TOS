@@ -61,40 +61,32 @@ static void smp_delay_us(uint64_t us) {
 }
 
 static int boot_one_ap(int cpu_id, uint8_t apic_id, uint32_t pml4_phys) {
-    log_write_hex("SMP: boot_one_ap cpu_id=", cpu_id, KERNEL, LOG_INFO);
-    log_write_hex("SMP:   apic_id        =", apic_id, KERNEL, LOG_INFO);
     void *stack = kmalloc(AP_KSTACK_BYTES);
     if (!stack) {
         log_write("SMP: AP kstack alloc failed", KERNEL, LOG_ERROR);
         return -1;
     }
-    uint64_t stack_top = (uint64_t)stack + AP_KSTACK_BYTES;
-    log_write_hex("SMP:   kstack_top     =", stack_top, KERNEL, LOG_INFO);
+    uint64_t stack_top = ((uint64_t)stack + AP_KSTACK_BYTES) & ~0xFULL;
+    uint64_t entry_stack = stack_top - 8;
 
     percpu_init_ap(cpu_id, apic_id);
     gdt_install_tss(cpu_id, stack_top);
-    log_write("SMP:   tss installed", KERNEL, LOG_INFO);
 
     uint8_t *t   = phys_to_virt(AP_TRAMPOLINE_PHYS);
     size_t   len = (size_t)(_binary_ap_trampoline_bin_end -
                             _binary_ap_trampoline_bin_start);
-    log_write_hex("SMP:   trampoline len =", len, KERNEL, LOG_INFO);
     memcpy(t, _binary_ap_trampoline_bin_start, len);
     *(uint32_t*)(t + len - AP_PATCH_PML4_OFF)  = pml4_phys;
     *(uint32_t*)(t + len - AP_PATCH_CPUID_OFF) = (uint32_t)cpu_id;
-    *(uint64_t*)(t + len - AP_PATCH_STACK_OFF) = stack_top;
+    *(uint64_t*)(t + len - AP_PATCH_STACK_OFF) = entry_stack;
     *(uint64_t*)(t + len - AP_PATCH_ENTRY_OFF) = (uint64_t)ap_main;
-    log_write("SMP:   trampoline copied + patched", KERNEL, LOG_INFO);
 
     /* INIT-SIPI-SIPI sequence per Intel SDM Vol 3A §8.4.4.1. */
     lapic_send_init(apic_id);
-    log_write("SMP:   INIT sent", KERNEL, LOG_INFO);
     smp_delay_us(10000);                  /* 10 ms */
     lapic_send_startup(apic_id, AP_TRAMPOLINE_PHYS >> 12);
-    log_write("SMP:   SIPI #1 sent", KERNEL, LOG_INFO);
     smp_delay_us(200);
     lapic_send_startup(apic_id, AP_TRAMPOLINE_PHYS >> 12);
-    log_write("SMP:   SIPI #2 sent - waiting for online", KERNEL, LOG_INFO);
 
     /* Spin for up to ~1 s waiting for the AP to flag itself online. */
     struct cpu_local *c = percpu_get(cpu_id);
@@ -105,7 +97,6 @@ static int boot_one_ap(int cpu_id, uint8_t apic_id, uint32_t pml4_phys) {
         log_write_hex("SMP: AP failed to come online cpu_id=", cpu_id, KERNEL, LOG_ERROR);
         return -1;
     }
-    log_write_hex("SMP: AP online cpu_id=", cpu_id, KERNEL, LOG_INFO);
     return 0;
 }
 
@@ -124,10 +115,6 @@ void smp_boot_aps(void) {
         return;
     }
     uint32_t pml4_phys = (uint32_t)cr3;
-
-    /* Identity-mapping for 0x8000 already exists from boot's 1 GiB 2 MiB
-     * huge-page tables — no extra vmm work needed before the memcpy. */
-    log_write_hex("SMP: trampoline phys =", AP_TRAMPOLINE_PHYS, KERNEL, LOG_INFO);
 
     /* CPU 0 is the BSP — already running. Bring up 1..n-1. */
     for (int i = 1; i < n; i++) {

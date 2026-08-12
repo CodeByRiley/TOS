@@ -30,6 +30,44 @@
 #define SB16_MIXER_MASTER_VOL 0x22
 #define SB16_MIXER_VOICE_VOL  0x23
 
+/* DSP commands (written to SB16_REG_DSP_WRITE) */
+//
+// 0x41 | Set output sample rate | Followed by rate in Hz, high byte first
+// 0xB6 | 16-bit D/A             | Auto-init, FIFO on — see the bit table below
+// 0xD1 | Speaker on             | Connects the DAC to the output amp
+// 0xD3 | Speaker off            |
+#define SB16_DSP_SET_RATE     0x41
+#define SB16_DSP_PLAY_16BIT   0xB6
+#define SB16_DSP_SPEAKER_ON   0xD1
+#define SB16_DSP_SPEAKER_OFF  0xD3
+
+/* Transfer command byte (the 0xBx / 0xCx family) */
+//
+// Bits | Name        | Description
+// 7-4  | Command     | 0xB = 16-bit transfer, 0xC = 8-bit
+// 3    | A/D or D/A  | 0 = D/A (playback), 1 = A/D (record)
+// 2    | Auto-init   | 1 = Repeat forever, reloading from the DMA controller
+// 1    | FIFO        | 1 = Use the card's FIFO
+// 0    | Reserved    |
+//
+// So 0xB6 = 16-bit, playback, auto-init, FIFO.
+
+/* Mode byte, sent immediately after the transfer command */
+//
+// Bits | Name     | Description
+// 7-6  | Reserved |
+// 5    | Stereo   | 1 = Stereo, 0 = Mono
+// 4    | Signed   | 1 = Signed samples, 0 = Unsigned
+// 3-0  | Reserved |
+//
+// So 0x30 = signed stereo, which is what a standard 16-bit WAV holds.
+#define SB16_MODE_SIGNED_STEREO 0x30
+
+/* Block length written after the mode byte, as (samples - 1), low byte first.
+ * It sets the IRQ cadence rather than the total playback length: the card
+ * interrupts every block. Half the buffer per block gives the handler the
+ * remaining half's play time to refill. */
+
 // I/O Ports for the Slave DMA Controller (Channels 4-7)
 #define DMA_SLAVE_MASK      0xD4
 #define DMA_SLAVE_CLEAR_FF  0xD8
@@ -38,16 +76,31 @@
 #define DMA_SLAVE_CHAN5_COUNT 0xC6
 #define DMA_CHAN5_PAGE      0x8B
 
-// Slave 8237 mode-register fields (port 0xD6).
-// Bits 1-0 select the channel *within* the slave controller, so channel 5
-// is 01. Channel 4 (00) is the cascade channel and must never be reprogrammed.
+/* Slave 8237 Mode Register (port 0xD6) */
+//
+// Bits | Name           | Description
+// 7-6  | Mode Select    | 0 = Demand, 1 = Single, 2 = Block, 3 = Cascade
+// 5    | Address Dec    | 0 = Increment address, 1 = Decrement
+// 4    | Auto-init      | 1 = Reload address/count at terminal count and loop
+// 3-2  | Transfer Type  | 0 = Verify, 1 = Write (device→mem), 2 = Read (mem→device)
+// 1-0  | Channel Select | Channel within this controller: 5 is 01
+//
+// "Read" and "Write" are named from the *device's* point of view, which is
+// the reverse of what playback intuitively reads like: sending samples to
+// the card is DMA_MODE_READ. Channel 4 (00) is the cascade to the master
+// controller and must never be reprogrammed.
 #define DMA_CHAN5_SELECT    0x01
 #define DMA_MODE_READ       0x08  // memory -> device
 #define DMA_MODE_WRITE      0x04  // device -> memory
 #define DMA_MODE_AUTOINIT   0x10
 #define DMA_MODE_SINGLE     0x40
 
-/* Single-mask register values for channel 5 (bit 2 = mask). */
+/* Single-Mask Register (port 0xD4) */
+//
+// Bits | Name           | Description
+// 7-3  | Reserved       |
+// 2    | Mask Bit       | 1 = Disable this channel's DREQ, 0 = Enable
+// 1-0  | Channel Select | Channel within this controller
 #define DMA_MASK_CHAN5      (0x04 | DMA_CHAN5_SELECT)
 #define DMA_UNMASK_CHAN5    (0x00 | DMA_CHAN5_SELECT)
 

@@ -18,6 +18,7 @@
 #include "utilities/log.h"
 #include "devices/serial.h"
 #include "interrupts/pic.h"
+#include "memory/vmm.h"
 #include <stdint.h>
 
 #define MAX_IDT_ENTRIES 256
@@ -146,8 +147,13 @@ static const char *exception_names[32] = {
     "reserved", "reserved", "reserved", "reserved",
 };
 
+/* Page-table bits, for the fault reporter's manual walk. Deliberately its own
+ * set rather than vmm.h's VMM_*: this code runs inside the fault handler and
+ * must stay readable as a decoder of whatever the CPU actually found, not as
+ * the mapper's view of what should be there. Values are the same layout —
+ * see the table in vmm.h. */
 #define PF_PAGE_SIZE 4096ULL
-#define PF_ADDR_MASK 0x000FFFFFFFFFF000ULL
+#define PF_ADDR_MASK VMM_ADDR_MASK
 #define PF_PRESENT   (1ULL << 0)
 #define PF_WRITE     (1ULL << 1)
 #define PF_USER      (1ULL << 2)

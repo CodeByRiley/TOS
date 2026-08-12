@@ -12,17 +12,44 @@
 
 #include <stdint.h>
 
+/* Page table entry (all four levels share this layout) */
+//
+// Bits  | Name                | Description
+// 63    | NX                  | 1 = No execute (needs EFER.NXE)
+// 62-52 | Available           | Ignored by the CPU, free for software use
+// 51-12 | Physical Address    | Frame address; must be 4KB aligned
+// 11-9  | Available           | Ignored by the CPU — VMM_SHARED lives at bit 9
+// 8     | Global              | 1 = Entry survives a CR3 reload (needs CR4.PGE)
+// 7     | PS / PAT            | Page Size at PD/PDPT level; PAT at PT level
+// 6     | Dirty               | Set by the CPU on write; never cleared by it
+// 5     | Accessed            | Set by the CPU on any access
+// 4     | PCD                 | 1 = Cache disabled — required for MMIO
+// 3     | PWT                 | 1 = Write-through instead of write-back
+// 2     | User                | 1 = Ring 3 may access; 0 = supervisor only
+// 1     | Write               | 1 = Writable (read-only if clear)
+// 0     | Present             | 0 = Entry unused; every other bit is then free
+//
+// Access and Dirty are CPU-written, so a PTE read back may differ from what
+// was stored. Preserve them on read-modify-write rather than rebuilding an
+// entry from flags alone.
 #define VMM_PRESENT  (1ULL << 0)
 #define VMM_WRITE    (1ULL << 1)
 #define VMM_USER     (1ULL << 2)
-#define VMM_PWT      (1ULL << 3)   /* page write-through (cache hint)   */
-#define VMM_PCD      (1ULL << 4)   /* page cache disable (MMIO regions) */
-/* Bit 9 is reserved by the architecture for OS use. We use it to mark
- * PTEs whose phys frame is borrowed via shmem_share: the receiving task
- * must NOT pmm_free_frame these on exit, because the owner (e.g. winman)
- * still has them mapped and on its malloc free list. */
+#define VMM_PWT      (1ULL << 3)
+#define VMM_PCD      (1ULL << 4)
+#define VMM_ACCESSED (1ULL << 5)
+#define VMM_DIRTY    (1ULL << 6)
+#define VMM_PS       (1ULL << 7)
+#define VMM_GLOBAL   (1ULL << 8)
+/* Bit 9 is one of the three software-available bits. We use it to mark a
+ * frame borrowed via shmem_share: the receiving task must NOT pmm_free_frame
+ * it on exit, because the owner (e.g. winman) still has it mapped and on its
+ * malloc free list. */
 #define VMM_SHARED   (1ULL << 9)
 #define VMM_NX       (1ULL << 63)
+
+/* Frame address occupies bits 51-12; everything else is flags. */
+#define VMM_ADDR_MASK 0x000FFFFFFFFFF000ULL
 
 void     vmm_init(void);
 

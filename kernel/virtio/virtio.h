@@ -24,7 +24,22 @@
 #define VIRTIO_PCI_CAP_DEVICE_CFG    4
 #define VIRTIO_PCI_CAP_PCI_CFG       5
 
-/* Device-status bits (common cfg, offset 0x14). */
+/* Device Status (common cfg, offset 0x14) */
+//
+// Bit | Name        | Description
+// 7   | FAILED      | Driver gave up; device is unusable until reset
+// 6   | NEEDS_RESET | Device-set: it hit an unrecoverable error
+// 5-4 | Reserved    |
+// 3   | FEATURES_OK | Driver finished feature negotiation
+// 2   | DRIVER_OK   | Driver is live; the device may start using queues
+// 1   | DRIVER      | Driver knows how to drive this device
+// 0   | ACKNOWLEDGE | Driver noticed the device
+//
+// These are cumulative and strictly ordered — writing 0 resets, then the bits
+// are OR'd in the order listed. Two checks matter: after setting FEATURES_OK
+// the driver must read the byte back, since the device clears the bit to veto
+// the feature set; and queues must be configured before DRIVER_OK, because
+// the device may begin using them the moment it is set.
 #define VIRTIO_STATUS_RESET           0
 #define VIRTIO_STATUS_ACKNOWLEDGE     1
 #define VIRTIO_STATUS_DRIVER          2

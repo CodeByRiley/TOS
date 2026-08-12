@@ -8,7 +8,7 @@
  */
 #include "syscall.h"
 
-/* --- File / I/O --------------------------------------------------------- */
+/* File / I/O */
 long write(int fd, const void *buf, size_t n) {
     return syscall3(SYS_WRITE, fd, (sysarg_t)(uintptr_t)buf, (sysarg_t)(uintptr_t)n);
 }
@@ -46,7 +46,7 @@ long fstat_raw(int fd, struct stat_user *out) {
     return syscall2(SYS_FSTAT, fd, (sysarg_t)(uintptr_t)out);
 }
 
-/* --- Memory -------------------------------------------------------------
+/* Memory
  *
  * MAP_FAILED rather than 0 on error: 0 is a legal-looking value for code
  * that only checks `!= NULL`, and a fixed mapping at a low address would
@@ -81,7 +81,7 @@ long unlink(const char *path) {
     return syscall1(SYS_UNLINK, (sysarg_t)(uintptr_t)path);
 }
 
-/* --- Process control ---------------------------------------------------- */
+/* Process control */
 /* Never returns; the for-loop is dead code that quiets warnings. */
 void exit(int code) {
     syscall1(SYS_EXIT, code);
@@ -92,7 +92,7 @@ long yield(void) {
     return syscall0(SYS_YIELD);
 }
 
-/* --- Input event ring --------------------------------------------------- */
+/* Input event ring */
 long msg_get(struct msg *out) {
     return syscall1(SYS_MSG_GET, (sysarg_t)(uintptr_t)out);
 }
@@ -105,7 +105,7 @@ long mouse_pos(int32_t *x, int32_t *y, uint8_t *buttons) {
     return syscall3(SYS_MOUSE_POS, (sysarg_t)(uintptr_t)x, (sysarg_t)(uintptr_t)y, (sysarg_t)(uintptr_t)buttons);
 }
 
-/* --- Framebuffer -------------------------------------------------------- */
+/* Framebuffer */
 long fb_info(struct fb_info *out) {
     return syscall1(SYS_FB_INFO, (sysarg_t)(uintptr_t)out);
 }
@@ -126,7 +126,7 @@ long get_ticks(void) {
     return syscall0(SYS_GET_TICKS);
 }
 
-/* --- Child processes ---------------------------------------------------- */
+/* Child processes */
 /* Synchronous: blocks the caller until the child exits. Returns the
  * child's exit code (or -1 on failure to launch). */
 long exec(const char *path, char *const argv[]) {
@@ -151,7 +151,7 @@ long sys_reboot(int time) {
     return syscall1(SYS_REBOOT, time);
 }
 
-/* --- Console (TTY) ------------------------------------------------------ */
+/* Console (TTY) */
 long con_write(const char *buf, size_t n) {
     return syscall2(SYS_CON_WRITE, (sysarg_t)(uintptr_t)buf, (sysarg_t)(uintptr_t)n);
 }
@@ -180,7 +180,7 @@ long get_pid(void) {
     return syscall0(SYS_GET_PID);
 }
 
-/* --- IPC and shared memory --------------------------------------------- */
+/* IPC and shared memory */
 long ipc_send(int target_pid, const struct ipc_msg *m) {
     return syscall2(SYS_IPC_SEND, target_pid, (sysarg_t)(uintptr_t)m);
 }
@@ -189,19 +189,19 @@ long ipc_recv(struct ipc_msg *out) {
     return syscall1(SYS_IPC_RECV, (sysarg_t)(uintptr_t)out);
 }
 
-/* Map a contiguous range of pages from `my_va` into the target's address
+/* Map a contiguous range of pages from `in_va` into the target's address
  * space. Kernel chooses the target va and writes it back to out_target_va. */
-long shmem_share(int target_pid, uint64_t my_va, long npages,
+long shmem_share(int target_pid, uint64_t in_va, long npages,
                  uint64_t *out_target_va) {
-    return syscall4(SYS_SHMEM_SHARE, target_pid, (sysarg_t)my_va, npages,
+    return syscall4(SYS_SHMEM_SHARE, target_pid, (sysarg_t)in_va, npages,
                     (sysarg_t)(uintptr_t)out_target_va);
 }
 
-long shmem_unshare(int target_pid, uint64_t my_va, long npages) {
-    return syscall3(SYS_SHMEM_UNSHARE, target_pid, (sysarg_t)my_va, npages);
+long shmem_unshare(int target_pid, uint64_t in_va, long npages) {
+    return syscall3(SYS_SHMEM_UNSHARE, target_pid, (sysarg_t)in_va, npages);
 }
 
-/* --- Winman registration ----------------------------------------------- */
+/* Winman registration */
 long wm_register(void) { return syscall0(SYS_WM_REGISTER); }
 long wm_pid(void)      { return syscall0(SYS_WM_PID); }
 
@@ -209,11 +209,35 @@ long tty_drain(char *buf, long max) {
     return syscall2(SYS_TTY_DRAIN, (sysarg_t)(uintptr_t)buf, max);
 }
 
-/* --- Diagnostics ------------------------------------------------------- */
+/* Diagnostics */
 long proc_list(struct proc_info *out, long max) {
     return syscall2(SYS_PROC_LIST, (sysarg_t)(uintptr_t)out, max);
 }
 
 long mem_stats(struct mem_stats *out) {
     return syscall1(SYS_MEM_STATS, (sysarg_t)(uintptr_t)out);
+}
+
+/* Threading */
+long thread_create(void *(*entry)(void *), void *stack, void *arg) {
+    return syscall3(SYS_THREAD_CREATE,
+                    (sysarg_t)(uintptr_t)entry,
+                    (sysarg_t)(uintptr_t)stack,
+                    (sysarg_t)(uintptr_t)arg);
+}
+
+long thread_exit() {
+    return syscall0(SYS_THREAD_EXIT);
+}
+
+long thread_join(long tid) {
+    return syscall1(SYS_THREAD_JOIN, tid);
+}
+
+long futex_wait(uint32_t *addr, uint32_t expected) {
+    return syscall2(SYS_FUTEX_WAIT, (sysarg_t)(uintptr_t)addr, expected);
+}
+
+long futex_wake(uint32_t *addr) {
+    return syscall1(SYS_FUTEX_WAKE, (sysarg_t)(uintptr_t)addr);
 }

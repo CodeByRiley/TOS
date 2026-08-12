@@ -73,6 +73,12 @@
 #define SYS_KILL        145
 #define SYS_CON_ZOOM    146
 
+#define SYS_THREAD_CREATE  200
+#define SYS_THREAD_EXIT    201
+#define SYS_THREAD_JOIN	   202
+#define SYS_FUTEX_WAIT     203
+#define SYS_FUTEX_WAKE	   204
+
 #define SYS_MKDIR      83
 #define SYS_UNLINK     87
 #define SYS_SHUTDOWN   888
@@ -299,9 +305,9 @@ long  get_pid(void);
  * receiver side; senders may leave it zero. */
 long  ipc_send(int target_pid, const struct ipc_msg *m);
 long  ipc_recv(struct ipc_msg *out);
-long  shmem_share(int target_pid, uint64_t my_va, long npages,
+long  shmem_share(int target_pid, uint64_t in_va, long npages,
                   uint64_t *out_target_va);
-long  shmem_unshare(int target_pid, uint64_t my_va, long npages);
+long  shmem_unshare(int target_pid, uint64_t in_va, long npages);
 
 /* Winman registration / discovery. The pid of the WM is not cached because
  * winman is allowed to crash and respawn. */
@@ -313,5 +319,12 @@ long  tty_drain(char *buf, long max);
  * returns 0 on success. */
 long  proc_list(struct proc_info *out, long max);
 long  mem_stats(struct mem_stats *out);
+
+/* Threading */
+long  thread_create(void *(*entry)(void *), void *stack, void *arg);
+long  thread_exit(void);
+long  thread_join(long tid);
+long  futex_wait(uint32_t *addr, uint32_t expected);
+long  futex_wake(uint32_t *addr);
 
 #endif

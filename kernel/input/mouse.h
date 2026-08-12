@@ -1,8 +1,8 @@
-/* kernel/input/mouse.h — PS/2 mouse driver surface.
+/* kernel/input/mouse.h — mouse input surface.
  *
- * Reports relative motion + button mask on each IRQ12 packet. The driver
- * also maintains an absolute cursor position clamped by mouse_set_bounds
- * so apps can read mouse_x()/mouse_y() directly.
+ * Reports relative motion + button mask from hardware mouse drivers. The
+ * driver also maintains an absolute cursor position clamped by
+ * mouse_set_bounds so apps can read mouse_x()/mouse_y() directly.
  *
  * Implementation: kernel/input/mouse.c.
  */
@@ -23,6 +23,13 @@ struct mouse_event {
 };
 
 void mouse_init(void);
+
+/* Feed one USB HID boot-protocol mouse report: buttons, signed X, signed Y.
+ * Extra bytes such as wheel data are ignored for now. */
+void mouse_hid_report(const uint8_t *report, uint16_t len);
+
+/* Feed a HID absolute tablet report: buttons, 16-bit X, 16-bit Y. */
+void mouse_hid_tablet_report(const uint8_t *report, uint16_t len);
 
 /* Pop one event into *out. Returns 1 on success, 0 if ring empty. */
 int  mouse_poll(struct mouse_event *out);

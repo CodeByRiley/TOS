@@ -16,6 +16,21 @@
 #include "utilities/log.h"
 #include "utilities/string.h"
 
+/* Directory entry attribute byte (offset 11) */
+//
+// Bits | Name       | Description
+// 7-6  | Reserved   |
+// 5    | Archive    | Set on write; backup software clears it
+// 4    | Directory  | Entry's cluster chain holds directory entries
+// 3    | Volume ID  | Entry is the volume label, not a file
+// 2    | System     |
+// 1    | Hidden     |
+// 0    | Read Only  |
+//
+// FAT_ATTR_LFN is not a bit but the value 0x0F — all four of the low bits at
+// once. That combination is meaningless for a real file, which is exactly why
+// it was chosen: an old 8.3-only driver sees read-only+hidden+system+volume-id
+// and skips the entry, so long-name slots stay invisible to it.
 #define FAT_ATTR_READ_ONLY 0x01
 #define FAT_ATTR_HIDDEN 0x02
 #define FAT_ATTR_SYSTEM 0x04

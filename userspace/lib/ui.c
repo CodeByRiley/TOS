@@ -28,7 +28,7 @@ const struct ui_theme ui_theme_default = {
     .scale       = 1,
 };
 
-/* ---------------- Frame ---------------------------------------------------- */
+/* Frame */
 
 void ui_begin(struct ui_context *c, struct gfx_surface *s,
               const struct ui_theme *theme,
@@ -73,7 +73,7 @@ static int ui_interact(struct ui_context *c, int id, struct gfx_rect r,
     return clicked;
 }
 
-/* ---------------- Layout ---------------------------------------------------- */
+/* Layout */
 
 void ui_layout_begin(struct ui_layout *l, struct gfx_rect area, int gap) {
     l->area = area;
@@ -102,7 +102,7 @@ struct gfx_rect ui_layout_column(struct gfx_rect row, int n, int i, int gap) {
     return gfx_rect_make(row.x + i * (w + gap), row.y, w, row.h);
 }
 
-/* ---------------- Chrome ------------------------------------------------------ */
+/* Chrome */
 
 void ui_panel(struct ui_context *c, struct gfx_rect r) {
     const struct ui_theme *t = c->theme;
@@ -124,7 +124,7 @@ void ui_separator(struct ui_context *c, struct gfx_rect r) {
     gfx_hline(c->s, r.x, y + 1, r.w, t->light);
 }
 
-/* ---------------- Text ------------------------------------------------------- */
+/* Text */
 
 /* Vertically centre one line of text in `r`, clipped to its width. */
 static void text_in(struct ui_context *c, struct gfx_rect r,
@@ -162,7 +162,7 @@ void ui_label_muted(struct ui_context *c, struct gfx_rect r,
     text_in(c, r, text, c->theme->text_muted, 0);
 }
 
-/* ---------------- Widgets ------------------------------------------------------ */
+/* Widgets */
 
 int ui_button(struct ui_context *c, struct gfx_rect r, const char *label) {
     int id = ui_next_id(c);

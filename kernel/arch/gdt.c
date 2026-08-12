@@ -101,6 +101,30 @@ static uint8_t  bsp_kernel_stack[16384] __attribute__((aligned(16)));
 #define DF_STACK_BYTES 4096
 static uint8_t df_stacks[MAX_CPUS][DF_STACK_BYTES] __attribute__((aligned(16)));
 
+/* Descriptor Access byte */
+//
+// Bits | Name       | Description
+// 7    | Present    | 0 = Descriptor unused
+// 6-5  | DPL        | Privilege ring that owns the segment (0 kernel, 3 user)
+// 4    | S          | 1 = Code/data segment, 0 = System (TSS, LDT, gates)
+// 3    | Executable | 1 = Code segment, 0 = Data segment
+// 2    | DC         | Code: conforming. Data: 1 = grows down
+// 1    | RW         | Code: readable. Data: writable
+// 0    | Accessed   | Set by the CPU on first use; store it 0
+//
+// Hence 0x9A = present, DPL 0, code, readable. 0x92 = present, DPL 0, data,
+// writable. 0xFA / 0xF2 are the same pair at DPL 3.
+
+/* Descriptor Flags nibble (high nibble of the granularity byte) */
+//
+// Bits | Name | Description
+// 3    | G    | 1 = Limit counts 4KB pages rather than bytes
+// 2    | DB   | 1 = 32-bit segment. Must be 0 when L is set
+// 1    | L    | 1 = 64-bit code segment
+// 0    | AVL  | Free for software
+//
+// So 0xA = G|L for 64-bit code, 0xC = G|DB for data. Long mode ignores base
+// and limit on code/data segments, but they must still be encoded sanely.
 static void set_entry(uint16_t selector, uint8_t access, uint8_t flags) {
     struct gdt_entry *e = (struct gdt_entry*)&gdt_table[selector];
     e->limit_low   = 0xFFFF;
@@ -116,7 +140,10 @@ static void set_tss(uint16_t selector, uint64_t base, uint32_t limit) {
     t->limit_low   = limit & 0xFFFF;
     t->base_low    = base & 0xFFFF;
     t->base_mid    = (base >> 16) & 0xFF;
-    t->access      = 0x89;                  // available 64-bit TSS
+    /* Present, S=0 (system), type 9 = available 64-bit TSS. Type 0xB would
+     * mean "busy": the CPU sets that itself on ltr, and reloading a busy
+     * descriptor faults. */
+    t->access      = 0x89;
     t->granularity = (limit >> 16) & 0x0F;
     t->base_high   = (base >> 24) & 0xFF;
     t->base_upper  = (uint32_t)(base >> 32);

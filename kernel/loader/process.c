@@ -28,8 +28,11 @@
 #define ARGV_MAX 16
 #define ARG_LEN_MAX 128
 
-#define ADDR_MASK 0x000FFFFFFFFFF000ULL
-#define PAGE_PS   (1ULL << 7)
+/* Page-table field accessors live in vmm.h, where the entry layout is
+ * documented. Local copies of these masks used to sit here and in three other
+ * files. */
+#define ADDR_MASK VMM_ADDR_MASK
+#define PAGE_PS   VMM_PS
 
 extern uint64_t *kernel_pml4;
 
@@ -248,10 +251,8 @@ static int process_spawn_common(const char *path, char *const argv[]) {
     // Check for PE magic
     if(read == 16) {
     	if(magic[0] == 'M' && magic[1] == 'Z') {
-    		log_write("process_spawn: PE magic found", KERNEL, LOG_INFO);
       	entry = pe_load(saved_path, child_pml4);
     	} else if (magic[0] == 0x7F && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F') {
-    		log_write("process_spawn: ELF magic found", KERNEL, LOG_INFO);
       	entry = elf_load(saved_path, child_pml4);
     	} else {
     		log_write("process_spawn: unknown magic", KERNEL, LOG_ERROR);
@@ -338,7 +339,6 @@ static int process_spawn_common(const char *path, char *const argv[]) {
 }
 
 long process_exec(const char *path, char *const argv[]) {
-		log_write_string("spawning process ", path, KERNEL, LOG_INFO);
     int child_pid = process_spawn_common(path, argv);
     if (child_pid < 0) return -1;
 

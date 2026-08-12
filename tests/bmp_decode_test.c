@@ -22,7 +22,7 @@
 #include "syscall.h"
 #include <string.h>
 
-/* --- host-backed stand-ins for the syscalls bmp.c uses ------------------
+/* host-backed stand-ins for the syscalls bmp.c uses
  * Only these four are needed, so none of lib/syscall.c is linked.
  *
  * Host <stdio.h> cannot be included: it declares unlink() returning int
@@ -85,7 +85,7 @@ long fstat_raw(int fd, struct stat_user *out) {
     return 0;
 }
 
-/* --- expectations ------------------------------------------------------- */
+/* expectations */
 
 #define W 12
 #define H 12
@@ -113,7 +113,7 @@ static void expect(int cond, const char *what) {
     failed = 1;
 }
 
-/* --- synthetic images for the shapes an editor might emit --------------- */
+/* synthetic images for the shapes an editor might emit */
 
 static void put32(unsigned char *p, unsigned int v) {
     p[0] = (unsigned char)(v); p[1] = (unsigned char)(v >> 8);
@@ -208,7 +208,7 @@ int main(int argc, char **argv) {
     bmp_free(&img);
     expect(img.pixels == 0, "bmp_free clears the struct");
 
-    /* --- 24-bit, both row orders ---------------------------------------- */
+    /* 24-bit, both row orders */
     write_bmp24("bmp24_bu.bmp", 0);
     memset(&img, 0, sizeof(img));
     expect(bmp_load("bmp24_bu.bmp", &img) == 0, "decode 24-bit bottom-up");
@@ -231,7 +231,7 @@ int main(int argc, char **argv) {
         bmp_free(&img);
     }
 
-    /* --- 32-bit with an unwritten alpha channel -------------------------- */
+    /* 32-bit with an unwritten alpha channel */
     write_bmp32_zero_alpha("bmp32_noalpha.bmp");
     memset(&img, 0, sizeof(img));
     expect(bmp_load("bmp32_noalpha.bmp", &img) == 0, "decode 32-bit BI_RGB");
@@ -241,7 +241,7 @@ int main(int argc, char **argv) {
         bmp_free(&img);
     }
 
-    /* --- rejections ------------------------------------------------------ */
+    /* rejections */
     memset(&img, 0, sizeof(img));
     expect(bmp_load("does_not_exist.bmp", &img) != 0, "missing file fails");
     expect(img.pixels == 0, "failed load leaves the caller's image alone");

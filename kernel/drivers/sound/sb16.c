@@ -81,8 +81,7 @@ void sb16_ack_irq(void) {
 void sb16_irq_handler(void) {
     sb16_ack_irq();
 
-    /* The IDT sends the PIC EOI for us once this returns. */
-
+    // The IDT sends the PIC EOI for us once this returns.
     if (!sb16_is_playing || !current_audio_data || current_audio_size == 0)
         return;
 
@@ -100,7 +99,7 @@ void sb16_irq_handler(void) {
         filled += chunk;
         audio_position += chunk;
         if (audio_position >= current_audio_size)
-            audio_position = 0; /* loop the track */
+            audio_position = 0; // loop the track
     }
 
     sb16_use_first_half = !sb16_use_first_half;
@@ -113,7 +112,7 @@ void sb16_program_dma(void) {
 
     outb(DMA_SLAVE_MASK, DMA_MASK_CHAN5);
     outb(DMA_SLAVE_CLEAR_FF, 0xFF);
-    /* Mode: single transfer | auto-init | read (mem->device) | channel 5.
+    /* single transfer | auto-init | read (mem->device) | channel 5.
      * The low two bits are the channel select, and they are *relative* to
      * the slave controller: 01 = channel 5. Selecting 00 here would rewrite
      * channel 4's mode -- that is the master/slave cascade channel, which
@@ -161,33 +160,24 @@ void *sb16_dma_buffer(uint32_t *size_out) {
 }
 
 void sb16_set_sample_rate(uint16_t rate) {
-    sb16_dsp_write(0x41); /* set output sample rate, big-endian Hz */
+    /* Rate is big-endian here, unlike the block length below. */
+    sb16_dsp_write(SB16_DSP_SET_RATE);
     sb16_dsp_write(rate >> 8);
     sb16_dsp_write(rate & 0xFF);
 }
 
 void sb16_speaker_on(void) {
-    sb16_dsp_write(0xD1);
+    sb16_dsp_write(SB16_DSP_SPEAKER_ON);
 }
 
 void sb16_speaker_off(void) {
-    sb16_dsp_write(0xD3);
+    sb16_dsp_write(SB16_DSP_SPEAKER_OFF);
 }
 
 /* Arm auto-init 16-bit signed stereo playback over the whole DMA buffer.
  *
- * The one number worth care here is the DSP block length. It counts 16-bit
- * samples, and it decides how often the card interrupts -- not how much it
- * plays, which the auto-init DMA already fixes at the full buffer. Setting
- * it to half the buffer is what makes the double buffer work: the IRQ
- * arrives as one half finishes, leaving the refill handler the whole of
- * the other half's playtime to work in. A full-buffer block length would
- * interrupt once per wrap, by which point both halves had already played
- * and half of every pass would be stale.
- *
- * Everything below has to be in this order: the handler must be live and
- * the channel unmasked before the DSP is armed, or the first block boundary
- * arrives with nothing to service it. */
+ * Ordering matters: hook the IRQ and unmask the PIC before arming the DSP,
+ * or the first block boundary can arrive with no handler to refill it. */
 static void sb16_arm(void) {
     if (!sb16_irq_hooked) {
         irq_install(sb16_irq, sb16_irq_handler);
@@ -201,10 +191,11 @@ static void sb16_arm(void) {
 
     sb16_set_sample_rate(44100);
 
-    sb16_dsp_write(0xB6); /* 16-bit D/A, auto-init, FIFO */
-    sb16_dsp_write(0x30); /* signed stereo */
+    sb16_dsp_write(SB16_DSP_PLAY_16BIT);
+    sb16_dsp_write(SB16_MODE_SIGNED_STEREO);
 
-    /* Half the buffer, in 16-bit samples: bytes / 2 (sample width) / 2. */
+    /* Half the buffer in 16-bit samples: bytes / 2 (width) / 2 (halves),
+     * minus one. Sets IRQ cadence, not total length — see sb16.h. */
     uint16_t count = (uint16_t)((SB16_DMA_BUFFER_SIZE / 4) - 1);
     sb16_dsp_write(count & 0xFF);
     sb16_dsp_write((count >> 8) & 0xFF);
@@ -212,8 +203,10 @@ static void sb16_arm(void) {
     sb16_is_playing = 1;
 }
 
-/* Loop whatever the DMA buffer already holds. No refill, so the buffer
- * plays unchanged until sb16_stop(). */
+
+/* Loop whatever the DMA buffer already holds.
+ * No refill occurs; the DMA+DSP auto-init will keep re-reading the
+ * current contents of the DMA buffer until sb16_stop(). */
 void sb16_play(void) {
     if (!sb16_dma_buffer_phys) {
         log_write("SB16: play with no DMA buffer", KERNEL, LOG_ERROR);
@@ -227,10 +220,15 @@ void sb16_play(void) {
     sb16_arm();
 }
 
-/* Stream raw PCM (signed 16-bit stereo, 44.1 kHz) out of `wav_data`,
- * looping at the end. The caller keeps ownership of the buffer and must
- * keep it mapped in every address space -- the refill runs from an
- * interrupt, under whatever page tables happen to be current. */
+/* Stream signed 16-bit stereo PCM at 44.1 kHz from `wav_data`, looping
+ * at wraparound.
+ *
+ * `wav_data` must remain valid for the entire playback because the
+ * IRQ handler refills the DMA buffer by copying from `wav_data`.
+ * If the handler runs under a different address space, `wav_data`
+ * must still be mapped there (or must be safe to access everywhere
+ * the IRQ handler can execute).
+ */
 void sb16_play_wav(uint8_t *wav_data, uint32_t wav_size) {
     if (!sb16_dma_buffer_phys || !wav_data || wav_size == 0) {
         log_write("SB16: play_wav with no buffer or no data", KERNEL, LOG_ERROR);
@@ -242,21 +240,29 @@ void sb16_play_wav(uint8_t *wav_data, uint32_t wav_size) {
     current_audio_data = wav_data;
     current_audio_size = wav_size;
     audio_position = 0;
-    /* The first interrupt means "the first half finished", so that is the
-     * half the handler refills first. */
+
+    /* The first IRQ indicates the “first half” has completed, so refill
+     * that half first. */
     sb16_use_first_half = 1;
 
-    /* Prime both halves: the card plays through the second one before the
-     * first interrupt ever arrives. */
+    /* Pre-fill the entire DMA buffer. The device will output the
+     * second half before the first interrupt occurs. */
     uint32_t filled = 0;
     while (filled < SB16_DMA_BUFFER_SIZE) {
         uint32_t chunk = SB16_DMA_BUFFER_SIZE - filled;
         uint32_t remaining = wav_size - audio_position;
+
         if (chunk > remaining)
             chunk = remaining;
-        memcpy(sb16_dma_buffer_virt + filled, wav_data + audio_position, chunk);
+
+        memcpy(sb16_dma_buffer_virt + filled,
+               wav_data + audio_position,
+               chunk);
+
         filled += chunk;
         audio_position += chunk;
+
+        // Loop back to the start once we reach the end of the source data.
         if (audio_position >= wav_size)
             audio_position = 0;
     }
@@ -264,12 +270,13 @@ void sb16_play_wav(uint8_t *wav_data, uint32_t wav_size) {
     sb16_arm();
 }
 
+
 void sb16_stop(void) {
     if (!sb16_is_playing)
         return;
 
-    sb16_dsp_write(0xD5); /* pause 16-bit DMA */
-    sb16_dsp_write(0xD9); /* exit auto-init 16-bit DMA */
+    sb16_dsp_write(0xD5); // pause 16-bit DMA
+    sb16_dsp_write(0xD9); // exit auto-init 16-bit DMA
 
     outb(DMA_SLAVE_MASK, DMA_MASK_CHAN5);
     pic_set_mask(sb16_irq);
@@ -278,7 +285,7 @@ void sb16_stop(void) {
     sb16_is_playing = 0;
 }
 
-// Only match ISA devices at standard SB16 ports!
+/* Only matches ISA devices with standard SB16 ports (0x220 or 0x240) */
 static int sb16_match(const struct device *device) {
     if (device->bus != DEVICE_BUS_ISA) return 0;
     const struct isa_device *isa = &device->bus_info.isa;
@@ -298,9 +305,9 @@ static int sb16_probe(struct device *device) {
             if (inb(io_base + SB16_REG_DSP_READ) == 0xAA) {
                 log_write("SB16: SoundBlaster 16 detected!", KERNEL, LOG_INFO);
 
-                /* Latch the base before any DSP/mixer access: everything
-                 * below (and every later caller) drives this card, which
-                 * is not necessarily the one at 0x220. */
+                /* Initialize SB16 (PCI/ISA-independent) before any DSP/mixer I/O.
+                 * All subsequent callers assume this card’s state, which may not
+                 * correspond to the device at I/O 0x220. */
                 sb16_base = io_base;
                 sb16_irq = (uint8_t)(isa->irq ? isa->irq : SB16_DEFAULT_IRQ);
 
@@ -309,17 +316,19 @@ static int sb16_probe(struct device *device) {
                 // Give the DSP a moment to stabilize after reset
                 for (volatile int i = 0; i < 10000; i++);
 
-                // Initialize hardware
+                // Initialize SB16 hardware in a controlled order.
                 sb16_speaker_on();
                 sb16_set_sample_rate(44100);
                 sb16_reset_mixer();
                 sb16_set_max_volume();
 
-                /* Allocate + program the DMA channel, but leave it masked
-                 * and the DSP idle. Probing a device must not start an
-                 * unbounded auto-init transfer -- callers use sb16_play(). */
-                if (sb16_allocate_dma_buffer() == 0)
+                /* Allocate the DMA resources, then program the channel while
+                * keeping it masked and the DSP quiescent.
+                * Probing must not trigger an uncontrolled auto-DMA transfer;
+                * playback begins via sb16_play(). */
+                if (sb16_allocate_dma_buffer() == 0) {
                     sb16_program_dma();
+                }
 
                 return 0;
             }

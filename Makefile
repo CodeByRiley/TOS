@@ -16,19 +16,34 @@ kernel_asm_object_files := $(patsubst kernel/%.asm, build/kernel/%.o, $(kernel_a
 
 kernel_object_files := $(kernel_c_object_files) $(kernel_asm_object_files) $(ap_trampoline_obj)
 
-kernel_c_flags := -I kernel -ffreestanding -mno-red-zone -mcmodel=kernel -fno-pic -fno-pie
+# -MMD -MP makes gcc emit a .d file per object listing the headers it pulled
+# in. Without it an object depends only on its .c, so editing a header rebuilds
+# nothing and the link silently reuses objects compiled against the old
+# definitions — the resulting binary is a mix of both, which reads as "my fix
+# had no effect".
+kernel_c_flags := -I kernel -ffreestanding -mno-red-zone -mcmodel=kernel -fno-pic -fno-pie -MMD -MP
+
+kernel_dep_files := $(kernel_c_object_files:.o=.d)
 
 linker_script := boot/x86_64/linker.ld
 iso_dir       := boot/x86_64/iso
 kernel_bin    := dist/x86_64/kernel.bin
 disk_img      := build/disk.img
+USERSPACE_CLEAN ?= 0
+BUILD_DOOM ?= 0
 
 nvidia_firmware_files := $(wildcard rootfs/firmware/*.bin)
-rootfs_payload_files := rootfs/readme.txt rootfs/games/doom/doom.wad $(nvidia_firmware_files)
+rootfs_payload_files := rootfs/readme.txt rootfs/cursor.bmp \
+                        rootfs/music/beethoven.wav \
+                        $(nvidia_firmware_files)
 
 $(kernel_c_object_files): build/kernel/%.o : kernel/%.c
 	mkdir -p $(dir $@) && \
 	x86_64-elf-gcc -c $(kernel_c_flags) $(patsubst build/kernel/%.o, kernel/%.c, $@) -o $@
+
+# Pull in the generated header dependencies. Leading '-' so a clean tree (no
+# .d files yet) is not an error.
+-include $(kernel_dep_files)
 
 $(kernel_asm_object_files): build/kernel/%.o : kernel/%.asm
 	mkdir -p $(dir $@) && \
@@ -49,8 +64,10 @@ $(ap_trampoline_obj): $(ap_trampoline_bin)
 
 .PHONY: userspace
 userspace:
+ifeq ($(USERSPACE_CLEAN),1)
 	$(MAKE) -C userspace clean
-	$(MAKE) -C userspace all
+endif
+	$(MAKE) -C userspace all BUILD_DOOM=$(BUILD_DOOM)
 
 $(disk_img): userspace tools/create_disk.sh $(rootfs_payload_files)
 	wsl bash -c "cd \$$(wslpath '$(CURDIR)') && bash tools/create_disk.sh"

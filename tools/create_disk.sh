@@ -8,40 +8,45 @@ cd "$(dirname "$0")/.."
 IMG="${IMG:-build/disk.img}"
 mkdir -p "$(dirname "$IMG")"
 
-# (host_path::fat_dst_name) pairs
+# (host_path::fat_dst_path) pairs. The volume is FAT32 with VFAT long
+# names, so destinations are the real names — no 8.3 mangling, and no
+# second spelling to keep in sync with the kernel's hardcoded paths.
 payloads=(
-	"rootfs/readme.txt::README.TXT"
-	"rootfs/cursor.bmp::CURSOR.BMP"
-	"rootfs/games/doom/doom.wad::DOOM1.WAD"
-	"userspace/bin/hello/hello.elf::HELLO.ELF"
-	"userspace/bin/ls/ls.elf::LS.ELF"
-	"userspace/bin/cat/cat.elf::CAT.ELF"
-	"userspace/bin/gfx/gfx.elf::GFX.ELF"
-	"userspace/bin/doom/doom.elf::DOOM.ELF"
-	"userspace/bin/sh/sh.elf::SH.ELF"
-	"userspace/bin/shutdown/shutdown.elf::SHUTDOWN.ELF"
-	"userspace/bin/reboot/reboot.elf::REBOOT.ELF"
-	"userspace/bin/pkill/pkill.elf::PKILL.ELF"
-	"userspace/bin/plist/plist.elf::PLIST.ELF"
-	"userspace/bin/fdchild/fdchild.elf::FDCHILD.ELF"
-	"userspace/bin/mtest/mtest.elf::MTEST.ELF"
-	"userspace/bin/vmtest/vmtest.elf::VMTEST.ELF"
-	"userspace/bin/uidemo/uidemo.elf::UIDEMO.ELF"
-	"userspace/bin/pe_test/pe_test.exe::PE_TEST.EXE"
-	"userspace/bin/hello/hello.exe::HELLO.EXE"
-	"userspace/bin/ls/ls.exe::LS.EXE"
-	"userspace/bin/winman/winman.elf::WINMAN.ELF"
-	"userspace/bin/btop/btop.elf::BTOP.ELF"
+	"rootfs/readme.txt::readme.txt"
+	"rootfs/cursor.bmp::cursor.bmp"
+	"rootfs/music/beethoven.wav::music/beethoven.wav"
+	"rootfs/system/fonts/SansDisplayStatic.ttf::system/fonts/sansdisplaystatic.ttf"
+	"rootfs/system/fonts/SansDisplayVariable.ttf::system/fonts/sansdisplayvariable.ttf"
+	"userspace/bin/hello/hello.elf::hello.elf"
+	"userspace/bin/ls/ls.elf::ls.elf"
+	"userspace/bin/cat/cat.elf::cat.elf"
+	"userspace/bin/gfx/gfx.elf::gfx.elf"
+	"userspace/bin/sh/sh.elf::sh.elf"
+	"userspace/bin/shutdown/shutdown.elf::shutdown.elf"
+	"userspace/bin/reboot/reboot.elf::reboot.elf"
+	"userspace/bin/pkill/pkill.elf::pkill.elf"
+	"userspace/bin/plist/plist.elf::plist.elf"
+	"userspace/bin/fdchild/fdchild.elf::fdchild.elf"
+	"userspace/bin/mtest/mtest.elf::mtest.elf"
+	"userspace/bin/vmtest/vmtest.elf::vmtest.elf"
+	"userspace/bin/uidemo/uidemo.elf::uidemo.elf"
+	"userspace/bin/pe_test/pe_test.exe::pe_test.exe"
+	"userspace/bin/hello/hello.exe::hello.exe"
+	"userspace/bin/ls/ls.exe::ls.exe"
+	"userspace/bin/winman/winman.elf::winman.elf"
+	"userspace/bin/btop/btop.elf::btop.elf"
+	"userspace/bin/thread/thread.elf::thread.elf"
 )
 
-# NVIDIA's upstream names exceed FAT 8.3. Keep the source names on the host
-# and expose deterministic short names to the kernel. Firmware is optional:
-# QEMU and non-NVIDIA systems continue to build the same root filesystem.
+# Firmware and DOOM are optional: QEMU and non-NVIDIA systems continue to
+# build the same root filesystem without them.
 optional_payloads=(
-	"rootfs/firmware/gsp_ga10x.bin::GSPGA10X.BIN"
-	"rootfs/firmware/gsp_tu10x.bin::GSPTU10X.BIN"
-	"rootfs/firmware/ucodes_ga10x.bin::UCGA10X.BIN"
-	"rootfs/firmware/ucodes_tu10x.bin::UCTU10X.BIN"
+	"rootfs/games/doom/doom.wad::games/doom/doom.wad"
+	"userspace/bin/doom/doom.elf::doom.elf"
+	"rootfs/firmware/gsp_ga10x.bin::firmware/gsp_ga10x.bin"
+	"rootfs/firmware/gsp_tu10x.bin::firmware/gsp_tu10x.bin"
+	"rootfs/firmware/ucodes_ga10x.bin::firmware/ucodes_ga10x.bin"
+	"rootfs/firmware/ucodes_tu10x.bin::firmware/ucodes_tu10x.bin"
 )
 
 for entry in "${optional_payloads[@]}"; do
@@ -65,13 +70,19 @@ if [[ -z "${DISK_SIZE_MIB:-}" ]]; then
 	mib=$((1024 * 1024))
 	slack_bytes=$((4 * mib))
 	DISK_SIZE_MIB=$(((payload_bytes + slack_bytes + mib - 1) / mib))
-	if ((DISK_SIZE_MIB < 16)); then
-		DISK_SIZE_MIB=16
+	# FAT32 is only FAT32 above 65525 clusters -- below that the driver
+	# reads the geometry as FAT16 and refuses the volume, because a real
+	# FAT16 needs the fixed root table this image would not have. At one
+	# 512-byte sector per cluster that floor is 32 MiB; 64 gives room.
+	if ((DISK_SIZE_MIB < 64)); then
+		DISK_SIZE_MIB=64
 	fi
 fi
 
 dd if=/dev/zero of="$IMG" bs=1M count="$DISK_SIZE_MIB" status=none
-mkfs.fat -F 16 "$IMG" >/dev/null
+# -s 1 keeps one sector per cluster so the cluster count stays well clear
+# of the FAT32 floor no matter how small the payload set gets.
+mkfs.fat -F 32 -s 1 "$IMG" >/dev/null
 
 ensure_fat_parent_dirs() {
 	local fat_path="${1#/}"

@@ -49,9 +49,6 @@ uint64_t elf_load(const char *path, uint64_t *pml4) {
         return 0;
     }
 
-    log_write_hex("elf: entry =", eh.e_entry, KERNEL, LOG_INFO);
-    log_write_hex("elf: phnum =", eh.e_phnum, KERNEL, LOG_INFO);
-
     for (int i = 0; i < eh.e_phnum; i++) {
         struct Elf64_Phdr ph;
         fseek(fp, eh.e_phoff + i * eh.e_phentsize, SEEK_SET);
@@ -155,9 +152,6 @@ uint64_t elf_load(const char *path, uint64_t *pml4) {
             done += chunk;
         }
 
-        log_write_hex("elf: loaded segment va =", ph.p_vaddr,  KERNEL, LOG_INFO);
-        log_write_hex("elf: filesz           =", ph.p_filesz, KERNEL, LOG_INFO);
-        log_write_hex("elf: memsz            =", ph.p_memsz,  KERNEL, LOG_INFO);
     }
 
     fclose(fp);

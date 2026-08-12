@@ -124,16 +124,16 @@ void *kmalloc(size_t size) {
     }
 }
 
+/* Page-granular allocator for buffers too big to want a heap block, living in
+ * its own VA range. The offset only ever moves forward and there is no
+ * large_free, so every allocation is effectively permanent — fine for the
+ * boot-time buffers using it, wrong for anything with a lifecycle. */
 void* large_alloc(size_t size) {
     if (size == 0) return 0;
 
-    // Calculate how many 4KB pages we need
     size_t pages = (size + 4095) / 4096;
-
-    // Record the starting virtual address to return later
     uint64_t virt_start = large_alloc_virt_offset;
 
-    // Map physical frames to our virtual address range one by one
     for (size_t i = 0; i < pages; i++) {
         uint64_t phys = pmm_alloc_frame();
         if (!phys) {
@@ -141,18 +141,16 @@ void* large_alloc(size_t size) {
             return 0;
         }
 
-        // Map the page with Present and Write flags
+        /* Both failure paths leak every frame mapped so far, and leave the
+         * partial mapping in place. Acceptable only because a failure here is
+         * already fatal in practice. */
         if (vmm_map(virt_start + (i * 4096), phys, VMM_PRESENT | VMM_WRITE) != 0) {
             log_write("LARGE_ALLOC: VMM mapping failed!", KERNEL, LOG_ERROR);
-            // Note: We leak the already allocated physical frames here for simplicity,
-            // but in a production OS you would want to free them.
             return 0;
         }
     }
 
-    // Advance the global offset for the next large allocation
     large_alloc_virt_offset += pages * 4096;
-
     return (void*)virt_start;
 }
 

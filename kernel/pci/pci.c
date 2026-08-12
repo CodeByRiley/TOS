@@ -485,7 +485,11 @@ int pci_enable_memory(struct pci_device *d) {
 
 void pci_enable(struct pci_device *d) {
     uint16_t cmd = pci_cfg_read16(d->addr, PCI_CFG_COMMAND);
-    cmd |= PCI_CMD_MEM | PCI_CMD_BUS_MASTER;
+    /* I/O as well as memory: plenty of devices (UHCI, IDE, legacy NICs) put
+     * their entire register set behind an I/O BAR, and leaving IO decoding
+     * off means every inb/outb to it reads back 0xFF and drops writes. We got
+     * away with it only because firmware had already set the bit. */
+    cmd |= PCI_CMD_IO | PCI_CMD_MEM | PCI_CMD_BUS_MASTER;
     /* Keep INTx enabled (clear INT_DISABLE) for legacy IRQ delivery. */
     cmd &= ~PCI_CMD_INT_DISABLE;
     pci_cfg_write16(d->addr, PCI_CFG_COMMAND, cmd);

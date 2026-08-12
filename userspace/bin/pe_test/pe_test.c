@@ -22,7 +22,7 @@
  * Everything crossing the syscall boundary is `sarg`, which is 64-bit
  * under both models.
  */
-#include "syscall.h"
+#include "../../lib/syscall.h"
 
 typedef long long          sarg;
 typedef unsigned long long uarg;

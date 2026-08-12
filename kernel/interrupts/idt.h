@@ -18,12 +18,22 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* Long-mode 64-bit interrupt gate. */
+/* Long-mode 64-bit interrupt gate (16 bytes).
+ *
+ * type_attr layout:
+ *   Bits | Name    | Description
+ *   7    | Present | 0 = Unhandled vector, faults as #NP
+ *   6-5  | DPL     | Lowest ring that may invoke this by `int n`
+ *   4    | Zero    | Must be 0 for a system descriptor
+ *   3-0  | Type    | 0xE = interrupt gate (clears IF), 0xF = trap gate (leaves IF)
+ *
+ * So 0x8E is present, DPL 0, interrupt gate. Use 0xEE (DPL 3) only for a
+ * vector userspace is meant to raise deliberately. */
 struct idt_entry {
     uint16_t offset_low;    /* bits 0-15  of handler                       */
     uint16_t selector;      /* GDT code segment (0x08 from boot GDT)       */
-    uint8_t  ist;           /* 0 = use current rsp                         */
-    uint8_t  type_attr;     /* 0x8E = present, DPL=0, 64-bit interrupt     */
+    uint8_t  ist;           /* 0 = use current rsp, 1-7 = TSS IST stack    */
+    uint8_t  type_attr;
     uint16_t offset_mid;    /* bits 16-31                                  */
     uint32_t offset_high;   /* bits 32-63                                  */
     uint32_t zero;

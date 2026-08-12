@@ -161,6 +161,9 @@ void task_set_name(struct task *t, const char *name);
 
 void sched_init(void);
 
+void sleep_ms(uint32_t ms);
+void sleep_ms_busy(uint32_t ms);
+
 /* Spawn a kernel thread that runs `entry` until task_exit. */
 struct task *task_spawn(void (*entry)(void));
 

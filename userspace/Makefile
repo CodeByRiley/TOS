@@ -6,6 +6,8 @@ USER_AS      := nasm
 USER_CFLAGS  := -ffreestanding -nostdlib -fno-pie -mno-red-zone -static \
                 -I lib -I ../kernel -O2 -Wall -Wextra
 USER_LDFLAGS := -nostdlib -static -T lib/user.ld
+BUILD_DOOM ?= 0
+SHOW_DOOM_INFO ?= 0
 
 # PE binaries cannot link ELF objects, so every object is built twice: once
 # by the ELF cross-compiler into foo.o, once by mingw into foo.pe.o. The
@@ -24,7 +26,7 @@ PE_CFLAGS := -ffreestanding -nostdlib -fno-pie -mno-red-zone -static \
 # source the ELF build uses.
 PE_LIB_OBJS := lib/crt0_pe.pe.o lib/syscall_pe.pe.o lib/syscall.pe.o \
                lib/printf.pe.o lib/string.pe.o lib/string_extra.pe.o \
-               lib/malloc.pe.o
+               lib/malloc.pe.o lib/pthread.pe.o
 
 # C-source PE lib objects (crt0_pe is assembly and has its own rule).
 PE_LIB_C_OBJS := $(filter-out lib/crt0_pe.pe.o, $(PE_LIB_OBJS))
@@ -48,16 +50,20 @@ PE_VARIANT_EXES := $(foreach b,$(PE_VARIANTS),bin/$(b)/$(b).exe)
 # syscalls now, so every binary should be able to call them.
 LIB_OBJS := lib/crt0.o lib/syscall_asm.o lib/syscall.o lib/wm.o \
             lib/printf.o lib/malloc.o lib/stdio.o lib/string.o lib/keymap.o lib/console.o \
-            lib/stdlib_extra.o lib/string_extra.o lib/stat.o lib/bmp.o lib/gfx.o lib/ui.o
+            lib/stdlib_extra.o lib/string_extra.o lib/stat.o lib/bmp.o lib/gfx.o lib/ui.o lib/pthread.o
+
+TTF_OBJS := lib/ttf.o
 
 # C-source lib objects (.s sources have their own explicit rules below).
-LIB_C_OBJS := $(filter-out lib/crt0.o lib/syscall_asm.o, $(LIB_OBJS))
+LIB_C_OBJS := $(filter-out lib/crt0.o lib/syscall_asm.o, $(LIB_OBJS)) $(TTF_OBJS)
 
 # One binary per directory under bin/, named after the directory.
 # Doom is special (multi-source) and gets its own rules.
-SIMPLE_BINS := hello cat gfx ls sh shutdown reboot mtest winman btop pkill plist fdchild vmtest uidemo
+SIMPLE_BINS := hello cat gfx ls sh shutdown reboot mtest btop pkill plist fdchild vmtest uidemo thread
 SIMPLE_BIN_OBJS := $(foreach b,$(SIMPLE_BINS),bin/$(b)/$(b).o)
 SIMPLE_BIN_ELFS := $(foreach b,$(SIMPLE_BINS),bin/$(b)/$(b).elf)
+WINMAN_OBJ := bin/winman/winman.o
+WINMAN_ELF := bin/winman/winman.elf
 
 DOOM_SRC_DIR := games/doom/doomgeneric
 DOOM_SOURCES := $(filter-out \
@@ -96,9 +102,11 @@ DOOM_CFLAGS := -ffreestanding -nostdlib -fno-pie -mno-red-zone -static \
 bin/doom/doom.elf: $(DOOM_OBJS) $(DOOM_PLATFORM_OBJS) $(LIB_OBJS) $(DOOM_EXTRA_OBJS)
 	$(USER_ELF_LD) $(USER_LDFLAGS) $^ -o $@
 
+ifeq ($(SHOW_DOOM_INFO),1)
 $(info DOOM_SRC_DIR = $(DOOM_SRC_DIR))
 $(info DOOM_SOURCES count = $(words $(DOOM_SOURCES)))
 $(info DOOM_OBJS first = $(firstword $(DOOM_OBJS)))
+endif
 
 # Generic catch-all for doom sources (and any other .c that lacks an explicit
 # rule). Uses DOOM_CFLAGS by design — anything compiled with USER_CFLAGS must
@@ -106,8 +114,15 @@ $(info DOOM_OBJS first = $(firstword $(DOOM_OBJS)))
 %.o: %.c
 	$(USER_ELF_CC) $(DOOM_CFLAGS) -c $< -o $@
 
-.PHONY: all clean
-all: $(SIMPLE_BIN_ELFS) bin/doom/doom.elf $(PE_BIN_EXES) $(PE_VARIANT_EXES)
+USERSPACE_TARGETS := $(SIMPLE_BIN_ELFS) $(WINMAN_ELF) $(PE_BIN_EXES) $(PE_VARIANT_EXES)
+ifeq ($(BUILD_DOOM),1)
+USERSPACE_TARGETS += bin/doom/doom.elf
+endif
+
+.PHONY: all clean doom
+all: $(USERSPACE_TARGETS)
+
+doom: bin/doom/doom.elf
 
 # --- library objects -----------------------------------------------------
 
@@ -124,11 +139,14 @@ $(LIB_C_OBJS): %.o: %.c
 # --- simple binaries -----------------------------------------------------
 
 # Static pattern for the per-binary .o (USER_CFLAGS, not DOOM_CFLAGS).
-$(SIMPLE_BIN_OBJS): %.o: %.c
+$(SIMPLE_BIN_OBJS) $(WINMAN_OBJ): %.o: %.c
 	$(USER_ELF_CC) $(USER_CFLAGS) -c $< -o $@
 
 # Static pattern for the link step. bin/foo/foo.elf <- bin/foo/foo.o + lib.
 $(SIMPLE_BIN_ELFS): bin/%.elf: bin/%.o $(LIB_OBJS)
+	$(USER_ELF_LD) $(USER_LDFLAGS) $^ -o $@
+
+$(WINMAN_ELF): $(WINMAN_OBJ) $(LIB_OBJS) $(TTF_OBJS)
 	$(USER_ELF_LD) $(USER_LDFLAGS) $^ -o $@
 
 # --- PE binaries ---------------------------------------------------------

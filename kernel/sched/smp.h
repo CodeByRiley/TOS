@@ -12,7 +12,7 @@
 
 void smp_boot_aps(void);
 
-/* C entry called from ap_trampoline.asm after the AP enters long mode. */
+/* called from ap_trampoline after entering long mode. */
 void ap_main(uint32_t cpu_id);
 
 #endif

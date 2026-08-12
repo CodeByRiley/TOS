@@ -2,7 +2,7 @@
  *
  * Reads a line, tokenises it, dispatches shell-owned built-ins through a
  * table, and falls through to a filesystem ELF lookup so `btop` runs
- * BTOP.ELF without a `run` prefix.
+ * btop.elf without a `run` prefix.
  * Foreground execs block on exec(); a trailing `&` token launches via
  * spawn() so windowed apps don't pin the prompt.
  *
@@ -278,7 +278,7 @@ static const struct builtin builtins[] = {
     { "help",     "help",                       builtin_help },
     { "clear",    "clear",                      builtin_clear },
     { "exit",     "exit",                       builtin_exit },
-    { "run",      "run PATH[.ELF] [ARG...] [&]", builtin_run },
+    { "run",      "run PATH[.elf] [ARG...] [&]", builtin_run },
     { "mkdir",    "mkdir DIR",                  builtin_mkdir },
     { "rm",       "rm FILE",                    builtin_rm },
     { "echo",     "echo TEXT...",               builtin_echo },
@@ -454,7 +454,7 @@ static int build_exec_candidate(const char *prefix, const char *raw,
         return -1;
 
     if (!final_component_has_dot(raw)) {
-        if (append_str(out, &n, max, ".ELF") != 0)
+        if (append_str(out, &n, max, ".elf") != 0)
             return -1;
     }
 
@@ -471,7 +471,7 @@ static int probe_exec_candidate(const char *path) {
 
 /* Resolve a user command to an ELF path. The filesystem is the command
  * registry: names without a slash are searched in a tiny PATH list, while
- * explicit paths are used as-is after optional .ELF suffixing. */
+ * explicit paths are used as-is after optional .elf suffixing. */
 static int resolve_exec_path(const char *raw, char *out, int max) {
     if (!raw || !raw[0])
         return -1;
@@ -504,9 +504,9 @@ static const char *path_basename(const char *path) {
  *
  *   - Searches a small PATH for bare names.
  *   - Preserves explicit directory components.
- *   - Appends ".ELF" to the final component if it has no extension.
+ *   - Appends ".elf" to the final component if it has no extension.
  *   - Probes existence via open() so typos surface as a clean error
- *     rather than the kernel's "[X.ELF exited -1]" message.
+ *     rather than the kernel's "[x.elf exited -1]" message.
  *
  * When `bg != 0` the child is launched via spawn() (fire-and-forget) so
  * windowed apps don't pin the prompt. The trailing `&` argv token sets
@@ -552,10 +552,10 @@ static int exec_argv(int argc, char **argv, int bg) {
     return 0;
 }
 
-/* `run PATH[.ELF] [ARGS...] [&]` — explicit form. Strips the leading
+/* `run PATH[.elf] [ARGS...] [&]` — explicit form. Strips the leading
  * "run" token and forwards the rest to exec_argv. */
 static int builtin_run(int argc, char **argv) {
-    if (argc < 2) { printf("usage: run PATH[.ELF] [ARG...] [&]\n"); return 1; }
+    if (argc < 2) { printf("usage: run PATH[.elf] [ARG...] [&]\n"); return 1; }
     int bg = 0;
     if (argc >= 2 && argv[argc - 1] && strcmp(argv[argc - 1], "&") == 0) {
         bg = 1;
@@ -571,8 +571,8 @@ static int builtin_test(int argc, char **argv) {
     char a_buf[5] = {0};
     char b_buf[5] = {0};
 
-    int a = (int)open("README.TXT", 0);
-    int b = (int)open("README.TXT", 0);
+    int a = (int)open("readme.txt", 0);
+    int b = (int)open("readme.txt", 0);
 
     if (a < 0 || b < 0) {
         printf("fdtest: open failed a=%d b=%d\n", a, b);
@@ -603,7 +603,7 @@ static int builtin_fdnstest(int argc, char **argv) {
     (void)argc;
     (void)argv;
 
-    int parent_fd = (int)open("README.TXT", 0);
+    int parent_fd = (int)open("readme.txt", 0);
     if (parent_fd < 0) {
         printf("fdnstest: parent open failed\n");
         return 1;
@@ -612,7 +612,7 @@ static int builtin_fdnstest(int argc, char **argv) {
     printf("fdnstest: parent fd=%d\n", parent_fd);
 
     char *child_argv[] = { "fdchild", 0 };
-    long code = exec("FDCHILD.ELF", child_argv);
+    long code = exec("fdchild.elf", child_argv);
 
     printf("fdnstest: child exited %d\n", (int)code);
     close(parent_fd);
