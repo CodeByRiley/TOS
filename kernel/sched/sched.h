@@ -8,14 +8,28 @@
  *                          static_asserts enforce the ABI)
  *   - task spawn / yield / block / exit / sleep helpers
  *
- * The BSP scheduler is a cooperative single ready queue. PIT interrupts
- * account runtime and wake sleepers, but task switches happen at explicit
- * yield/block/sleep points.
+ * The BSP scheduler uses one round-robin ready queue per priority level.
+ * Tasks switch at yield/block/sleep points, and user-mode execution is
+ * preempted on a short PIT-driven time slice. Kernel-mode execution remains
+ * non-preemptible.
  *
  * Implementation: kernel/sched/sched.c.
  */
 #ifndef SCHED_H
 #define SCHED_H
+
+/* Priority levels. NORMAL is 0 so a zeroed task slot defaults to it — no
+ * path can accidentally inherit HIGH by forgetting to initialise.
+ *
+ * HIGH exists for the display critical path only: the window manager and
+ * the framebuffer flush thread. Every client's pixels reach the screen
+ * through those two, so leaving them to compete round-robin with their own
+ * clients means one busy app decides the whole desktop's frame rate.
+ * Scheduling is weighted, not strict — see SCHED_HIGH_BURST — so a spinning
+ * HIGH task slows the system down instead of wedging it. */
+#define SCHED_PRIO_NORMAL 0
+#define SCHED_PRIO_HIGH   1
+#define SCHED_PRIO_LEVELS 2
 
 #define TASK_MAX_FDS 32
 #define TASK_CWD_MAX 256
@@ -24,9 +38,9 @@
 #define INPUT_RING_SIZE_LOCAL 64
 #define IPC_RING_SIZE_LOCAL   16
 
-/* Cooperative BSP scheduler with a fixed 16-slot task table and a
- * singly-linked ready queue. APs service the separate SMP-safe kernel work
- * queue; userspace stays on the BSP until scheduler state is made per-CPU. */
+/* BSP scheduler with a fixed 16-slot task table and a singly-linked ready
+ * queue. APs service the separate SMP-safe kernel work queue; userspace stays
+ * on the BSP until scheduler state is made per-CPU. */
 
 #define MAX_TASKS 16
 #define KSTACK_BYTES (16 * 1024)
@@ -40,9 +54,11 @@
  * process, exactly as it was before the list existed. */
 #define TASK_MMAP_HOLES 16
 
-#include "msg/msg.h"
+#include <msg/msg.h>
 #include <stddef.h>
 #include <stdint.h>
+
+#define MAX_USER_VMAS 64
 
 struct fat_file;
 
@@ -61,6 +77,13 @@ enum task_state {
   TASK_LOADING,   /* stable pid reserved while its image is loaded         */
 };
 
+struct user_vma {
+    uint64_t start;
+    uint64_t end;
+    uint64_t pte_flags; // The VMM_* flags (USER, WRITE, NX, etc.)
+    int used;
+};
+
 struct task {
   uint64_t saved_rsp;             /* kernel rsp at last context_switch     */
   uint64_t cr3;                   /* page-table root for this task         */
@@ -71,6 +94,7 @@ struct task {
   uint64_t user_arg;                 /* argument for user task                */
 
   enum task_state state;
+  int prio;                       /* SCHED_PRIO_*; 0 (NORMAL) by default   */
   int pid;
   int parent_pid;                 /* 0 for kthreads / init                 */
   int waiting_for_pid;            /* 0 unless TASK_BLOCKED on a child wait */
@@ -131,6 +155,8 @@ struct task {
    * running BSP task. Userspace btop computes CPU% from the delta over
    * a sampling window. Never reset by the kernel. */
   uint64_t ticks_run;
+  /* Userspace Virtual Memory Areas for demand paging */
+  struct user_vma vmas[MAX_USER_VMAS];
 };
 
 /* Snapshot row returned by sched_snapshot. Mirrors the userspace
@@ -184,6 +210,11 @@ void task_fail_reserved_user(struct task *t, long code);
 struct task *task_spawn_thread(uint64_t entry, uint64_t user_stack);
 
 void task_yield(void);
+
+/* Called after IRQ0 has been acknowledged when its interrupt frame came from
+ * ring 3. Rotates runnable user tasks once their time slice expires. */
+void sched_preempt_tick(void);
+
 void task_block(int waiting_for_pid);
 void task_wakeup(struct task *t);
 int task_wake_futex(uint64_t phys);
@@ -192,11 +223,16 @@ void task_exit_thread(void) __attribute__((noreturn));
 int task_kill(int pid, long code);
 struct task *task_current(void);
 
+/* Move `t` to `prio`. Safe on a queued task: it is lifted off its current
+ * ready list and re-queued on the new one. Returns 0, or -1 on a bad
+ * argument. */
+int sched_set_priority(struct task *t, int prio);
+
 void task_inherit_cwd(struct task *child, struct task *parent);
 
 /* Park the current task off the ready queue until at least `ticks` PIT
- * ticks (100 Hz = 10 ms each) have elapsed. Called from PIT IRQ context
- * the kernel walks sleepers and re-queues any whose wake_tick has passed. */
+ * ticks have elapsed. From IRQ0, the kernel walks sleepers and re-queues any
+ * whose wake_tick has passed. */
 void task_sleep_ticks(uint64_t ticks);
 void sched_wake_sleepers(void);
 

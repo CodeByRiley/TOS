@@ -9,8 +9,8 @@
  * log_*_from_u8 helpers so an out-of-range value falls back to a sane
  * default rather than indexing past the enum tables.
  */
-#include "utilities/log.h"
-#include "display/print.h"
+#include <utilities/log.h>
+#include <display/print.h>
 
 /* Validate raw type byte → enum log_type. Returns 1 on hit. */
 static int log_type_from_u8(uint8_t value, enum log_type *out) {
@@ -203,4 +203,40 @@ void log_write_exception(uint64_t int_num, const char *name,
     print_write_str("\n[KERNEL]:   rip=");
     print_write_hex(rip);
     print_write_str("\n");
+}
+
+/* printf-style logging */
+
+/* Buffer for assembling the formatted message before it is copied into
+ * the entry.  Kept on the stack; log_init_entry's log_copy_message will
+ * truncate to sizeof(entry->message) if the formatted text is longer
+ * than the entry can hold, so callers never need to pre-size. */
+#define LOG_FMT_BUF  512
+
+/* va_list variant */
+void log_write_vfmt(uint8_t raw_type, uint8_t raw_level, const char *fmt, va_list args) {
+    char buf[LOG_FMT_BUF];
+
+    if (!fmt) {
+        struct log_entry entry;
+        log_init_entry(&entry, "(null fmt)", raw_type, raw_level);
+        log_write_entry(&entry);
+        return;
+    }
+
+    vsnprintf(buf, sizeof(buf), fmt, args);
+    buf[sizeof(buf) - 1] = '\0';   /* belt-and-suspenders */
+
+    struct log_entry entry;
+    log_init_entry(&entry, buf, raw_type, raw_level);
+    log_write_entry(&entry);
+}
+
+/* printf-style entry point */
+void log_write_fmt(uint8_t raw_type, uint8_t raw_level, const char *fmt, ...) {
+    va_list args;
+
+    va_start(args, fmt);
+    log_write_vfmt(raw_type, raw_level, fmt, args);
+    va_end(args);
 }

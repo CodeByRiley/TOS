@@ -1,9 +1,10 @@
 /* kernel/sched/sched.c — task table + scheduler.
  *
- * Cooperative BSP ready queue. Tasks have explicit
- * states (RUNNING/READY/BLOCKED/SLEEPING/ZOMBIE/DEAD); sleeping tasks
- * sit off the ready queue and get re-queued by sched_wake_sleepers when
- * their wake_tick hits. APs run the separate SMP-safe kernel work queue.
+ * Round-robin BSP ready queue. Tasks have explicit states
+ * (RUNNING/READY/BLOCKED/SLEEPING/ZOMBIE/DEAD); sleeping tasks sit off the
+ * ready queue and get re-queued by sched_wake_sleepers when their wake_tick
+ * hits. Ring-3 code is preempted on a PIT time slice, while kernel code stays
+ * cooperative. APs run the separate SMP-safe kernel work queue.
  *
  * Task lifecycle:
  *   - task_spawn         — kernel thread, runs `entry` until task_exit
@@ -19,16 +20,18 @@
  * callee-saved + rsp, swaps to the new task's saved_rsp.
  */
 
-#include "sched/sched.h"
-#include "devices/pit.h"
-#include "loader/process.h"
-#include "memory/hhdm.h"
-#include "arch/gdt.h"
-#include "memory/heap.h"
-#include "msg/msg.h"
-#include "utilities/log.h"
-#include "utilities/panic.h"
-#include "utilities/string.h"
+#include <sched/sched.h>
+#include <devices/pit.h>
+#include <display/framebuffer.h>
+#include <drivers/sound/sb16.h>
+#include <loader/process.h>
+#include <memory/hhdm.h>
+#include <arch/gdt.h>
+#include <memory/heap.h>
+#include <msg/msg.h>
+#include <utilities/log.h>
+#include <utilities/panic.h>
+#include <utilities/string.h>
 #include <stdint.h>
 
 static void task_set_cwd_root(struct task *t) {
@@ -77,8 +80,11 @@ extern void free_user_pml4(uint64_t *pml4);
 static struct task tasks[MAX_TASKS];
 static int next_pid = 1;
 static struct task *current = 0;
-static struct task *ready_head = 0;
-static struct task *ready_tail = 0;
+/* One round-robin queue per priority level; see SCHED_PRIO_* in sched.h. */
+static struct task *ready_head[SCHED_PRIO_LEVELS] = { 0 };
+static struct task *ready_tail[SCHED_PRIO_LEVELS] = { 0 };
+#define SCHED_QUANTUM_MS 10U
+static uint32_t slice_ticks = 0;
 /* Count of tasks in TASK_SLEEPING. Maintained by task_sleep_ticks /
  * sched_wake_sleepers so the PIT IRQ can skip a full task-table walk on
  * every tick when nothing is asleep — which is the common case. */
@@ -123,44 +129,118 @@ static void user_task_trampoline(void);
 static void idle_thread(void);
 static void mark_task_exited(struct task *task, long code);
 
+static uint64_t irq_save(void) {
+  uint64_t rflags;
+  __asm__ volatile ("pushfq; popq %0; cli" : "=r"(rflags) :: "memory");
+  return rflags;
+}
+
+static void irq_restore(uint64_t rflags) {
+  if (rflags & (1ULL << 9))
+    __asm__ volatile ("sti" ::: "memory");
+}
+
+/* Consecutive dispatches served from HIGH before a runnable NORMAL task is
+ * guaranteed a turn. This is what keeps the scheduling weighted instead of
+ * strict: winman never blocks — it yields at the bottom of its loop and is
+ * immediately runnable again — so strict priority would hand it the CPU
+ * forever and starve its own clients. At 4, a ready NORMAL task waits at
+ * most 4 dispatches, while the display path still gets the large share of
+ * wake-ups that keeps the desktop responsive. */
+#define SCHED_HIGH_BURST 4
+
+static int high_streak = 0;
+
 static void ready_push(struct task *t) {
+  int p = (t->prio == SCHED_PRIO_HIGH) ? SCHED_PRIO_HIGH : SCHED_PRIO_NORMAL;
   t->next = 0;
-  if (!ready_tail)
-    ready_head = ready_tail = t;
+  if (!ready_tail[p])
+    ready_head[p] = ready_tail[p] = t;
   else {
-    ready_tail->next = t;
-    ready_tail = t;
+    ready_tail[p]->next = t;
+    ready_tail[p] = t;
   }
 }
 
+/* Any runnable task at any level? Callers use this to decide whether
+ * yielding would actually hand the CPU to someone. */
+static int ready_any(void) {
+  for (int p = 0; p < SCHED_PRIO_LEVELS; p++)
+    if (ready_head[p])
+      return 1;
+  return 0;
+}
+
 static struct task *ready_pop(void) {
-  struct task *t = ready_head;
-  if (!t)
+  int level = -1;
+
+  if (ready_head[SCHED_PRIO_HIGH] &&
+      (high_streak < SCHED_HIGH_BURST || !ready_head[SCHED_PRIO_NORMAL]))
+    level = SCHED_PRIO_HIGH;
+  else if (ready_head[SCHED_PRIO_NORMAL])
+    level = SCHED_PRIO_NORMAL;
+  else if (ready_head[SCHED_PRIO_HIGH])
+    level = SCHED_PRIO_HIGH;
+
+  if (level < 0) {
+    /* Idle is a fallback, not a normal queue member. Returning it only when
+     * another task blocks/exits keeps timer preemption from wasting a slice
+     * on idle while real work is runnable. */
+    high_streak = 0;
+    if (idle_task && current != idle_task)
+      return idle_task;
     return 0;
-  ready_head = t->next;
-  if (!ready_head)
-    ready_tail = 0;
+  }
+
+  if (level == SCHED_PRIO_HIGH)
+    high_streak++;
+  else
+    high_streak = 0;
+
+  struct task *t = ready_head[level];
+  ready_head[level] = t->next;
+  if (!ready_head[level])
+    ready_tail[level] = 0;
   t->next = 0;
   return t;
 }
 
 static int ready_remove(struct task *target) {
-  struct task *previous = 0;
-  for (struct task *task = ready_head; task; task = task->next) {
-    if (task != target) {
-      previous = task;
-      continue;
+  for (int p = 0; p < SCHED_PRIO_LEVELS; p++) {
+    struct task *previous = 0;
+    for (struct task *task = ready_head[p]; task; task = task->next) {
+      if (task != target) {
+        previous = task;
+        continue;
+      }
+      if (previous)
+        previous->next = task->next;
+      else
+        ready_head[p] = task->next;
+      if (ready_tail[p] == task)
+        ready_tail[p] = previous;
+      task->next = 0;
+      return 0;
     }
-    if (previous)
-      previous->next = task->next;
-    else
-      ready_head = task->next;
-    if (ready_tail == task)
-      ready_tail = previous;
-    task->next = 0;
-    return 0;
   }
   return -1;
+}
+
+int sched_set_priority(struct task *t, int prio) {
+  if (!t || (prio != SCHED_PRIO_NORMAL && prio != SCHED_PRIO_HIGH))
+    return -1;
+
+  uint64_t rflags = irq_save();
+  if (t->prio != prio) {
+    /* Only re-queue if it is actually on a ready list; a running, blocked
+     * or sleeping task just picks the new level up next time it is pushed. */
+    int queued = (ready_remove(t) == 0);
+    t->prio = prio;
+    if (queued)
+      ready_push(t);
+  }
+  irq_restore(rflags);
+  return 0;
 }
 
 static struct task *alloc_slot(void) {
@@ -185,6 +265,7 @@ static struct task *alloc_slot(void) {
 /* Trampoline runs on first switch into a fresh kernel thread.
  * Reads entry from current task struct, calls it, exits with rc=0. */
 static void kthread_trampoline(void) {
+  __asm__ volatile ("sti" ::: "memory");
   void (*fn)(void) = current->kthread_entry;
   fn();
   task_exit(0);
@@ -236,11 +317,15 @@ void sched_init(void) {
   current = t;
   log_write("sched: init task pid=1 ready", KERNEL, LOG_INFO);
 
-  /* Spawn the idle task. It sits in the ready queue and only runs when
-   * nobody else can — its hlt loop is what lets the CPU actually sleep
-   * between IRQs instead of busy-yielding. */
+  /* Create idle through the normal spawn path, then detach it from the ready
+   * queue. Its hlt loop runs only as ready_pop's fallback when nobody else
+   * can run. */
   struct task *idle = task_spawn(idle_thread);
-  if (idle) task_set_name(idle, "idle");
+  if (idle) {
+    task_set_name(idle, "idle");
+    ready_remove(idle);
+    idle_task = idle;
+  }
   log_write("sched: idle task spawned", KERNEL, LOG_INFO);
 }
 
@@ -305,6 +390,7 @@ struct task *task_spawn(void (*entry)(void)) {
   t->user_entry = 0;
   t->user_rsp_initial = 0;
   t->state = TASK_READY;
+  t->prio = SCHED_PRIO_NORMAL;   /* callers raise it explicitly if needed */
   t->pid = next_pid++;
   t->parent_pid = 0;
   t->waiting_for_pid = 0;
@@ -344,6 +430,7 @@ struct task *task_spawn_user(uint64_t *user_pml4, uint64_t entry,
   t->user_entry = entry;
   t->user_rsp_initial = user_rsp;
   t->state = TASK_READY;
+  t->prio = SCHED_PRIO_NORMAL;
   t->pid = next_pid++;
   t->parent_pid = parent_pid;
   t->waiting_for_pid = 0;
@@ -464,6 +551,7 @@ struct task *task_spawn_thread(uint64_t entry, uint64_t user_stack) {
     t->user_rsp_initial = user_stack;
 
     t->state = TASK_READY;
+    t->prio = SCHED_PRIO_NORMAL;
     t->pid = next_pid++;
     t->parent_pid = parent->pid;
     t->waiting_for_pid = 0;
@@ -500,13 +588,18 @@ static void capture_from(struct task *prev) {
 }
 
 void task_yield(void) {
+  uint64_t rflags = irq_save();
+  slice_ticks = 0;
   struct task *next = ready_pop();
-  if (!next)
+  if (!next) {
+    irq_restore(rflags);
     return; /* nothing else runnable */
+  }
 
   struct task *prev = current;
   prev->state = TASK_READY;
-  ready_push(prev);
+  if (prev != idle_task)
+    ready_push(prev);
 
   capture_from(prev);
 
@@ -516,9 +609,34 @@ void task_yield(void) {
 
   context_switch(&prev->saved_rsp, next->saved_rsp, next->cr3,
                  prev->fxstate, next->fxstate);
+  irq_restore(rflags);
+}
+
+void sched_preempt_tick(void) {
+  if (!current || current == idle_task || current->state != TASK_RUNNING) {
+    slice_ticks = 0;
+    return;
+  }
+
+  uint32_t frequency = pit_get_freq();
+  uint32_t quantum = (frequency * SCHED_QUANTUM_MS + 999U) / 1000U;
+  if (quantum == 0)
+    quantum = 1;
+
+  slice_ticks++;
+  if (slice_ticks < quantum)
+    return;
+  slice_ticks = 0;
+
+  /* The ready queues exclude idle, so an empty set means this task really
+   * is the only runnable work and should retain the CPU. */
+  if (ready_any())
+    task_yield();
 }
 
 void task_block(int waiting_for_pid) {
+  uint64_t rflags = irq_save();
+  slice_ticks = 0;
   struct task *next = ready_pop();
   if (!next) {
     log_write("sched: blocked with no runnable task", KERNEL, LOG_ERROR);
@@ -539,6 +657,7 @@ void task_block(int waiting_for_pid) {
 
   context_switch(&prev->saved_rsp, next->saved_rsp, next->cr3,
                  prev->fxstate, next->fxstate);
+  irq_restore(rflags);
 }
 
 void task_wakeup(struct task *t) {
@@ -564,6 +683,9 @@ int task_wake_futex(uint64_t phys) {
 void task_sleep_ticks(uint64_t ticks) {
   extern uint64_t pit_ticks(void);
   if (ticks == 0) return;
+
+  uint64_t rflags = irq_save();
+  slice_ticks = 0;
   current->wake_tick = pit_ticks() + ticks;
   current->state = TASK_SLEEPING;
   n_sleeping++;
@@ -575,6 +697,7 @@ void task_sleep_ticks(uint64_t ticks) {
      * and put us back on the ready queue; we re-poll on the next loop. */
     current->state = TASK_RUNNING;
     n_sleeping--;
+    irq_restore(rflags);
     while (pit_ticks() < current->wake_tick) __asm__ volatile ("hlt");
     return;
   }
@@ -588,6 +711,7 @@ void task_sleep_ticks(uint64_t ticks) {
 
   context_switch(&prev->saved_rsp, next->saved_rsp, next->cr3,
                  prev->fxstate, next->fxstate);
+  irq_restore(rflags);
 }
 
 /* Called from the PIT IRQ. Short-circuits when n_sleeping == 0 (the common
@@ -662,6 +786,16 @@ static void idle_thread(void) {
 }
 
 static void mark_task_exited(struct task *task, long code) {
+  /* Audio is exclusive. A killed player must not leave DMA running or keep
+   * the device locked away from the next process. */
+  sb16_stream_release(task->pid);
+
+  /* Drop cached backbuffer pages before this task's address space can be
+   * reclaimed. Exact PID matching leaves registrations owned by sibling
+   * threads sharing the same PML4 alone. */
+  if (task->user_pml4)
+    framebuffer_unregister_user(task->user_pml4, task->pid);
+
   /* A direct framebuffer process can temporarily take ownership from winman.
    * When it exits, hand ownership back to the saved owner if it still exists. */
   if (msg_input_owner() == task->pid) {
@@ -740,6 +874,8 @@ int task_kill(int pid, long code) {
 }
 
 void task_exit(long code) {
+  irq_save();
+  slice_ticks = 0;
   mark_task_exited(current, code);
 
   struct task *next = ready_pop();
@@ -764,6 +900,9 @@ void task_exit(long code) {
 }
 
 void task_exit_thread(void) {
+    irq_save();
+    slice_ticks = 0;
+    sb16_stream_release(current->pid);
     current->state = TASK_ZOMBIE;
     current->unclaimed = 1; /* nobody joins a bare thread; idle reaps it */
 

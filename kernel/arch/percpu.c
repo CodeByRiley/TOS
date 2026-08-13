@@ -10,9 +10,9 @@
  * means a stray SWAPGS — including one added later — won't leave GS
  * pointing at oblivion.
  */
-#include "arch/percpu.h"
-#include "utilities/log.h"
-#include "utilities/string.h"
+#include <arch/percpu.h>
+#include <utilities/log.h>
+#include <utilities/string.h>
 #include <stdint.h>
 
 #define MSR_GS_BASE         0xC0000101u

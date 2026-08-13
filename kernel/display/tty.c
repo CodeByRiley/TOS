@@ -10,15 +10,15 @@
  * grid + drain ring but nothing gets blitted. On winman exit, the kernel
  * flips active back on and the shell-fallback path stays visible.
  */
-#include "display/tty.h"
-#include "display/fonts/ttf.h"
-#include "display/framebuffer.h"
-#include "display/fonts/font8x8.h"
-#include "memory/heap.h"
-#include "msg/msg.h"
-#include "sched/sched.h"
-#include "utilities/string.h"
-#include "utilities/log.h"
+#include <display/tty.h>
+#include <display/fonts/ttf.h>
+#include <display/framebuffer.h>
+#include <display/fonts/font8x8.h>
+#include <memory/heap.h>
+#include <msg/msg.h>
+#include <sched/sched.h>
+#include <utilities/string.h>
+#include <utilities/log.h>
 #include <stdint.h>
 
 #define TTY_FG 0x00FFFFFFu

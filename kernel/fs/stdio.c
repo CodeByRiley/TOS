@@ -12,10 +12,10 @@
  * The FAT image lives in memory (it arrives as a GRUB module), so nothing
  * written here survives a reboot.
  */
-#include "fs/stdio.h"
-#include "fs/fat.h"
-#include "memory/heap.h"
-#include "utilities/log.h"
+#include <fs/stdio.h>
+#include <fs/fat.h>
+#include <memory/heap.h>
+#include <utilities/log.h>
 
 FILE *fopen(const char *name, const char *mode) {
     if (!name || !mode) return 0;

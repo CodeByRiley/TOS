@@ -10,14 +10,14 @@
  * virtio_gpu_poll_display_event() so the kernel TTY can rebind on host
  * window resize.
  */
-#include "virtio/virtio_gpu.h"
-#include "virtio/virtio.h"
-#include "pci/pci.h"
-#include "memory/pmm.h"
-#include "memory/hhdm.h"
-#include "memory/vmm.h"
-#include "utilities/log.h"
-#include "utilities/string.h"
+#include <drivers/video/virtio/virtio_gpu.h>
+#include <drivers/video/virtio/virtio.h>
+#include <pci/pci.h>
+#include <memory/pmm.h>
+#include <memory/hhdm.h>
+#include <memory/vmm.h>
+#include <utilities/log.h>
+#include <utilities/string.h>
 #include <stdint.h>
 
 /* Single global instance. */

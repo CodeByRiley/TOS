@@ -9,12 +9,12 @@
  * to flip "usable" regions free, then re-mark the bits we still need
  * (kernel image, GRUB info, the bitmap itself, MB2 modules).
  */
-#include "memory/pmm.h"
-#include "memory/hhdm.h"
-#include "arch/cpu.h"
-#include "boot/multiboot2.h"
-#include "devices/serial.h"
-#include "utilities/log.h"
+#include <memory/pmm.h>
+#include <memory/hhdm.h>
+#include <arch/cpu.h>
+#include <boot/multiboot2.h>
+#include <devices/serial.h>
+#include <utilities/log.h>
 #include <stdint.h>
 
 #define GIB (1ULL << 30)

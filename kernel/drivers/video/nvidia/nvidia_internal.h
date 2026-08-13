@@ -2,8 +2,8 @@
 #ifndef NVIDIA_INTERNAL_H
 #define NVIDIA_INTERNAL_H
 
-#include "drivers/video/nvidia.h"
-#include "pci/pci.h"
+#include <drivers/video/nvidia/nvidia.h>
+#include <pci/pci.h>
 #include <stdint.h>
 
 #define NVIDIA_DEVICE_SLOT_BASE 0xFFFFE00400000000ULL

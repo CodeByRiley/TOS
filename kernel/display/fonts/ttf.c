@@ -1,5 +1,5 @@
-#include "memory/heap.h"
-#include "utilities/string.h"
+#include <memory/heap.h>
+#include <utilities/string.h>
 
 #define STBTT_malloc(x,u)   kmalloc(x)
 #define STBTT_free(x,u)     kfree(x)
@@ -24,10 +24,10 @@ static double ttf_stb_fabs(double x) {
 #define STBTT_iceil(x)  ttf_stb_iceil((double)(x))
 #define STBTT_fabs(x)   ttf_stb_fabs((double)(x))
 
-#include "ttf.h"
-#include "fs/stdio.h"
-#include "display/graphics.h"
-#include "utilities/log.h"
+#include <display/fonts/ttf.h>
+#include <fs/stdio.h>
+#include <display/graphics.h>
+#include <utilities/log.h>
 
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "stb_truetype.h"

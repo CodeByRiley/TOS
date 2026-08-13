@@ -1,7 +1,7 @@
 #ifndef PCI_MCFG_H
 #define PCI_MCFG_H
 
-#include "acpi/acpi.h"
+#include <acpi/acpi.h>
 #include <stdint.h>
 
 #define ACPI_SIG_MCFG "MCFG"

@@ -9,13 +9,13 @@
  * VIRTIO_BAR_VBASE, 64 MiB per device. Plenty of room for the ~16 KiB
  * a virtio device actually needs.
  */
-#include "virtio/virtio.h"
-#include "pci/pci.h"
-#include "memory/pmm.h"
-#include "memory/hhdm.h"
-#include "memory/vmm.h"
-#include "utilities/log.h"
-#include "utilities/string.h"
+#include <drivers/video/virtio/virtio.h>
+#include <pci/pci.h>
+#include <memory/pmm.h>
+#include <memory/hhdm.h>
+#include <memory/vmm.h>
+#include <utilities/log.h>
+#include <utilities/string.h>
 #include <stdint.h>
 
 #define VIRTIO_BAR_VBASE    0xFFFFE00200000000ULL
@@ -43,6 +43,8 @@ static uint64_t map_mmio(uint64_t phys, uint64_t length) {
     uint64_t end_phys  = (phys + length + 0xFFFULL) & ~0xFFFULL;
     uint64_t pages     = (end_phys - page_phys) / 4096;
 
+    if (pages == 0) pages = 1;
+
     uint64_t va_base = VIRTIO_BAR_VBASE + (uint64_t)bar_slot_next * VIRTIO_BAR_SLOT;
     bar_slot_next++;
 
@@ -54,6 +56,18 @@ static uint64_t map_mmio(uint64_t phys, uint64_t length) {
     return va_base + page_off;
 }
 
+static void virtio_enable_polling_pci(struct pci_device *d) {
+    uint16_t cmd = pci_read16(d->addr, PCI_CFG_COMMAND);
+
+    cmd |= PCI_CMD_MEM | PCI_CMD_BUS_MASTER;
+    /* This transport polls used rings and never acknowledges virtio ISR
+     * status. Keep legacy INTx masked so virtio-gpu cannot livelock the
+     * kernel once interrupts are globally enabled. */
+    cmd |= PCI_CMD_INT_DISABLE;
+
+    pci_write16(d->addr, PCI_CFG_COMMAND, cmd);
+}
+
 int virtio_pci_init(void *pci_device_ptr, struct virtio_dev *out) {
     struct pci_device *d = (struct pci_device*)pci_device_ptr;
     memset(out, 0, sizeof(*out));
@@ -61,16 +75,16 @@ int virtio_pci_init(void *pci_device_ptr, struct virtio_dev *out) {
 
     /* Walk all virtio (vendor-id 0x09) caps. Each describes a region inside
      * one of the device's BARs. */
-    uint8_t off = (uint8_t)((pci_cfg_read16(d->addr, PCI_CFG_STATUS) & PCI_STATUS_CAP_LIST)
-                            ? (pci_cfg_read8(d->addr, PCI_CFG_CAP_PTR) & 0xFC)
+    uint8_t off = (uint8_t)((pci_read16(d->addr, PCI_CFG_STATUS) & PCI_STATUS_CAP_LIST)
+                            ? (pci_read8(d->addr, PCI_CFG_CAP_PTR) & 0xFC)
                             : 0);
     int hops = 0;
     while (off && hops++ < 48) {
         struct virtio_pci_cap_hdr c;
-        uint32_t w0 = pci_cfg_read32(d->addr, off + 0);
-        uint32_t w1 = pci_cfg_read32(d->addr, off + 4);
-        uint32_t w2 = pci_cfg_read32(d->addr, off + 8);
-        uint32_t w3 = pci_cfg_read32(d->addr, off + 12);
+        uint32_t w0 = pci_read32(d->addr, off + 0);
+        uint32_t w1 = pci_read32(d->addr, off + 4);
+        uint32_t w2 = pci_read32(d->addr, off + 8);
+        uint32_t w3 = pci_read32(d->addr, off + 12);
         c.cap_vndr = (uint8_t)(w0 & 0xFF);
         c.cap_next = (uint8_t)((w0 >> 8) & 0xFF);
         c.cap_len  = (uint8_t)((w0 >> 16) & 0xFF);
@@ -91,7 +105,7 @@ int virtio_pci_init(void *pci_device_ptr, struct virtio_dev *out) {
                 /* Notify cap appends a u32 notify_off_multiplier after the
                  * standard cap header (offset 16 in the cap). */
                 out->notify_base = (volatile uint8_t*)va;
-                uint32_t mult = pci_cfg_read32(d->addr, off + 16);
+                uint32_t mult = pci_read32(d->addr, off + 16);
                 out->notify_off_multiplier = mult;
                 break;
             }
@@ -106,7 +120,7 @@ int virtio_pci_init(void *pci_device_ptr, struct virtio_dev *out) {
             }
         }
 
-        uint8_t next = (uint8_t)((pci_cfg_read32(d->addr, off) >> 8) & 0xFC);
+        uint8_t next = (uint8_t)((pci_read32(d->addr, off) >> 8) & 0xFC);
         if (next == off) break;
         off = next;
     }
@@ -120,8 +134,8 @@ int virtio_pci_init(void *pci_device_ptr, struct virtio_dev *out) {
         return -1;
     }
 
-    /* Enable MMIO + bus mastering. */
-    pci_enable(d);
+    /* Enable MMIO + bus mastering, but keep interrupts masked. */
+    virtio_enable_polling_pci(d);
 
     out->num_queues = out->common->num_queues;
     log_write_hex("virtio: num_queues =", out->num_queues, KERNEL, LOG_INFO);

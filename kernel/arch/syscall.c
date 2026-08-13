@@ -18,24 +18,26 @@
  * trade-off is "trusted enough to not crash the kernel"; a real OS would
  * do per-page copy-in/copy-out into kernel buffers.
  */
-#include "arch/syscall.h"
-#include "devices/io.h"
-#include "devices/pit.h"
-#include "devices/serial.h"
-#include "display/framebuffer.h"
-#include "display/tty.h"
-#include "fs/fat.h"
-#include "input/keyboard.h"
-#include "input/mouse.h"
-#include "loader/process.h"
-#include "memory/heap.h"
-#include "memory/hhdm.h"
-#include "memory/pmm.h"
-#include "memory/vmm.h"
-#include "msg/msg.h"
-#include "sched/sched.h"
-#include "utilities/log.h"
-#include "utilities/string.h"
+#include <arch/syscall.h>
+#include <arch/gdt.h>
+#include <devices/io.h>
+#include <devices/pit.h>
+#include <devices/serial.h>
+#include <display/framebuffer.h>
+#include <display/tty.h>
+#include <drivers/sound/sb16.h>
+#include <fs/fat.h>
+#include <input/keyboard.h>
+#include <input/mouse.h>
+#include <loader/process.h>
+#include <memory/heap.h>
+#include <memory/hhdm.h>
+#include <memory/pmm.h>
+#include <memory/vmm.h>
+#include <msg/msg.h>
+#include <sched/sched.h>
+#include <utilities/log.h>
+#include <utilities/string.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -47,7 +49,16 @@
 #define MSR_LSTAR 0xC0000082
 #define MSR_FMASK 0xC0000084
 
+#define GDT_RPL_USER     3
+#define SYSRET_STAR_BASE ((GDT_USER_CODE | GDT_RPL_USER) - 16)
+
+_Static_assert(SYSRET_STAR_BASE + 8 == (GDT_USER_DATA | GDT_RPL_USER),
+               "SYSRET STAR base must produce the ring-3 data selector");
+_Static_assert(SYSRET_STAR_BASE + 16 == (GDT_USER_CODE | GDT_RPL_USER),
+               "SYSRET STAR base must produce the ring-3 code selector");
+
 #define MAX_SHMEM_PAGES 4096 /* per-call cap; 16 MiB */
+#define AUDIO_WRITE_MAX (1024 * 1024)
 
 struct fb_info {
   uint64_t width;
@@ -60,6 +71,7 @@ extern void syscall_entry(void);
 extern uint64_t kernel_rsp_top;
 
 static int resolve_path(const char *path, char *out, size_t max);
+static int user_buffer_ok(const void *pointer, uint64_t bytes, int writable);
 
 static int fd_alloc_for(struct task *t, struct fat_file *f) {
   if (!t || !f)
@@ -130,15 +142,70 @@ static long sys_fb_map(void) {
   return USER_FB_BASE;
 }
 
-static void sys_mmap_rollback(struct task *t, uint64_t base, uint64_t pages) {
-  for (uint64_t i = 0; i < pages; i++) {
-    uint64_t va = base + i * 4096;
-    uint64_t phys = vmm_translate_in(t->user_pml4, va);
-    if (!phys)
-      continue;
-    vmm_unmap_in(t->user_pml4, va);
-    pmm_free_frame(phys & ~4095ULL);
+static int fb_source_span(uint64_t source_pitch, uint64_t *source_bytes) {
+  uint64_t width = framebuffer_width();
+  uint64_t height = framebuffer_height();
+  if (!source_bytes || width == 0 || height == 0 ||
+      source_pitch > UINT32_MAX || source_pitch < width * 4ULL) {
+    return -1;
   }
+
+  uint64_t row_bytes = width * 4ULL;
+  if (height > 1 && source_pitch > (UINT64_MAX - row_bytes) / (height - 1))
+    return -1;
+  *source_bytes = source_pitch * (height - 1) + row_bytes;
+  return 0;
+}
+
+static long sys_fb_register(const void *pixels, uint64_t source_pitch) {
+  struct task *task = task_current();
+  uint64_t source_bytes;
+  if (!task || !task->user_pml4 || msg_input_owner() != task->pid || !pixels ||
+      fb_source_span(source_pitch, &source_bytes) != 0 ||
+      !user_buffer_ok(pixels, source_bytes, 0)) {
+    return -1;
+  }
+
+  return framebuffer_register_user(task->user_pml4, task->pid,
+                                   (uint64_t)(uintptr_t)pixels,
+                                   (uint32_t)source_pitch, source_bytes);
+}
+
+static long sys_fb_unregister(void) {
+  struct task *task = task_current();
+  if (!task || !task->user_pml4)
+    return -1;
+  return framebuffer_unregister_user(task->user_pml4, task->pid);
+}
+
+static long sys_fb_present(const void *pixels, uint64_t source_pitch,
+                           const struct fb_rect *user_rects,
+                           uint64_t rect_count) {
+  struct task *task = task_current();
+  uint64_t source_bytes;
+  if (!task || !task->user_pml4 || msg_input_owner() != task->pid || !pixels ||
+      !user_rects || rect_count == 0 || rect_count > FB_PRESENT_MAX_RECTS ||
+      fb_source_span(source_pitch, &source_bytes) != 0) {
+    return -1;
+  }
+
+  int registered = framebuffer_user_buffer_registered(
+      task->user_pml4, task->pid, (uint64_t)(uintptr_t)pixels,
+      (uint32_t)source_pitch, source_bytes);
+  if ((!registered && !user_buffer_ok(pixels, source_bytes, 0)) ||
+      !user_buffer_ok(user_rects, rect_count * sizeof(*user_rects), 0)) {
+    return -1;
+  }
+
+  /* Snapshot metadata before APs start. They never dereference the caller's
+   * rectangle array, and the non-preemptible syscall keeps its address space
+   * stable until the synchronous copy completes. */
+  struct fb_rect rects[FB_PRESENT_MAX_RECTS];
+  memcpy(rects, user_rects, rect_count * sizeof(*user_rects));
+  return framebuffer_present_user(task->user_pml4, task->pid,
+                                  (uint64_t)(uintptr_t)pixels,
+                                  (uint32_t)source_pitch, rects,
+                                  (uint32_t)rect_count);
 }
 
 /* Translate PROT_* into PTE bits. Returns 0 for a protection this VMM
@@ -172,8 +239,91 @@ static int user_range_ok(uint64_t base, uint64_t bytes) {
   return 1;
 }
 
+static struct user_vma *user_vma_at(struct task *task, uint64_t address) {
+  if (!task)
+    return 0;
+  for (int i = 0; i < MAX_USER_VMAS; i++) {
+    struct user_vma *vma = &task->vmas[i];
+    if (vma->used && address >= vma->start && address < vma->end)
+      return vma;
+  }
+  return 0;
+}
+
+static struct user_vma *user_vma_free_slot(struct task *task) {
+  if (!task)
+    return 0;
+  for (int i = 0; i < MAX_USER_VMAS; i++) {
+    if (!task->vmas[i].used)
+      return &task->vmas[i];
+  }
+  return 0;
+}
+
+/* Resolve a lazy anonymous page before a syscall implementation accesses it.
+ * Kernel copy-in/copy-out must not rely on taking a nested supervisor-mode
+ * page fault halfway through a filesystem or display operation. */
+static int user_page_prepare(struct task *task, uint64_t page, int writable) {
+  uint64_t entry = vmm_entry_in(task->user_pml4, page);
+  if (entry) {
+    return (entry & VMM_USER) && (!writable || (entry & VMM_WRITE));
+  }
+
+  struct user_vma *vma = user_vma_at(task, page);
+  if (!vma || !(vma->pte_flags & VMM_USER) ||
+      (writable && !(vma->pte_flags & VMM_WRITE))) {
+    return 0;
+  }
+
+  uint64_t phys = pmm_alloc_frame();
+  if (!phys)
+    return 0;
+  memset((void *)phys_to_virt(phys), 0, 4096);
+  if (vmm_map_in(task->user_pml4, page, phys, vma->pte_flags) != 0) {
+    pmm_free_frame(phys);
+    return 0;
+  }
+  return 1;
+}
+
+/* Validate syscall buffers and materialize any pages covered by a lazy VMA.
+ * mmap's range helper intentionally rejects the stack because it must never
+ * allocate over it; ordinary syscall buffers may still live there. */
+static int user_buffer_ok(const void *pointer, uint64_t bytes, int writable) {
+  if (bytes == 0)
+    return 1;
+
+  struct task *task = task_current();
+  uint64_t base = (uint64_t)(uintptr_t)pointer;
+  uint64_t end = base + bytes;
+  if (!task || !task->user_pml4 || base < USER_VA_MIN || end < base)
+    return 0;
+
+  int in_general_range = end <= USER_VA_MAX;
+  int in_stack = base >= USER_STACK_LOW && end <= USER_STACK_TOP;
+  if (!in_general_range && !in_stack)
+    return 0;
+
+  uint64_t page = base & ~4095ULL;
+  uint64_t last = (end - 1) & ~4095ULL;
+  for (;;) {
+    if (!user_page_prepare(task, page, writable))
+      return 0;
+    if (page == last)
+      break;
+    page += 4096;
+  }
+  return 1;
+}
+
 /* Every page in the range must be free for a MAP_FIXED to succeed. */
 static int range_is_unmapped(struct task *t, uint64_t base, uint64_t bytes) {
+  uint64_t end = base + bytes;
+  for (int i = 0; i < MAX_USER_VMAS; i++) {
+    struct user_vma *vma = &t->vmas[i];
+    if (vma->used && base < vma->end && end > vma->start)
+      return 0;
+  }
   for (uint64_t off = 0; off < bytes; off += 4096) {
     if (vmm_translate_in(t->user_pml4, base + off))
       return 0;
@@ -181,28 +331,32 @@ static int range_is_unmapped(struct task *t, uint64_t base, uint64_t bytes) {
   return 1;
 }
 
-/* Record a freed arena range for reuse, merging with any hole it touches
- * so repeated map/unmap of adjacent blocks doesn't shred the list. */
+/* Record a freed arena range for reuse. Merge every overlapping or adjacent
+ * hole, including duplicate munmap calls, so arena_alloc can never return two
+ * overlapping ranges from stale free-list entries. */
 static void hole_add(struct task *t, uint64_t base, uint64_t bytes) {
+  uint64_t end = base + bytes;
   for (int i = 0; i < TASK_MMAP_HOLES; i++) {
     struct vm_hole *h = &t->mmap_holes[i];
     if (!h->len)
       continue;
-    if (h->base + h->len == base) {
-      h->len += bytes;
-      return;
-    }
-    if (base + bytes == h->base) {
-      h->base = base;
-      h->len += bytes;
-      return;
-    }
+    uint64_t hole_end = h->base + h->len;
+    if (hole_end < base || h->base > end)
+      continue;
+    if (h->base < base)
+      base = h->base;
+    if (hole_end > end)
+      end = hole_end;
+    h->base = 0;
+    h->len = 0;
+    /* The expanded range may now touch a hole visited earlier. */
+    i = -1;
   }
 
   for (int i = 0; i < TASK_MMAP_HOLES; i++) {
     if (!t->mmap_holes[i].len) {
       t->mmap_holes[i].base = base;
-      t->mmap_holes[i].len = bytes;
+      t->mmap_holes[i].len = end - base;
       return;
     }
   }
@@ -231,11 +385,51 @@ static uint64_t arena_alloc(struct task *t, uint64_t bytes) {
   return base;
 }
 
+/* Drop `start..end` from the VMA table. A hole wholly inside one mapping
+ * needs one additional record for its right-hand side; reserve that slot
+ * before changing anything so munmap remains all-or-nothing for metadata. */
+static int user_vma_remove_range(struct task *task, uint64_t start,
+                                 uint64_t end) {
+  struct user_vma *split = 0;
+  for (int i = 0; i < MAX_USER_VMAS; i++) {
+    struct user_vma *vma = &task->vmas[i];
+    if (vma->used && start > vma->start && end < vma->end) {
+      split = user_vma_free_slot(task);
+      if (!split)
+        return -1;
+      break;
+    }
+  }
+
+  for (int i = 0; i < MAX_USER_VMAS; i++) {
+    struct user_vma *vma = &task->vmas[i];
+    if (!vma->used || start >= vma->end || end <= vma->start)
+      continue;
+
+    if (start <= vma->start && end >= vma->end) {
+      memset(vma, 0, sizeof(*vma));
+    } else if (start <= vma->start) {
+      vma->start = end;
+    } else if (end >= vma->end) {
+      vma->end = start;
+    } else {
+      *split = (struct user_vma){
+          .start = end,
+          .end = vma->end,
+          .pte_flags = vma->pte_flags,
+          .used = 1,
+      };
+      vma->end = start;
+    }
+  }
+  return 0;
+}
+
 /* mmap(addr, len, prot, flags).
  *
- * Anonymous, private, eagerly backed: every page gets a zeroed frame at
- * call time. There is no demand paging and no file-backed mapping — a
- * loader reads section bytes in with read() after mapping the range.
+ * Anonymous, private, demand-backed: the VMA reserves the address range and
+ * pages receive zeroed frames on first access. There is no file-backed
+ * mapping; a loader reads section bytes in with read() after mapping it.
  *
  * Without MAP_FIXED, `addr` is ignored and the range comes from the arena.
  * With MAP_FIXED, `addr` must be page-aligned and entirely unmapped. */
@@ -252,66 +446,54 @@ static long sys_mmap(uint64_t addr, long len, int prot, int flags) {
     return -1;
 
   uint64_t bytes = ((uint64_t)len + 4095) & ~4095ULL;
-  if (bytes < (uint64_t)len)          /* rounding wrapped */
+  if (bytes < (uint64_t)len)
+    return -1;
+
+  struct user_vma *vma = user_vma_free_slot(t);
+  if (!vma)
     return -1;
 
   uint64_t base;
   if (flags & MAP_FIXED) {
-    if (addr & 4095)
-      return -1;
-    if (!user_range_ok(addr, bytes))
-      return -1;
-    if (!range_is_unmapped(t, addr, bytes))
-      return -1;
+    if (addr & 4095) return -1;
+    if (!user_range_ok(addr, bytes)) return -1;
+    if (!range_is_unmapped(t, addr, bytes)) return -1;
     base = addr;
   } else {
     base = arena_alloc(t, bytes);
-    if (!base)
-      return -1;
+    if (!base) return -1;
   }
 
-  uint64_t pages = bytes / 4096;
-  for (uint64_t i = 0; i < pages; i++) {
-    uint64_t phys = pmm_alloc_frame();
-    if (!phys) {
-      sys_mmap_rollback(t, base, i);
-      return -1;
-    }
-
-    memset(phys_to_virt(phys), 0, 4096);
-    if (vmm_map_in(t->user_pml4, base + i * 4096, phys, pte_flags) != 0) {
-      pmm_free_frame(phys);
-      sys_mmap_rollback(t, base, i);
-      return -1;
-    }
-  }
-
+  *vma = (struct user_vma){
+      .start = base,
+      .end = base + bytes,
+      .pte_flags = pte_flags,
+      .used = 1,
+  };
   return (long)base;
 }
 
 /* mprotect(addr, len, prot).
  *
  * All-or-nothing: the range is validated before a single PTE changes, so
- * a partial failure can't leave a PE image half RX and half RW. Pages must
- * already be mapped — this only changes permissions, it never allocates. */
+ * a partial failure can't leave a PE image half RX and half RW. Lazy pages
+ * are committed during validation; after that every page has a PTE whose
+ * permissions can be changed without relying on VMA metadata. */
 static long sys_mprotect(uint64_t addr, long len, int prot) {
-  if (len <= 0 || (addr & 4095))
-    return -1;
+  if (len <= 0 || (addr & 4095)) return -1;
 
   struct task *t = task_current();
-  if (!t || !t->user_pml4)
-    return -1;
+  if (!t || !t->user_pml4) return -1;
 
   uint64_t pte_flags = prot_to_pte(prot);
-  if (!pte_flags)
-    return -1;
+  if (!pte_flags) return -1;
 
   uint64_t bytes = ((uint64_t)len + 4095) & ~4095ULL;
-  if (bytes < (uint64_t)len || !user_range_ok(addr, bytes))
-    return -1;
+  if (bytes < (uint64_t)len || !user_range_ok(addr, bytes)) return -1;
+  if (framebuffer_registered_range_overlaps(t->user_pml4, addr, bytes)) return -1;
 
   for (uint64_t off = 0; off < bytes; off += 4096) {
-    if (!vmm_translate_in(t->user_pml4, addr + off))
+    if (!user_page_prepare(t, addr + off, 0))
       return -1;
   }
 
@@ -319,6 +501,7 @@ static long sys_mprotect(uint64_t addr, long len, int prot) {
     if (vmm_protect_in(t->user_pml4, addr + off, pte_flags) != 0)
       return -1;
   }
+
   return 0;
 }
 
@@ -344,6 +527,9 @@ static long sys_munmap(uint64_t addr, long len) {
 
   uint64_t bytes = ((uint64_t)len + 4095) & ~4095ULL;
   if (bytes < (uint64_t)len || !user_range_ok(addr, bytes))
+    return -1;
+
+  if (user_vma_remove_range(t, addr, addr + bytes) != 0)
     return -1;
 
   for (uint64_t off = 0; off < bytes; off += 4096) {
@@ -393,7 +579,11 @@ void syscall_init(uint64_t kernel_stack_top) {
   kernel_rsp_top = kernel_stack_top;
 
   wrmsr(MSR_EFER, rdmsr(MSR_EFER) | 1); // SCE
-  wrmsr(MSR_STAR, ((uint64_t)0x10 << 48) | ((uint64_t)0x08 << 32));
+  /* SYSRET forms SS as STAR[63:48] + 8 and CS as STAR[63:48] + 16.
+   * Keep RPL=3 in the base itself: VirtualBox preserves those selector bits,
+   * and a later interrupt return rejects an SS selector with RPL=0. */
+  wrmsr(MSR_STAR, ((uint64_t)SYSRET_STAR_BASE << 48) |
+                  ((uint64_t)GDT_KERNEL_CODE << 32));
   wrmsr(MSR_LSTAR, (uint64_t)syscall_entry);
   wrmsr(MSR_FMASK, 0x200); // mask IF
 
@@ -401,10 +591,10 @@ void syscall_init(uint64_t kernel_stack_top) {
 }
 
 static long sys_write(long fd, const void *buf, long n) {
-  if (fd == 1 || fd == 2) {
-    if (!buf || n < 0)
-      return -1;
+  if (!buf || n < 0 || !user_buffer_ok(buf, (uint64_t)n, 0))
+    return -1;
 
+  if (fd == 1 || fd == 2) {
     tty_write((const char *)buf, (size_t)n);
 
     const char *p = (const char *)buf;
@@ -519,6 +709,76 @@ static long sys_sleep_ticks(long n) {
 static long sys_get_pid(void) {
   struct task *t = task_current();
   return t ? t->pid : -1;
+}
+
+static int audio_caller_pid(void) {
+  struct task *task = task_current();
+  return task ? task->pid : -1;
+}
+
+static long sys_audio_open(long sample_rate, long channels, long format) {
+  return sb16_stream_open(audio_caller_pid(), (uint32_t)sample_rate,
+                          (uint32_t)channels, (uint32_t)format);
+}
+
+static long sys_audio_write(const void *pcm, long bytes) {
+  if (bytes < 0 || bytes > AUDIO_WRITE_MAX ||
+      !user_buffer_ok(pcm, (uint64_t)bytes, 0))
+    return SB16_STREAM_ERR_INVALID;
+  return sb16_stream_write(audio_caller_pid(), pcm, (uint32_t)bytes);
+}
+
+static long sys_audio_status(struct audio_status_user *out) {
+  if (!user_buffer_ok(out, sizeof(*out), 1))
+    return SB16_STREAM_ERR_INVALID;
+
+  struct sb16_stream_status status;
+  int result = sb16_stream_status(&status);
+  if (result != 0)
+    return result;
+
+  *out = (struct audio_status_user){
+      .available = status.available,
+      .playing = status.playing,
+      .paused = status.paused,
+      .sample_rate = status.sample_rate,
+      .channels = status.channels,
+      .format = status.format,
+      .ring_capacity = status.ring_capacity,
+      .ring_queued = status.ring_queued,
+      .device_queued = status.device_queued,
+      .underruns = status.underruns,
+      .volume = status.volume,
+      .owner_pid = status.owner_pid,
+  };
+  return 0;
+}
+
+static long sys_audio_drain(void) {
+  int pid = audio_caller_pid();
+  int result = sb16_stream_begin_drain(pid);
+  if (result != 0)
+    return result;
+
+  while (sb16_stream_pending(pid) != 0)
+    task_sleep_ticks(1);
+  return sb16_stream_finish_drain(pid);
+}
+
+static long sys_audio_close(void) {
+  return sb16_stream_close(audio_caller_pid());
+}
+
+static long sys_audio_set_volume(long percent) {
+  return sb16_stream_set_volume(audio_caller_pid(), (int)percent);
+}
+
+static long sys_audio_pause(void) {
+  return sb16_stream_pause(audio_caller_pid());
+}
+
+static long sys_audio_resume(void) {
+  return sb16_stream_resume(audio_caller_pid());
 }
 
 // #endregion CONSOLE + SLEEP + PID
@@ -659,8 +919,13 @@ static long sys_wm_register(void) {
   if (!t)
     return -1;
   int rc = msg_input_owner_register(t->pid);
-  if (rc == 0)
+  if (rc == 0) {
     tty_set_active(0);
+    /* The compositor is on every other process's path to the screen, so it
+     * gets the display priority class. Only the first registrant wins the
+     * WM role, so this is not a way for any process to promote itself. */
+    sched_set_priority(t, SCHED_PRIO_HIGH);
+  }
   return rc;
 }
 
@@ -685,6 +950,7 @@ static void delay_seconds(long seconds) {
 /* Try several poweroff mechanisms; halt if all fail. */
 static void hw_shutdown(void) {
   log_write("powering off...", KERNEL, LOG_INFO);
+  fat_flush();
   outw(0x604, 0x2000);  /* QEMU >= 2.0 (PIIX ACPI) */
   outw(0xB004, 0x2000); /* Bochs / old QEMU */
   outw(0x4004, 0x3400); /* VirtualBox */
@@ -880,7 +1146,13 @@ static long sys_read(int fd, void *buf, size_t n) {
   struct task *t = task_current();
   if (!t || fd < 3 || fd >= TASK_MAX_FDS || !t->fds[fd])
     return -1;
-  return (long)fat_read(t->fds[fd], buf, n);
+
+  struct fat_file *file = t->fds[fd];
+  size_t available = file->pos < file->size ? file->size - file->pos : 0;
+  size_t transfer = n < available ? n : available;
+  if (!user_buffer_ok(buf, transfer, 1))
+    return -1;
+  return (long)fat_read(file, buf, n);
 }
 
 static void stat_from_fat(const struct fat_stat *fs, struct stat_user *out) {
@@ -1234,6 +1506,30 @@ long syscall_dispatch(struct syscall_frame *f) {
   case SYS_CON_ZOOM:
     ret = sys_con_zoom(a1);
     break;
+  case SYS_AUDIO_OPEN:
+    ret = sys_audio_open(a1, a2, a3);
+    break;
+  case SYS_AUDIO_WRITE:
+    ret = sys_audio_write((const void *)(uintptr_t)a1, a2);
+    break;
+  case SYS_AUDIO_STATUS:
+    ret = sys_audio_status((struct audio_status_user *)(uintptr_t)a1);
+    break;
+  case SYS_AUDIO_DRAIN:
+    ret = sys_audio_drain();
+    break;
+  case SYS_AUDIO_CLOSE:
+    ret = sys_audio_close();
+    break;
+  case SYS_AUDIO_SET_VOLUME:
+    ret = sys_audio_set_volume(a1);
+    break;
+  case SYS_AUDIO_PAUSE:
+    ret = sys_audio_pause();
+    break;
+  case SYS_AUDIO_RESUME:
+    ret = sys_audio_resume();
+    break;
   case SYS_CON_CLEAR:
     ret = sys_con_clear();
     break;
@@ -1275,6 +1571,16 @@ long syscall_dispatch(struct syscall_frame *f) {
     framebuffer_mark_damage((uint32_t)a1, (uint32_t)a2, (uint32_t)a3,
                             (uint32_t)a4);
     ret = 0;
+    break;
+  case SYS_FB_PRESENT:
+    ret = sys_fb_present((const void *)(uintptr_t)a1, (uint64_t)a2,
+                         (const struct fb_rect *)(uintptr_t)a3, (uint64_t)a4);
+    break;
+  case SYS_FB_REGISTER:
+    ret = sys_fb_register((const void *)(uintptr_t)a1, (uint64_t)a2);
+    break;
+  case SYS_FB_UNREGISTER:
+    ret = sys_fb_unregister();
     break;
   case SYS_KBD_POLL:
     ret = sys_kbd_poll((int *)(uintptr_t)a1, (uint16_t *)(uintptr_t)a2);

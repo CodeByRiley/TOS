@@ -4,13 +4,13 @@
  * linear framebuffer. Probe BAR0 just far enough to identify the GPU while
  * keeping that firmware scanout alive for generation-specific bring-up.
  */
-#include "drivers/driver.h"
-#include "drivers/video/nvidia.h"
-#include "display/framebuffer.h"
-#include "memory/vmm.h"
-#include "nvidia_internal.h"
-#include "pci/pci.h"
-#include "utilities/log.h"
+#include <drivers/driver.h>
+#include <drivers/video/nvidia/nvidia.h>
+#include <display/framebuffer.h>
+#include <memory/vmm.h>
+#include <drivers/video/nvidia/nvidia_internal.h>
+#include <pci/pci.h>
+#include <utilities/log.h>
 #include <stdint.h>
 
 #define PCI_CLASS_DISPLAY 0x03
@@ -111,7 +111,7 @@ static int nvidia_map_control_bar(struct nvidia_device *state,
     }
 
     uint16_t original_command =
-        pci_cfg_read16(state->pci.addr, PCI_CFG_COMMAND);
+        pci_read16(state->pci.addr, PCI_CFG_COMMAND);
     if (pci_enable_memory(&state->pci) != 0) {
         log_write("nvidia: could not enable PCI memory decoding",
                   KERNEL, LOG_ERROR);
@@ -122,7 +122,7 @@ static int nvidia_map_control_bar(struct nvidia_device *state,
                   + (uint64_t)device_index * NVIDIA_DEVICE_SLOT_SIZE;
     uint64_t flags = VMM_PRESENT | VMM_PCD | VMM_PWT | VMM_NX;
     if (vmm_map(virt, bar->base, flags) != 0) {
-        pci_cfg_write16(state->pci.addr, PCI_CFG_COMMAND, original_command);
+        pci_write16(state->pci.addr, PCI_CFG_COMMAND, original_command);
         log_write("nvidia: could not map BAR0 registers", KERNEL, LOG_ERROR);
         return -1;
     }
@@ -135,7 +135,7 @@ static int nvidia_map_control_bar(struct nvidia_device *state,
 
     if (state->boot0 == 0xFFFFFFFFu) {
         vmm_unmap(virt);
-        pci_cfg_write16(state->pci.addr, PCI_CFG_COMMAND, original_command);
+        pci_write16(state->pci.addr, PCI_CFG_COMMAND, original_command);
         state->regs = 0;
         log_write("nvidia: BAR0 register read returned all ones",
                   KERNEL, LOG_ERROR);
@@ -161,6 +161,7 @@ static int nvidia_map_control_bar(struct nvidia_device *state,
                      KERNEL, LOG_INFO);
     return 0;
 }
+
 
 static int nvidia_probe(struct device *device) {
     log_write("nvidia: starting probe", KERNEL, LOG_INFO);
@@ -278,6 +279,7 @@ static int nvidia_probe(struct device *device) {
               KERNEL, LOG_INFO);
     return 0;
 }
+
 
 static const struct driver nvidia_driver = {
     .name = "nvidia-video",

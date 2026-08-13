@@ -1,17 +1,17 @@
-#include "uhci.h"
-#include "../../devices/io.h"
-#include "../../utilities/log.h"
-#include "../../utilities/types.h"
-#include "devices/pit.h"
-#include "devices/usb.h"
-#include "input/mouse.h"
-#include "interrupts/idt.h"
-#include "interrupts/pic.h"
-#include "memory/hhdm.h"
-#include "memory/pmm.h"
-#include "pci/pci.h"
-#include "sched/sched.h"
-#include "utilities/string.h"
+#include <drivers/usb/uhci.h>
+#include <devices/io.h>
+#include <utilities/log.h>
+#include <utilities/types.h>
+#include <devices/pit.h>
+#include <devices/usb.h>
+#include <input/mouse.h>
+#include <interrupts/idt.h>
+#include <interrupts/pic.h>
+#include <memory/hhdm.h>
+#include <memory/pmm.h>
+#include <pci/pci.h>
+#include <sched/sched.h>
+#include <utilities/string.h>
 #include <stdint.h>
 
 /* Link pointers are 32-bit, so every DMA structure has to live under 4 GiB. */
@@ -129,11 +129,11 @@ static inline void td_status_write(struct uhci_td *td, u32 val) {
 /* element_ptr is the CPU/controller hand-off point: volatile, or the compiler
  * caches our write and never sees the controller's DMA update. */
 static inline u32 qh_element_read(const struct uhci_qh *qh) {
-  return *(const volatile u32 *)&qh->element_ptr;
+  return *(const volatile u32 *)(uptr)&qh->element_ptr;
 }
 
 static inline void qh_element_write(struct uhci_qh *qh, u32 val) {
-  *(volatile u32 *)&qh->element_ptr = val;
+    *(volatile u32 *)(uptr)&qh->element_ptr = val;
 }
 
 /* Poll `reg` until `mask` clears. Returns 0, or -1 on timeout.

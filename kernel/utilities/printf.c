@@ -13,9 +13,9 @@
  * total-bytes counter is updated either way so callers can size buffers.
  * printf() writes to COM1 via serial_write_str.
  */
-#include "utilities/printf.h"
-#include "utilities/string.h"
-#include "devices/serial.h"
+#include <utilities/printf.h>
+#include <utilities/string.h>
+#include <devices/serial.h>
 #include <stdint.h>
 #include <stddef.h>
 

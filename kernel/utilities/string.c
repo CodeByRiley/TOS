@@ -4,8 +4,8 @@
  * str* routines are straightforward byte loops. strdup lives here (vs.
  * stdlib.c) so it sits next to the rest of the str* family.
  */
-#include "utilities/string.h"
-#include "memory/heap.h"
+#include <utilities/string.h>
+#include <memory/heap.h>
 
 /* Copy n bytes from src to dst (no overlap). 8-byte chunked. */
 void *memcpy(void *dst, const void *src, size_t n) {

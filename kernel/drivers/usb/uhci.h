@@ -1,7 +1,7 @@
 #ifndef UHCI_H
 #define UHCI_H
 
-#include "../../utilities/types.h"
+#include <utilities/types.h>
 
 /* UHCI I/O Registers */
 // Offset | Name 			 | Description 					   | Length

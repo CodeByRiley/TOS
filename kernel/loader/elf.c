@@ -11,15 +11,15 @@
  * caller has switched CR3 to the target, and it silently corrupts the
  * caller's address space when it hasn't.
  */
-#include "utilities/string.h"
-#include "utilities/log.h"
-#include "memory/pmm.h"
-#include "memory/hhdm.h"
-#include "memory/vmm.h"
-#include "loader/elf.h"
-#include "loader/process.h"
-#include "fs/stdio.h"
-#include "sched/sched.h"
+#include <utilities/string.h>
+#include <utilities/log.h>
+#include <memory/pmm.h>
+#include <memory/hhdm.h>
+#include <memory/vmm.h>
+#include <loader/elf.h>
+#include <loader/process.h>
+#include <fs/stdio.h>
+#include <sched/sched.h>
 
 /* USER_IMAGE_MAX (loader/process.h) bounds the image region: it sits below
  * the mmap arena so a segment can never land on mmap or shmem, and it

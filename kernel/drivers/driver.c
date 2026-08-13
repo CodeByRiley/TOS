@@ -1,6 +1,8 @@
 /* kernel/drivers/driver.c - minimal device/driver registry. */
-#include "drivers/driver.h"
-#include "utilities/log.h"
+#include <drivers/driver.h>
+#include <sched/sched.h>
+#include <utilities/log.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #define DRIVER_MAX_DRIVERS 16
@@ -11,6 +13,33 @@ static struct device devices[DRIVER_MAX_DEVICES];
 static uint32_t driver_count;
 static uint32_t device_count;
 static int pci_devices_probed;
+static int poll_task_started;
+
+static void driver_poll_thread(void) {
+    for (;;) {
+        for (uint32_t i = 0; i < device_count; i++) {
+            struct device *device = &devices[i];
+            if (device->driver && device->driver->poll)
+                device->driver->poll(device);
+        }
+        task_sleep_ticks(1);
+    }
+}
+
+static void ensure_poll_task(void) {
+    if (poll_task_started)
+        return;
+
+    struct task *task = task_spawn(driver_poll_thread);
+    if (!task) {
+        log_write("DRIVER: could not spawn poll task", KERNEL, LOG_WARN);
+        return;
+    }
+
+    task_set_name(task, "drivers");
+    poll_task_started = 1;
+    log_write("DRIVER: poll task spawned", KERNEL, LOG_INFO);
+}
 
 static int bind_device(struct device *device) {
     if (device->driver)
@@ -30,8 +59,9 @@ static int bind_device(struct device *device) {
                              KERNEL, LOG_WARN);
             continue;
         }
-
         device->driver = driver;
+        if (driver->poll)
+            ensure_poll_task();
         log_write_string("DRIVER: bound", driver->name, KERNEL, LOG_INFO);
         return 1;
     }
@@ -45,6 +75,7 @@ void driver_core_init(void) {
     driver_count = 0;
     device_count = 0;
     pci_devices_probed = 0;
+    poll_task_started = 0;
 }
 
 int driver_register(const struct driver *driver) {
@@ -126,4 +157,43 @@ const struct device *driver_device_at(uint32_t index) {
     if (index >= device_count)
         return 0;
     return &devices[index];
+}
+
+int driver_snapshot(struct driver_snap *out, int max)
+{
+    if (!out || max <= 0)
+        return 0;
+
+    int n = 0;
+    for (uint32_t i = 0; i < driver_count && n < max; i++) {
+        const struct driver *drv = drivers[i];
+        if (!drv)
+            continue;
+
+        struct driver_snap *s = &out[n];
+        s->bus  = (int)drv->bus;
+        s->poll = drv->poll ? 1 : 0;
+        s->bound_devices = 0;
+        s->enabled = 0;
+
+        const char *name = drv->name ? drv->name : "unnamed";
+        size_t k = 0;
+        while (k + 1 < DRIVER_SNAP_NAME_MAX && name[k]) {
+            s->name[k] = name[k];
+            k++;
+        }
+        s->name[k] = '\0';
+
+        for (uint32_t j = 0; j < device_count; j++) {
+            const struct device *d = &devices[j];
+            if (d->driver == drv) {
+                s->bound_devices++;
+                if (d->enabled)
+                    s->enabled = 1;
+            }
+        }
+        n++;
+    }
+
+    return n;
 }

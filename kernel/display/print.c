@@ -5,8 +5,8 @@
  * needs SOMETHING visible before the framebuffer is mapped. Once the TTY
  * is up, prefer that.
  */
-#include "display/print.h"
-#include "memory/hhdm.h"
+#include <display/print.h>
+#include <memory/hhdm.h>
 
 const static size_t NUM_COLS = 80;
 const static size_t NUM_ROWS = 25;

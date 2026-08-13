@@ -96,8 +96,11 @@ isr_common:
   push r15
 
   mov rdi, rsp        ; SysV ABI: first arg = rdi = pointer to regs
+  mov rbx, rsp        ; keep the real interrupt frame while aligning the call
+  and rsp, -16        ; C expects a 16-byte-aligned stack before call
   cld                 ; required by SysV before calling C
   call isr_handler
+  mov rsp, rbx
 
   pop r15
   pop r14

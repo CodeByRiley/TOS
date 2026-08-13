@@ -4,9 +4,9 @@
  * point clips before it writes, so callers can pass negative origins,
  * oversized rectangles, or off-surface coordinates without guarding first.
  */
-#include "display/graphics.h"
-#include "display/fonts/font8x8.h"
-#include "utilities/string.h"
+#include <display/graphics.h>
+#include <display/fonts/font8x8.h>
+#include <utilities/string.h>
 
 /* ---------------- Rectangles -------------------------------------------- */
 

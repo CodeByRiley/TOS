@@ -11,13 +11,13 @@
  * holds; mid-IRQ pressed-state bookkeeping flushes a release event for
  * keys that go away while an unrelated key is held.
  */
-#include "input/keyboard.h"
-#include "input/key_codes.h"
-#include "interrupts/idt.h"
-#include "devices/io.h"
-#include "devices/pit.h"
-#include "msg/msg.h"
-#include "utilities/log.h"
+#include <input/keyboard.h>
+#include <input/key_codes.h>
+#include <interrupts/idt.h>
+#include <devices/io.h>
+#include <devices/pit.h>
+#include <msg/msg.h>
+#include <utilities/log.h>
 #include <stdint.h>
 
 /* Scancode set 1 byte */

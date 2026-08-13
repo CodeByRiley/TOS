@@ -4,10 +4,10 @@
  * kernel_main.  It follows NVIDIA's published architecture/implementation
  * selection and validates the required sections in the GSP ELF container.
  */
-#include "firmware/firmware.h"
-#include "nvidia_internal.h"
-#include "utilities/log.h"
-#include "utilities/string.h"
+#include <firmware/firmware.h>
+#include <drivers/video/nvidia/nvidia_internal.h>
+#include <utilities/log.h>
+#include <utilities/string.h>
 #include <stddef.h>
 #include <stdint.h>
 

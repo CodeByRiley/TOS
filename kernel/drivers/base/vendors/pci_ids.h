@@ -1,0 +1,69 @@
+#ifndef PCI_IDS_H
+#define PCI_IDS_H
+
+#include <stdint.h>
+
+enum pci_vendor_id {
+    PCI_VENDOR_INTEL      = 0x8086,
+    PCI_VENDOR_AMD        = 0x1022,
+    PCI_VENDOR_NVIDIA     = 0x10DE,
+    PCI_VENDOR_REALTEK    = 0x10EC,
+    PCI_VENDOR_BROADCOM   = 0x14E4,
+    PCI_VENDOR_ATHEROS    = 0x168C,
+    PCI_VENDOR_QUALCOMM   = 0x17CB,
+    PCI_VENDOR_MARVELL    = 0x11AB,
+    PCI_VENDOR_MICROSOFT  = 0x1414,
+    PCI_VENDOR_VMWARE     = 0x15AD,
+    PCI_VENDOR_VIRTIO     = 0x1AF4,
+    PCI_VENDOR_QEMU       = 0x1234,
+    PCI_VENDOR_REDHAT     = 0x1B36,
+    PCI_VENDOR_CIRRUS     = 0x1013,
+    PCI_VENDOR_SIS        = 0x1039,
+    PCI_VENDOR_VIA        = 0x1106,
+    PCI_VENDOR_SYMBIOS    = 0x1000,
+    PCI_VENDOR_ADAPTEC    = 0x9004,
+};
+
+enum pci_device_id {
+    PCI_DEVICE_INTEL_E1000          = 0x100E, /* 82540EM */
+    PCI_DEVICE_INTEL_E1000E         = 0x10D3, /* 82574L */
+    PCI_DEVICE_INTEL_I217_LM        = 0x153A,
+    PCI_DEVICE_INTEL_I219_V         = 0x15B8,
+
+    PCI_DEVICE_REALTEK_RTL8139      = 0x8139,
+    PCI_DEVICE_REALTEK_RTL8168      = 0x8168,
+    PCI_DEVICE_REALTEK_RTL8111      = 0x8169,
+
+    PCI_DEVICE_VIRTIO_NET           = 0x1000,
+
+    PCI_DEVICE_AMD_PCNET            = 0x2000,
+
+    PCI_DEVICE_BROADCOM_BCM5751     = 0x1677,
+    PCI_DEVICE_BROADCOM_BCM57765    = 0x16B4,
+
+    PCI_DEVICE_ATHEROS_AR8161       = 0x1090,
+    PCI_DEVICE_ATHEROS_AR8162       = 0x1062,
+
+    PCI_DEVICE_MARVELL_YUKON        = 0x4364,
+};
+
+enum pci_class_code {
+    PCI_CLASS_STORAGE        = 0x01,
+    PCI_CLASS_NETWORK        = 0x02,
+    PCI_CLASS_DISPLAY        = 0x03,
+    PCI_CLASS_MULTIMEDIA     = 0x04,
+};
+
+enum pci_subclass_storage {
+    PCI_SUBCLASS_SCSI       = 0x00,
+    PCI_SUBCLASS_IDE        = 0x01,
+    PCI_SUBCLASS_FLOPPY     = 0x02,
+    PCI_SUBCLASS_SATA       = 0x06,
+};
+
+enum pci_prog_if_sata {
+    PCI_PROGIF_SATA_GENERIC = 0x00,
+    PCI_PROGIF_SATA_AHCI    = 0x01,
+};
+
+#endif

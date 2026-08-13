@@ -1,6 +1,6 @@
 /* kernel/acpi/pci_mcfg.c - ACPI MCFG allocation parser. */
-#include "acpi/pci_mcfg.h"
-#include "utilities/log.h"
+#include <acpi/pci_mcfg.h>
+#include <utilities/log.h>
 #include <stdint.h>
 
 static struct pci_mcfg_range ranges[PCI_MCFG_MAX_RANGES];

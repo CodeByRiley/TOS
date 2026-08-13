@@ -21,46 +21,42 @@
  * After init, the BSP becomes the scheduler's idle task and lets ring 3
  * take over.
  */
-#include "acpi/acpi.h"
-#include "arch/gdt.h"
-#include "arch/percpu.h"
-#include "arch/syscall.h"
-#include "boot/multiboot2.h"
-#include "devices/lapic.h"
-#include "devices/pit.h"
-#include "devices/serial.h"
-#include "devices/usb.h"
-#include "display/fonts/ttf.h"
-#include "display/framebuffer.h"
-#include "display/print.h"
-#include "display/tty.h"
-#include "drivers/driver.h"
-#include "drivers/sound/sb16.h"
-#include "drivers/usb/ehci.h"
-#include "drivers/usb/uhci.h"
-#include "drivers/usb/xhci.h"
-#include "drivers/video/nvidia.h"
-#include "fs/fat.h"
-#include "input/keyboard.h"
-#include "input/mouse.h"
-#include "interrupts/idt.h"
-#include "interrupts/pic.h"
-#include "isa/isa.h"
-#include "loader/elf.h"
-#include "loader/process.h"
-#include "memory/heap.h"
-#include "memory/hhdm.h"
-#include "memory/pmm.h"
-#include "memory/vmm.h"
-#include "msg/msg.h"
-#include "pci/pci.h"
-#include "sched/sched.h"
-#include "sched/smp.h"
-#include "utilities/log.h"
-#include "utilities/printf.h"
-#include "utilities/string.h"
-#include "virtio/virtio_gpu.h"
+#include <acpi/acpi.h>
+#include <arch/gdt.h>
+#include <arch/percpu.h>
+#include <arch/syscall.h>
+#include <boot/multiboot2.h>
+#include <devices/lapic.h>
+#include <devices/pit.h>
+#include <devices/serial.h>
+#include <devices/usb.h>
+#include <display/fonts/ttf.h>
+#include <display/framebuffer.h>
+#include <display/print.h>
+#include <display/tty.h>
+#include <drivers/driver.h>
+#include <drivers/network/eth/e1000/e1000.h>
+#include <drivers/sound/sb16.h>
+#include <drivers/storage/ahci.h>
+#include <drivers/video/nvidia/nvidia.h>
+#include <drivers/video/virtio/virtio_gpu.h>
+#include <fs/fat.h>
+#include <input/keyboard.h>
+#include <input/mouse.h>
+#include <interrupts/idt.h>
+#include <interrupts/pic.h>
+#include <isa/isa.h>
+#include <loader/process.h>
+#include <memory/memory.h>
+#include <msg/msg.h>
+#include <pci/pci.h>
+#include <sched/sched.h>
+#include <sched/smp.h>
 #include <stdint.h>
+#include <utilities/log.h>
+
+extern struct AHCI_DEVICE_DATA *g_ahci_dev;
+extern uint64_t *kernel_pml4;
 
 void kernel_main(uint64_t mb2_addr) {
   print_clear();
@@ -74,7 +70,7 @@ void kernel_main(uint64_t mb2_addr) {
   idt_init();
   log_write("idt initialised", KERNEL, LOG_INFO);
   pic_remap();
-  pit_init(100);
+  pit_init(500);
   log_write("pit initialised", KERNEL, LOG_INFO);
   keyboard_init();
   log_write("keyboard initialised", KERNEL, LOG_INFO);
@@ -83,6 +79,7 @@ void kernel_main(uint64_t mb2_addr) {
 
   pmm_init(mb2_addr);
   vmm_init();
+  vma_init();
   heap_init();
   log_write("pmm, vmm, heap initialised", KERNEL, LOG_INFO);
 
@@ -120,8 +117,34 @@ void kernel_main(uint64_t mb2_addr) {
 
   isa_probe_devices();
   sb16_driver_init();
-
+  e1000_driver_init();
   usb_init();
+  ahci_init();
+
+  // log_write("Testing Demand Paging...", KERNEL, LOG_INFO);
+
+  //  Allocate a 4KB virtual page using vmalloc
+  //    (vmalloc allocates a VMA range, but we won't map it yet to test the
+  //    fault)
+  // Note: If you actually use vmalloc, it maps it. To test pure demand paging,
+  // we can just unmap it immediately to simulate an unmapped VMA.
+  // uint64_t test_page = vmalloc(4096);
+  // vmm_unmap_in(kernel_pml4, test_page);
+
+  // log_write("Unmapped test page. Preparing to write to it...", KERNEL,
+  //           LOG_INFO);
+
+  // // Write to it! This will trigger a page fault.
+  // uint32_t *ptr = (uint32_t *)test_page;
+  // *ptr = 0xDEADBEEF;
+
+  // // Read it back to prove the handler mapped it properly
+  // if (*ptr == 0xDEADBEEF) {
+  //   log_write("Demand Paging Success! CPU dynamically mapped the page.", KERNEL,
+  //             LOG_INFO);
+  // } else {
+  //   log_write("Demand Paging FAILED!", KERNEL, LOG_ERROR);
+  // }
 
   /* Pick who drives scanout. The test is whether a native driver has
    * actually taken the display, not whether its hardware merely exists:
@@ -144,7 +167,11 @@ void kernel_main(uint64_t mb2_addr) {
         log_write("display: virtio attach failed, staying on MB2 fb", KERNEL,
                   LOG_WARN);
       } else {
-        task_spawn(framebuffer_flush_thread_entry);
+        /* Everything anyone draws reaches the scanout through this thread,
+         * so it must not queue behind whichever client happens to be busy. */
+        struct task *flush = task_spawn(framebuffer_flush_thread_entry);
+        if (flush)
+          sched_set_priority(flush, SCHED_PRIO_HIGH);
         log_write("display: fb flush thread spawned", KERNEL, LOG_INFO);
       }
     } else {
@@ -174,6 +201,9 @@ void kernel_main(uint64_t mb2_addr) {
       __asm__ volatile("hlt");
   }
   log_write("rootfs: module found", FILESYS, LOG_INFO);
+  if (fat_mount_from_ahci(g_ahci_dev, 0) != 0) {
+    log_write("Failed to mount rootfs!", KERNEL, LOG_ERROR);
+  }
   if (fat_init(phys_to_virt(m->mod_start), m->mod_end - m->mod_start) != 0) {
     log_write("rootfs: FAT initialisation failed", FILESYS, LOG_ERROR);
   } else {
@@ -181,9 +211,9 @@ void kernel_main(uint64_t mb2_addr) {
     ttf_init_font();
     if (g_sys_font != NULL) {
       tty_resize();
-      tty_write("Hello from TTF!\n", 44);
+      static const char hello[] = "Hello from TTF!\n";
+      tty_write(hello, sizeof(hello) - 1);
     }
-
   }
 
   pic_clear_mask(0);
@@ -209,15 +239,15 @@ void kernel_main(uint64_t mb2_addr) {
   if (winman_pid < 0) {
     log_write("winman: launch failed — TTY-only mode", USER, LOG_INFO);
   } else {
-    log_write_hex("winman: spawn returned pid =", (uint64_t)winman_pid,
-                  USER, LOG_INFO);
+    log_write_hex("winman: spawn returned pid =", (uint64_t)winman_pid, USER,
+                  LOG_INFO);
   }
 
   char *sh_argv[] = {(char *)"sh", 0};
-  while (1) {
-    long code = process_exec("/bin/sh.elf", sh_argv);
-    log_write_hex("shell exited code =", code, USER, LOG_INFO);
-  }
+  // while (1) {
+  long code = process_exec("/bin/sh.elf", sh_argv);
+  log_write_hex("shell exited code =", code, USER, LOG_INFO);
+  //}
 
   for (;;)
     __asm__ volatile("hlt");

@@ -107,6 +107,36 @@
 #define SB16_DMA_BUFFER_SIZE 32768 // 32 KB
 #define SB16_DMA_LIMIT       0x100000 // 1 MB limit (forces use of the low memory hole)
 
+/* Userspace streaming currently exposes the native SB16 path: interleaved,
+ * signed 16-bit little-endian stereo PCM. Decoders should convert into this
+ * format before calling audio_write(). */
+#define SB16_STREAM_FORMAT_S16_LE 1
+#define SB16_STREAM_CHANNELS      2
+#define SB16_STREAM_RATE_MIN      5000
+#define SB16_STREAM_RATE_MAX      44100
+#define SB16_STREAM_BUFFER_SIZE   (256 * 1024)
+
+/* Stable error values mirrored by userspace/lib/syscall.h. */
+#define SB16_STREAM_ERR_NO_DEVICE (-1)
+#define SB16_STREAM_ERR_BUSY      (-2)
+#define SB16_STREAM_ERR_INVALID   (-3)
+#define SB16_STREAM_ERR_NOT_OWNER (-4)
+
+struct sb16_stream_status {
+    uint32_t available;
+    uint32_t playing;
+    uint32_t paused;
+    uint32_t sample_rate;
+    uint32_t channels;
+    uint32_t format;
+    uint32_t ring_capacity;
+    uint32_t ring_queued;
+    uint32_t device_queued;
+    uint32_t underruns;
+    uint32_t volume;
+    int32_t  owner_pid;
+};
+
 /* A 16-bit ISA DMA transfer may not cross a 128 KiB physical boundary:
  * the 8237 only increments the 16-bit word-address latch, and the page
  * register is not carried into. */
@@ -136,5 +166,22 @@ void  sb16_play(void);
 void  sb16_play_wav(uint8_t *data, uint32_t size);
 void  sb16_stop(void);
 void *sb16_dma_buffer(uint32_t *size_out);
+
+/* Single-owner PCM stream used by the audio syscalls. Writes are
+ * non-blocking and may accept fewer bytes than requested; producers retry
+ * after a zero or short write. Drain starts short final buffers, waits in the
+ * syscall layer, and leaves the configured stream open for reuse. */
+int  sb16_stream_open(int owner_pid, uint32_t sample_rate,
+                      uint32_t channels, uint32_t format);
+long sb16_stream_write(int owner_pid, const void *data, uint32_t bytes);
+int  sb16_stream_status(struct sb16_stream_status *out);
+int  sb16_stream_begin_drain(int owner_pid);
+uint32_t sb16_stream_pending(int owner_pid);
+int  sb16_stream_finish_drain(int owner_pid);
+int  sb16_stream_pause(int owner_pid);
+int  sb16_stream_resume(int owner_pid);
+int  sb16_stream_set_volume(int owner_pid, int percent);
+int  sb16_stream_close(int owner_pid);
+void sb16_stream_release(int owner_pid);
 
 #endif /* SB16_H */

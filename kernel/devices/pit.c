@@ -2,14 +2,14 @@
  *
  * Channel 0 fires IRQ0 at the requested frequency. The handler bumps the
  * global tick counter, charges the current task for the slice, and walks
- * sleepers. Anything heavier (compositor, scheduler decisions) belongs
- * in a kthread, not IRQ context.
+ * sleepers. The common IRQ dispatcher considers ring-3 preemption only
+ * after this handler returns and IRQ0 has been acknowledged.
  */
-#include "devices/pit.h"
-#include "devices/io.h"
-#include "devices/serial.h"
-#include "interrupts/idt.h"
-#include "sched/sched.h"
+#include <devices/pit.h>
+#include <devices/io.h>
+#include <devices/serial.h>
+#include <interrupts/idt.h>
+#include <sched/sched.h>
 
 #define PIT_CH0 0x40
 #define PIT_CH2 0x42

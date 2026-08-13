@@ -13,10 +13,10 @@
  * installed by gdt_install_tss() and loaded into TR by
  * gdt_load_tss_this_cpu().
  */
-#include "arch/gdt.h"
-#include "arch/percpu.h"
-#include "utilities/log.h"
-#include "utilities/string.h"
+#include <arch/gdt.h>
+#include <arch/percpu.h>
+#include <utilities/log.h>
+#include <utilities/string.h>
 #include <stddef.h>
 #include <stdint.h>
 

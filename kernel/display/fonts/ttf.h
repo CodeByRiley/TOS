@@ -6,8 +6,8 @@
 #ifndef TTF_H
 #define TTF_H
 
-#include "utilities/types.h"
-#include "display/graphics.h"
+#include <utilities/types.h>
+#include <display/graphics.h>
 #include "stb_truetype.h"
 
 

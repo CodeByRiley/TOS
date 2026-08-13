@@ -11,10 +11,11 @@
 #define LOG_H
 
 #include <stdint.h>
-#include "devices/serial.h"
-#include "display/print.h"
-#include "printf.h"
-#include "utilities/types.h"
+#include <stdarg.h>
+#include <devices/serial.h>
+#include <display/print.h>
+#include <utilities/types.h>
+#include <utilities/printf.h>
 
 /* Severity. Filtering uses >= comparison: callers can set a floor and
  * lower-severity events get dropped. */
@@ -68,5 +69,9 @@ void log_write_int(const char *message, int64_t value,
                    uint8_t raw_type, uint8_t raw_level);
 void log_write_string(const char *message, const char *val,
                       uint8_t raw_type, uint8_t raw_level);
+
+/* printf-style logging */
+void log_write_fmt(uint8_t raw_type, uint8_t raw_level, const char *fmt, ...);
+void log_write_vfmt(uint8_t raw_type, uint8_t raw_level, const char *fmt, va_list args);
 
 #endif

@@ -13,7 +13,7 @@
 #define STDIO_H
 
 #include <stddef.h>
-#include "fs/fat.h"
+#include <fs/fat.h>
 
 #define SEEK_SET 0
 #define SEEK_CUR 1

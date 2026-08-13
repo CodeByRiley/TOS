@@ -5,9 +5,9 @@
 #ifndef USB_H
 #define USB_H
 
-#include "devices/io.h"
-#include "utilities/stdlib.h"
-#include "utilities/types.h"
+#include <devices/io.h>
+#include <utilities/stdlib.h>
+#include <utilities/types.h>
 
 enum usb_speed {
     USB_LOW_SPEED,   // 1.5 Mbps

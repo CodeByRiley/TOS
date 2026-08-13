@@ -1,6 +1,6 @@
 /* Prepare system-memory inputs for a later NVIDIA GSP boot stage. */
-#include "nvidia_internal.h"
-#include "utilities/log.h"
+#include <drivers/video/nvidia/nvidia_internal.h>
+#include <utilities/log.h>
 
 int nvidia_gsp_prepare(struct nvidia_device *device) {
     if (!device || device->state != NVIDIA_FIRMWARE_READY

@@ -3,9 +3,9 @@
  * Linear walk over the tag chain GRUB hands us at boot. Tags are 8-byte
  * aligned; the chain ends with MULTIBOOT_TAG_END.
  */
-#include "boot/multiboot2.h"
-#include "memory/hhdm.h"
-#include "utilities/string.h"
+#include <boot/multiboot2.h>
+#include <memory/hhdm.h>
+#include <utilities/string.h>
 
 /* Walk the tag chain looking for one of the given `type`. NULL on miss. */
 struct MB2_TAG *mb2_find_tag(uint64_t mb2_addr, uint32_t type) {

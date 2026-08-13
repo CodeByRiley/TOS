@@ -85,6 +85,9 @@ _Static_assert(sizeof(struct stat_user) == 24,
 #define SYS_FB_INFO    100
 #define SYS_FB_MAP     101
 #define SYS_FB_DAMAGE  108
+#define SYS_FB_PRESENT 109
+#define SYS_FB_REGISTER   110
+#define SYS_FB_UNREGISTER 111
 #define SYS_KBD_POLL   102
 #define SYS_GET_TICKS  103
 #define SYS_EXEC       104
@@ -126,6 +129,36 @@ _Static_assert(sizeof(struct stat_user) == 24,
 #define SYS_SPAWN          144
 #define SYS_KILL           145
 #define SYS_CON_ZOOM       146
+
+/* PCM audio. The initial backend accepts signed 16-bit LE stereo. */
+#define SYS_AUDIO_OPEN       147
+#define SYS_AUDIO_WRITE      148
+#define SYS_AUDIO_STATUS     149
+#define SYS_AUDIO_DRAIN      150
+#define SYS_AUDIO_CLOSE      151
+#define SYS_AUDIO_SET_VOLUME 152
+#define SYS_AUDIO_PAUSE      153
+#define SYS_AUDIO_RESUME     154
+
+#define AUDIO_FORMAT_S16_LE 1
+
+struct audio_status_user {
+  uint32_t available;
+  uint32_t playing;
+  uint32_t paused;
+  uint32_t sample_rate;
+  uint32_t channels;
+  uint32_t format;
+  uint32_t ring_capacity;
+  uint32_t ring_queued;
+  uint32_t device_queued;
+  uint32_t underruns;
+  uint32_t volume;
+  int32_t  owner_pid;
+};
+
+_Static_assert(sizeof(struct audio_status_user) == 48,
+               "audio status ABI must match userspace");
 
 /* Thread management. */
 #define SYS_THREAD_CREATE  200

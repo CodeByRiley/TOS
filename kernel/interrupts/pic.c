@@ -5,8 +5,8 @@
  * LAPIC takes over for routing we keep the PICs around just for
  * spurious-IRQ EOI bookkeeping.
  */
-#include "interrupts/pic.h"
-#include "devices/io.h"
+#include <interrupts/pic.h>
+#include <devices/io.h>
 
 #define PIC1_CMD  0x20
 #define PIC1_DATA 0x21

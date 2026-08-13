@@ -3,9 +3,9 @@
  * atoi / strtol number parsers, abs / labs, and a Shellsort-grade qsort.
  * strdup lives in string.c so it sits next to the rest of the str* code.
  */
-#include "utilities/stdlib.h"
-#include "utilities/string.h"
-#include "memory/heap.h"
+#include <utilities/stdlib.h>
+#include <utilities/string.h>
+#include <memory/heap.h>
 #include <stdint.h>
 
 /* atoi(3): leading whitespace + optional sign + decimal digits. */

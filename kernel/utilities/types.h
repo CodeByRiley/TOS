@@ -54,6 +54,8 @@ typedef uintptr_t uptr;
 typedef size_t    usize;
 typedef intptr_t  isize;
 
+typedef const char* str;
+
 /* --- Address-space markers (semantic-only) ------------------------- */
 typedef uintptr_t addr_t;
 typedef uintptr_t paddr_t;

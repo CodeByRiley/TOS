@@ -133,12 +133,12 @@ struct pci_device {
 };
 
 /* Raw config-space accessors. */
-uint32_t pci_cfg_read32(struct pci_addr a, uint16_t off);
-uint16_t pci_cfg_read16(struct pci_addr a, uint16_t off);
-uint8_t  pci_cfg_read8 (struct pci_addr a, uint16_t off);
-void     pci_cfg_write32(struct pci_addr a, uint16_t off, uint32_t val);
-void     pci_cfg_write16(struct pci_addr a, uint16_t off, uint16_t val);
-void     pci_cfg_write8 (struct pci_addr a, uint16_t off, uint8_t  val);
+uint32_t pci_read32(struct pci_addr a, uint16_t off);
+uint16_t pci_read16(struct pci_addr a, uint16_t off);
+uint8_t  pci_read8 (struct pci_addr a, uint16_t off);
+void     pci_write32(struct pci_addr a, uint16_t off, uint32_t val);
+void     pci_write16(struct pci_addr a, uint16_t off, uint16_t val);
+void     pci_write8 (struct pci_addr a, uint16_t off, uint8_t  val);
 
 /* Brute-force scan all 256 busses * 32 devs * 8 fns. Populates the
  * internal device table. Idempotent: re-entry is a no-op. */

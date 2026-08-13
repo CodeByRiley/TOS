@@ -1,12 +1,12 @@
-#include "utilities/string.h"
-#include "utilities/log.h"
-#include "memory/pmm.h"
-#include "memory/hhdm.h"
-#include "memory/vmm.h"
-#include "loader/pe.h"
-#include "loader/process.h"
-#include "fs/stdio.h"
-#include "sched/sched.h"
+#include <utilities/string.h>
+#include <utilities/log.h>
+#include <memory/pmm.h>
+#include <memory/hhdm.h>
+#include <memory/vmm.h>
+#include <loader/pe.h>
+#include <loader/process.h>
+#include <fs/stdio.h>
+#include <sched/sched.h>
 
 #define IMAGE_SCN_MEM_EXECUTE 0x20000000
 #define IMAGE_SCN_MEM_READ    0x40000000

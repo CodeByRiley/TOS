@@ -6,11 +6,11 @@
  * kernel modules; these entries are not x86 page-table entries and carry
  * no present/write flags.
  */
-#include "memory/heap.h"
-#include "memory/hhdm.h"
-#include "memory/pmm.h"
-#include "nvidia_internal.h"
-#include "utilities/string.h"
+#include <memory/heap.h>
+#include <memory/hhdm.h>
+#include <memory/pmm.h>
+#include <drivers/video/nvidia/nvidia_internal.h>
+#include <utilities/string.h>
 #include <stddef.h>
 #include <stdint.h>
 

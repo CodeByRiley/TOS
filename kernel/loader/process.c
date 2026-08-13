@@ -12,17 +12,17 @@
  * process_spawn_async snapshots the request, reserves the child's final pid,
  * and queues the expensive image work on the BSP loader task before returning.
  */
-#include "utilities/string.h"
-#include "utilities/log.h"
-#include "loader/process.h"
-#include "loader/elf.h"
-#include "loader/pe.h"
-#include "memory/heap.h"
-#include "memory/hhdm.h"
-#include "memory/pmm.h"
-#include "memory/vmm.h"
-#include "sched/sched.h"
-#include "fs/stdio.h"
+#include <utilities/string.h>
+#include <utilities/log.h>
+#include <loader/process.h>
+#include <loader/elf.h>
+#include <loader/pe.h>
+#include <memory/heap.h>
+#include <memory/hhdm.h>
+#include <memory/pmm.h>
+#include <memory/vmm.h>
+#include <sched/sched.h>
+#include <fs/stdio.h>
 #include <stdint.h>
 
 #define ARGV_MAX 16

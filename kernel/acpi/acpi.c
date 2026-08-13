@@ -11,12 +11,12 @@
  * ACPI physical addresses are accessed through the kernel HHDM, which PMM
  * extends across the physical memory-map endpoints before ACPI starts.
  */
-#include "acpi/acpi.h"
-#include "acpi/pci_mcfg.h"
-#include "boot/multiboot2.h"
-#include "memory/hhdm.h"
-#include "utilities/log.h"
-#include "utilities/string.h"
+#include <acpi/acpi.h>
+#include <acpi/pci_mcfg.h>
+#include <boot/multiboot2.h>
+#include <memory/hhdm.h>
+#include <utilities/log.h>
+#include <utilities/string.h>
 #include <stdint.h>
 
 static uint64_t lapic_phys = 0;

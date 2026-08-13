@@ -15,16 +15,20 @@
  * PIT tick rate so the (synchronous virtio ACK) flush is decoupled from
  * whoever marked damage.
  */
-#include "display/framebuffer.h"
-#include "boot/multiboot2.h"
-#include "display/graphics.h"
-#include "input/mouse.h"
-#include "memory/vmm.h"
-#include "memory/pmm.h"
-#include "utilities/log.h"
-#include "utilities/string.h"
-#include "virtio/virtio_gpu.h"
-#include "sched/sched.h"
+#include <display/framebuffer.h>
+#include <boot/multiboot2.h>
+#include <display/graphics.h>
+#include <input/mouse.h>
+#include <memory/hhdm.h>
+#include <memory/heap.h>
+#include <memory/vmm.h>
+#include <memory/pmm.h>
+#include <sched/smp.h>
+#include <sync/spinlock.h>
+#include <utilities/log.h>
+#include <utilities/string.h>
+#include <drivers/video/virtio/virtio_gpu.h>
+#include <sched/sched.h>
 #include <stdint.h>
 
 #define FB_VIRT_BASE  0xFFFFE00000000000ULL
@@ -59,6 +63,10 @@ static uint32_t  fb_resize_generation = 0;
  * damage still merges so normal drawing does not burn a slot per pixel. */
 static struct fb_damage_rect dmg[FB_MAX_DAMAGE];
 static int dmg_count = 0;
+static spinlock_t damage_lock = SPINLOCK_INIT;
+/* Serializes writes to the guest backing store against VirtIO transfers.
+ * Userspace overlays must enter through framebuffer_present_user to take it. */
+static spinlock_t scanout_lock = SPINLOCK_INIT;
 
 static uint64_t damage_area(const struct fb_damage_rect *r) {
     return (uint64_t)r->w * (uint64_t)r->h;
@@ -86,11 +94,17 @@ static uint64_t damage_merge_waste(const struct fb_damage_rect *a,
 }
 
 void framebuffer_mark_damage(uint32_t x, uint32_t y, uint32_t w, uint32_t h) {
-    if (fb_w == 0 || fb_h == 0) return;
-    if (x >= fb_w || y >= fb_h) return;
-    if (x + w > fb_w) w = fb_w - x;
-    if (y + h > fb_h) h = fb_h - y;
-    if (w == 0 || h == 0) return;
+    spin_lock(&damage_lock);
+    if (fb_w == 0 || fb_h == 0 || x >= fb_w || y >= fb_h) {
+        spin_unlock(&damage_lock);
+        return;
+    }
+    if (w > fb_w - x) w = fb_w - x;
+    if (h > fb_h - y) h = fb_h - y;
+    if (w == 0 || h == 0) {
+        spin_unlock(&damage_lock);
+        return;
+    }
 
     struct fb_damage_rect r = { x, y, w, h };
 
@@ -106,11 +120,13 @@ void framebuffer_mark_damage(uint32_t x, uint32_t y, uint32_t w, uint32_t h) {
     }
     if (best >= 0) {
         damage_union(&dmg[best], &dmg[best], &r);
+        spin_unlock(&damage_lock);
         return;
     }
 
     if (dmg_count < FB_MAX_DAMAGE) {
         dmg[dmg_count++] = r;
+        spin_unlock(&damage_lock);
         return;
     }
 
@@ -129,15 +145,19 @@ void framebuffer_mark_damage(uint32_t x, uint32_t y, uint32_t w, uint32_t h) {
     damage_union(&dmg[ai], &dmg[ai], &dmg[bi]);
     dmg[bi] = dmg[dmg_count - 1];
     dmg[dmg_count - 1] = r;
+    spin_unlock(&damage_lock);
 }
 
 static void mark_full_damage(void) {
+    spin_lock(&damage_lock);
     if (fb_w == 0 || fb_h == 0) {
         dmg_count = 0;
+        spin_unlock(&damage_lock);
         return;
     }
     dmg[0] = (struct fb_damage_rect){ 0, 0, fb_w, fb_h };
     dmg_count = 1;
+    spin_unlock(&damage_lock);
 }
 
 /* Backing page list. In MB2 mode this is a synthetic enumeration of the
@@ -165,6 +185,303 @@ uint32_t framebuffer_num_pages(void) { return fb_n_pages; }
 uint64_t framebuffer_phys_for_page(uint32_t idx) {
     if (idx >= fb_n_pages) return 0;
     return fb_pages[idx];
+}
+
+#define FB_COPY_MAX_LANES 8
+#define FB_COPY_PARALLEL_MIN_BYTES (256ULL * 1024ULL)
+
+struct fb_copy_batch {
+    uint64_t *user_pml4;
+    uint64_t source;
+    uint32_t source_pitch;
+    const uint64_t *source_pages;
+    uint64_t source_page_base;
+    uint32_t source_page_count;
+    uint8_t *destination;
+    uint32_t destination_pitch;
+    struct fb_rect rects[FB_PRESENT_MAX_RECTS];
+    uint32_t rect_count;
+    uint32_t lane_count;
+    volatile uint32_t remaining;
+    volatile int failed;
+};
+
+struct fb_copy_job {
+    struct fb_copy_batch *batch;
+    uint32_t lane;
+};
+
+static volatile int fb_parallel_copy_logged;
+
+struct fb_user_registration {
+    uint64_t *user_pml4;
+    int owner_pid;
+    uint64_t source;
+    uint64_t source_bytes;
+    uint64_t page_base;
+    uint32_t source_pitch;
+    uint32_t page_count;
+    uint64_t *pages;
+};
+
+static struct fb_user_registration user_registration;
+static spinlock_t user_registration_lock = SPINLOCK_INIT;
+
+static int registration_matches(const struct fb_user_registration *registration,
+                                uint64_t *user_pml4, int owner_pid,
+                                uint64_t source, uint32_t source_pitch,
+                                uint64_t source_bytes) {
+    return registration->pages && registration->user_pml4 == user_pml4 &&
+           registration->owner_pid == owner_pid &&
+           registration->source == source &&
+           registration->source_pitch == source_pitch &&
+           registration->source_bytes >= source_bytes;
+}
+
+int framebuffer_register_user(uint64_t *user_pml4, int owner_pid,
+                              uint64_t source, uint32_t source_pitch,
+                              uint64_t source_bytes) {
+    if (!user_pml4 || owner_pid <= 0 || !source || source_bytes == 0 ||
+        source + source_bytes < source) {
+        return -1;
+    }
+
+    uint64_t page_base = source & ~4095ULL;
+    uint64_t last_page = (source + source_bytes - 1) & ~4095ULL;
+    uint64_t page_count64 = (last_page - page_base) / 4096ULL + 1;
+    if (page_count64 == 0 || page_count64 > FB_MAX_PAGES)
+        return -1;
+
+    uint32_t page_count = (uint32_t)page_count64;
+    uint64_t *pages = kmalloc((size_t)page_count * sizeof(*pages));
+    if (!pages) return -1;
+
+    for (uint32_t i = 0; i < page_count; i++) {
+        uint64_t va = page_base + (uint64_t)i * 4096ULL;
+        uint64_t entry = vmm_entry_in(user_pml4, va);
+        if (!(entry & VMM_PRESENT) || !(entry & VMM_USER)) {
+            kfree(pages);
+            return -1;
+        }
+        pages[i] = entry & VMM_ADDR_MASK;
+    }
+
+    spin_lock(&user_registration_lock);
+    uint64_t *old_pages = user_registration.pages;
+    user_registration = (struct fb_user_registration){
+        .user_pml4 = user_pml4,
+        .owner_pid = owner_pid,
+        .source = source,
+        .source_bytes = source_bytes,
+        .page_base = page_base,
+        .source_pitch = source_pitch,
+        .page_count = page_count,
+        .pages = pages,
+    };
+    spin_unlock(&user_registration_lock);
+
+    if (old_pages) kfree(old_pages);
+    log_write_hex("FB: registered backbuffer pages =", page_count, KERNEL,
+                  LOG_INFO);
+    return 0;
+}
+
+int framebuffer_unregister_user(uint64_t *user_pml4, int owner_pid) {
+    spin_lock(&user_registration_lock);
+    if (!user_registration.pages) {
+        spin_unlock(&user_registration_lock);
+        return 0;
+    }
+    if (user_registration.user_pml4 != user_pml4 ||
+        user_registration.owner_pid != owner_pid) {
+        spin_unlock(&user_registration_lock);
+        return -1;
+    }
+
+    uint64_t *pages = user_registration.pages;
+    user_registration = (struct fb_user_registration){0};
+    spin_unlock(&user_registration_lock);
+    kfree(pages);
+    return 0;
+}
+
+int framebuffer_user_buffer_registered(uint64_t *user_pml4, int owner_pid,
+                                       uint64_t source,
+                                       uint32_t source_pitch,
+                                       uint64_t source_bytes) {
+    spin_lock(&user_registration_lock);
+    int matched = registration_matches(&user_registration, user_pml4, owner_pid,
+                                       source, source_pitch, source_bytes);
+    spin_unlock(&user_registration_lock);
+    return matched;
+}
+
+int framebuffer_registered_range_overlaps(uint64_t *user_pml4, uint64_t base,
+                                          uint64_t bytes) {
+    if (!user_pml4 || bytes == 0 || base + bytes < base) return 0;
+
+    spin_lock(&user_registration_lock);
+    int overlaps = 0;
+    if (user_registration.pages && user_registration.user_pml4 == user_pml4) {
+        uint64_t registered_end = user_registration.source +
+                                  user_registration.source_bytes;
+        uint64_t range_end = base + bytes;
+        overlaps = base < registered_end && range_end > user_registration.source;
+    }
+    spin_unlock(&user_registration_lock);
+    return overlaps;
+}
+
+/* APs do not run the caller's CR3. Registered buffers use a stable physical
+ * page snapshot; unregistered callers fall back to walking the PML4 after the
+ * syscall layer validates the source span. */
+static int copy_user_pixels(const struct fb_copy_batch *batch, uint64_t source,
+                            uint8_t *destination, uint32_t bytes) {
+    while (bytes > 0) {
+        uint64_t physical;
+        if (batch->source_pages) {
+            if (source < batch->source_page_base) return -1;
+            uint64_t offset = source - batch->source_page_base;
+            uint64_t page = offset / 4096ULL;
+            if (page >= batch->source_page_count) return -1;
+            physical = batch->source_pages[page] + (offset & 4095ULL);
+        } else {
+            uint64_t entry = vmm_entry_in(batch->user_pml4, source);
+            if (!(entry & VMM_PRESENT) || !(entry & VMM_USER)) return -1;
+            physical = vmm_translate_in(batch->user_pml4, source);
+            if (!physical) return -1;
+        }
+
+        uint32_t chunk = 4096U - (uint32_t)(source & 4095U);
+        if (chunk > bytes) chunk = bytes;
+        memcpy(destination, phys_to_virt(physical), chunk);
+        destination += chunk;
+        source += chunk;
+        bytes -= chunk;
+    }
+    return 0;
+}
+
+static void framebuffer_copy_lane(void *argument) {
+    struct fb_copy_job *job = (struct fb_copy_job *)argument;
+    struct fb_copy_batch *batch = job->batch;
+
+    for (uint32_t i = 0; i < batch->rect_count; i++) {
+        const struct fb_rect *rect = &batch->rects[i];
+        for (uint32_t row = job->lane; row < rect->h;
+             row += batch->lane_count) {
+            if (__atomic_load_n(&batch->failed, __ATOMIC_ACQUIRE)) break;
+
+            uint64_t source = batch->source +
+                              (uint64_t)(rect->y + row) * batch->source_pitch +
+                              (uint64_t)rect->x * 4ULL;
+            uint8_t *destination = batch->destination +
+                                   (uint64_t)(rect->y + row) *
+                                       batch->destination_pitch +
+                                   (uint64_t)rect->x * 4ULL;
+            if (copy_user_pixels(batch, source, destination, rect->w * 4U) != 0) {
+                __atomic_store_n(&batch->failed, 1, __ATOMIC_RELEASE);
+                break;
+            }
+        }
+    }
+
+    __atomic_sub_fetch(&batch->remaining, 1, __ATOMIC_ACQ_REL);
+}
+
+int framebuffer_present_user(uint64_t *user_pml4, int owner_pid,
+                             uint64_t source, uint32_t source_pitch,
+                             const struct fb_rect *rects,
+                             uint32_t rect_count) {
+    if (!user_pml4 || !source || !rects || rect_count == 0 ||
+        rect_count > FB_PRESENT_MAX_RECTS || !fb || fb_w == 0 || fb_h == 0 ||
+        source_pitch < fb_w * 4U) {
+        return -1;
+    }
+
+    struct fb_copy_batch batch = {
+        .user_pml4 = user_pml4,
+        .source = source,
+        .source_pitch = source_pitch,
+        .destination = (uint8_t *)fb,
+        .destination_pitch = fb_pitch,
+    };
+
+    uint64_t required_bytes = (uint64_t)source_pitch * (fb_h - 1) +
+                              (uint64_t)fb_w * 4ULL;
+    int registration_locked = 0;
+    spin_lock(&user_registration_lock);
+    if (registration_matches(&user_registration, user_pml4, owner_pid, source,
+                             source_pitch, required_bytes)) {
+        batch.source_pages = user_registration.pages;
+        batch.source_page_base = user_registration.page_base;
+        batch.source_page_count = user_registration.page_count;
+        registration_locked = 1;
+    } else {
+        spin_unlock(&user_registration_lock);
+    }
+
+    uint64_t total_bytes = 0;
+    uint64_t total_rows = 0;
+    for (uint32_t i = 0; i < rect_count; i++) {
+        struct fb_rect rect = rects[i];
+        if (rect.w == 0 || rect.h == 0 || rect.x >= fb_w || rect.y >= fb_h)
+            continue;
+        if (rect.w > fb_w - rect.x) rect.w = fb_w - rect.x;
+        if (rect.h > fb_h - rect.y) rect.h = fb_h - rect.y;
+        batch.rects[batch.rect_count++] = rect;
+        total_bytes += (uint64_t)rect.w * 4ULL * rect.h;
+        total_rows += rect.h;
+    }
+    if (batch.rect_count == 0) {
+        if (registration_locked)
+            spin_unlock(&user_registration_lock);
+        return 0;
+    }
+
+    uint32_t lanes = 1;
+    int ap_workers = smp_worker_count();
+    if (ap_workers > 0 && total_bytes >= FB_COPY_PARALLEL_MIN_BYTES) {
+        uint64_t wanted = (total_bytes + FB_COPY_PARALLEL_MIN_BYTES - 1) /
+                          FB_COPY_PARALLEL_MIN_BYTES;
+        uint64_t available = (uint64_t)ap_workers + 1;
+        if (wanted > available) wanted = available;
+        if (wanted > FB_COPY_MAX_LANES) wanted = FB_COPY_MAX_LANES;
+        if (wanted > total_rows) wanted = total_rows;
+        lanes = (uint32_t)wanted;
+    }
+    batch.lane_count = lanes;
+    batch.remaining = lanes;
+
+    spin_lock(&scanout_lock);
+
+    if (lanes > 1 &&
+        __atomic_exchange_n(&fb_parallel_copy_logged, 1, __ATOMIC_ACQ_REL) == 0) {
+        log_write_hex("FB: parallel present lanes =", lanes, KERNEL, LOG_INFO);
+    }
+
+    struct fb_copy_job jobs[FB_COPY_MAX_LANES];
+    jobs[0] = (struct fb_copy_job){ .batch = &batch, .lane = 0 };
+    for (uint32_t lane = 1; lane < lanes; lane++) {
+        jobs[lane] = (struct fb_copy_job){ .batch = &batch, .lane = lane };
+        if (smp_submit_work(framebuffer_copy_lane, &jobs[lane]) != 0)
+            framebuffer_copy_lane(&jobs[lane]);
+    }
+
+    framebuffer_copy_lane(&jobs[0]);
+    while (__atomic_load_n(&batch.remaining, __ATOMIC_ACQUIRE) != 0)
+        __asm__ volatile ("pause");
+
+    spin_unlock(&scanout_lock);
+
+    if (registration_locked)
+        spin_unlock(&user_registration_lock);
+
+    for (uint32_t i = 0; i < batch.rect_count; i++) {
+        const struct fb_rect *rect = &batch.rects[i];
+        framebuffer_mark_damage(rect->x, rect->y, rect->w, rect->h);
+    }
+    return __atomic_load_n(&batch.failed, __ATOMIC_ACQUIRE) ? -1 : 0;
 }
 
 static int map_pages_at_vbase(const uint64_t *pages, uint32_t n, int cacheable) {
@@ -434,20 +751,26 @@ int framebuffer_check_resize(void) {
 
 void framebuffer_present(void) {
     if (fb_mode != FB_MODE_VIRTIO) return;
-    if (dmg_count == 0) return;
-    /* Snapshot + clear before the (synchronous) flush so any writes that
-     * happen concurrently re-mark damage cleanly. Producers only write
-     * dmg[]; consumer only reads then clears. Single-CPU kthread + no
-     * preemption mid-instruction = no torn reads here. */
+    /* Snapshot + clear before the synchronous flush so writers can continue
+     * accumulating the next batch while virtio waits for host acknowledgement. */
     struct fb_damage_rect pending[FB_MAX_DAMAGE];
+    spin_lock(&damage_lock);
+    if (dmg_count == 0) {
+        spin_unlock(&damage_lock);
+        return;
+    }
     int count = dmg_count;
     if (count > FB_MAX_DAMAGE) count = FB_MAX_DAMAGE;
     for (int i = 0; i < count; i++) pending[i] = dmg[i];
     dmg_count = 0;
+    spin_unlock(&damage_lock);
+
+    spin_lock(&scanout_lock);
     for (int i = 0; i < count; i++) {
         virtio_gpu_flush_rect(pending[i].x, pending[i].y,
                               pending[i].w, pending[i].h);
     }
+    spin_unlock(&scanout_lock);
 }
 
 uint32_t framebuffer_resize_generation(void) {

@@ -6,9 +6,9 @@
  * are 32-bit memory-mapped ops; the page is mapped uncacheable so they
  * don't get reordered or coalesced.
  */
-#include "devices/lapic.h"
-#include "memory/vmm.h"
-#include "utilities/log.h"
+#include <devices/lapic.h>
+#include <memory/vmm.h>
+#include <utilities/log.h>
 #include <stdint.h>
 
 #define LAPIC_VIRT_BASE 0xFFFFE00100000000ULL

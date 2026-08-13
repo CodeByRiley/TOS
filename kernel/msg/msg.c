@@ -10,9 +10,9 @@
  * via msg_post_to bypasses the owner registry (used by the WM forwarding
  * events to focused client windows).
  */
-#include "msg/msg.h"
-#include "sched/sched.h"
-#include "utilities/string.h"
+#include <msg/msg.h>
+#include <sched/sched.h>
+#include <utilities/string.h>
 #include <stdint.h>
 
 #define INPUT_RING_SIZE 64

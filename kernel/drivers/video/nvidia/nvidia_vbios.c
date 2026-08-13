@@ -1,9 +1,9 @@
 /* NVIDIA VBIOS acquisition and structural validation. */
-#include "nvidia_internal.h"
-#include "memory/heap.h"
-#include "memory/hhdm.h"
-#include "memory/vmm.h"
-#include "utilities/log.h"
+#include <drivers/video/nvidia/nvidia_internal.h>
+#include <memory/heap.h>
+#include <memory/hhdm.h>
+#include <memory/vmm.h>
+#include <utilities/log.h>
 #include <stdint.h>
 
 #define PAGE_SIZE 4096ULL
@@ -297,17 +297,17 @@ static int load_from_pci_rom(struct nvidia_device *device,
     }
 
     uint32_t original =
-        pci_cfg_read32(device->pci.addr, PCI_CFG_ROM_ADDRESS);
-    pci_cfg_write32(device->pci.addr, PCI_CFG_ROM_ADDRESS,
+        pci_read32(device->pci.addr, PCI_CFG_ROM_ADDRESS);
+    pci_write32(device->pci.addr, PCI_CFG_ROM_ADDRESS,
                     (original & PCI_ROM_ADDR_MASK) | PCI_ROM_ENABLE);
-    (void)pci_cfg_read32(device->pci.addr, PCI_CFG_ROM_ADDRESS);
+    (void)pci_read32(device->pci.addr, PCI_CFG_ROM_ADDRESS);
 
     int result = copy_valid_vbios(device,
                                   (volatile uint8_t *)(uintptr_t)virt,
                                   (uint32_t)size,
                                   NVIDIA_VBIOS_PCI_ROM);
 
-    pci_cfg_write32(device->pci.addr, PCI_CFG_ROM_ADDRESS, original);
+    pci_write32(device->pci.addr, PCI_CFG_ROM_ADDRESS, original);
     for (uint64_t i = 0; i < pages; i++)
         vmm_unmap(virt + i * PAGE_SIZE);
     return result;

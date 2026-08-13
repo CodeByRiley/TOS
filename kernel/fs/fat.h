@@ -13,6 +13,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <drivers/storage/ahci.h>
 
 /* Bytes in a raw 8.3 directory entry name field (8 base + 3 extension). */
 #define FAT_NAME_LEN 11
@@ -79,9 +80,14 @@ int    fat_unlink(const char *path);
 int    fat_mkdir(const char *path);
 int    fat_rmdir(const char *path);
 
+void   fat_set_timestamp(struct dir_entry *entry);
+
 /* Enumerate packed NUL-terminated names. Directories end in '/'. Names are
  * the VFAT long name when the entry has one, else the 8.3 name. */
 long   fat_read_dir(const char *path, uint32_t *index, char *buf, size_t len);
 long   fat_read_root_dir(uint32_t *index, char *buf, size_t len);
 
+int    fat_read_sector(uint32_t lba, void *buf);
+int    fat_mount_from_ahci(struct AHCI_DEVICE_DATA *ahci_dev, int port);
+void   fat_flush(void);
 #endif

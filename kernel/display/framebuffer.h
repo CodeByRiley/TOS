@@ -17,6 +17,16 @@
 
 #include <stdint.h>
 
+#define FB_PRESENT_MAX_RECTS 16
+
+/* Shared with userspace's syscall ABI. Coordinates and extents are pixels. */
+struct fb_rect {
+    uint32_t x, y, w, h;
+};
+
+_Static_assert(sizeof(struct fb_rect) == 16,
+               "fb_rect must match the userspace ABI");
+
 /* Probe MB2 tag 8 and prep the contiguous-page backend. */
 int       framebuffer_init(uint64_t mb2_addr);
 
@@ -63,7 +73,30 @@ void      framebuffer_present(void);
  * should call this so the next present transfers the touched region.
  * Clipped to framebuffer bounds. */
 void      framebuffer_mark_damage(uint32_t x, uint32_t y,
-                                  uint32_t w, uint32_t h);
+                                   uint32_t w, uint32_t h);
+
+/* Copy dirty rectangles from a validated userspace backbuffer. Large copies
+ * are split into scanline lanes and dispatched to the AP work queue; CPU 0
+ * processes one lane and supplies the single-core fallback. This call is
+ * synchronous, so the caller may modify or release the source after return. */
+int       framebuffer_present_user(uint64_t *user_pml4, int owner_pid,
+                                   uint64_t source, uint32_t source_pitch,
+                                   const struct fb_rect *rects,
+                                   uint32_t rect_count);
+
+/* Pin a compositor backbuffer logically by snapshotting its physical pages.
+ * The VM layer rejects munmap over this range until unregister or owner exit. */
+int       framebuffer_register_user(uint64_t *user_pml4, int owner_pid,
+                                    uint64_t source, uint32_t source_pitch,
+                                    uint64_t source_bytes);
+int       framebuffer_unregister_user(uint64_t *user_pml4, int owner_pid);
+int       framebuffer_user_buffer_registered(uint64_t *user_pml4,
+                                              int owner_pid, uint64_t source,
+                                              uint32_t source_pitch,
+                                              uint64_t source_bytes);
+int       framebuffer_registered_range_overlaps(uint64_t *user_pml4,
+                                                 uint64_t base,
+                                                 uint64_t bytes);
 
 /* Kthread entry that polls + presents at PIT tick rate. Spawn once after
  * virtio attach; runs forever. Decouples the synchronous virtio ACK

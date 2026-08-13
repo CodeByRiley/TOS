@@ -1,7 +1,7 @@
 // kernel/devices/isa.c
-#include "isa.h"
-#include "drivers/driver.h"
-#include "utilities/log.h"
+#include <isa/isa.h>
+#include <drivers/driver.h>
+#include <utilities/log.h>
 
 /* A table of standard legacy ISA devices.
  * In real life, ISA cards were configured via jumpers,
@@ -29,7 +29,7 @@ void isa_probe_devices(void) {
     uint32_t imported = 0;
 
     for (uint32_t i = 0; i < count; i++) {
-        // Register the device at its standard I/O port
+        // register the device at its standard I/O port
         if (driver_register_isa_device(legacy_devices[i].io_base,
                                        legacy_devices[i].irq) == 0) {
             imported++;

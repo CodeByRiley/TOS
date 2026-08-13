@@ -9,8 +9,8 @@
  * body (IMEM/DMEM spans, signature versions, interface offsets) is
  * deliberately not attempted yet — see the note above nvidia_fwsec_locate.
  */
-#include "nvidia_internal.h"
-#include "utilities/log.h"
+#include <drivers/video/nvidia/nvidia_internal.h>
+#include <utilities/log.h>
 #include <stdint.h>
 
 /* Only version 1 of the falcon ucode table is known to carry FWSEC. */

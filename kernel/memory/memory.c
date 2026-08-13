@@ -5,4 +5,4 @@
  * pmm/vmm/heap directly. Kept around so the build graph has a stable
  * .c file to compile under this name.
  */
-#include "memory/memory.h"
+#include <memory/memory.h>

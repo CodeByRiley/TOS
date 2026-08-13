@@ -10,11 +10,11 @@
  * demand by paging in fresh frames from the PMM. heap_grow + list_append
  * keep the no-adjacent-free-blocks invariant intact across grows.
  */
-#include "memory/heap.h"
-#include "memory/pmm.h"
-#include "memory/vmm.h"
-#include "utilities/string.h"
-#include "utilities/log.h"
+#include <memory/heap.h>
+#include <memory/pmm.h>
+#include <memory/vmm.h>
+#include <utilities/string.h>
+#include <utilities/log.h>
 #include <stdint.h>
 
 #define HEAP_BASE          0xFFFF900000000000ULL

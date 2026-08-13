@@ -10,7 +10,7 @@
 #ifndef PANIC_H
 #define PANIC_H
 
-#include "devices/io.h"
+#include <devices/io.h>
 
 struct interrupt_frame;
 

@@ -9,12 +9,12 @@
  * Packet framing recovers from desync by looking for the "always 1" bit
  * in the first byte; we drop bytes until alignment looks plausible.
  */
-#include "input/mouse.h"
-#include "interrupts/idt.h"
-#include "devices/io.h"
-#include "devices/pit.h"
-#include "msg/msg.h"
-#include "utilities/log.h"
+#include <input/mouse.h>
+#include <interrupts/idt.h>
+#include <devices/io.h>
+#include <devices/pit.h>
+#include <msg/msg.h>
+#include <utilities/log.h>
 #include <stdint.h>
 
 /* Port 0x60 is data for both devices; 0x64 is status on read, command on

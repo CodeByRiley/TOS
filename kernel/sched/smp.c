@@ -8,21 +8,21 @@
  *
  * The trampoline source lives in kernel/arch/x86_64/boot/ap_trampoline.asm.
  */
-#include "sched/smp.h"
-#include "acpi/acpi.h"
-#include "arch/gdt.h"
-#include "arch/percpu.h"
-#include "devices/lapic.h"
-#include "devices/pit.h"
-#include "interrupts/idt.h"
-#include "memory/heap.h"
-#include "memory/hhdm.h"
-#include "memory/pmm.h"
-#include "memory/vmm.h"
-#include "arch/cpu.h"
-#include "utilities/log.h"
-#include "utilities/string.h"
-#include "sync/spinlock.h"
+#include <sched/smp.h>
+#include <acpi/acpi.h>
+#include <arch/gdt.h>
+#include <arch/percpu.h>
+#include <devices/lapic.h>
+#include <devices/pit.h>
+#include <interrupts/idt.h>
+#include <memory/heap.h>
+#include <memory/hhdm.h>
+#include <memory/pmm.h>
+#include <memory/vmm.h>
+#include <arch/cpu.h>
+#include <utilities/log.h>
+#include <utilities/string.h>
+#include <sync/spinlock.h>
 #include <stdint.h>
 
 /* AP bring-up. Copies the 16-bit trampoline to physical address 0x8000,
@@ -177,7 +177,7 @@ static int boot_one_ap(int cpu_id, uint8_t apic_id, uint32_t bootstrap_cr3,
 
     /* Spin for up to ~1 s waiting for the AP to flag itself online. */
     struct cpu_local *c = percpu_get(cpu_id);
-    for (int i = 0; i < 100 && !c->online; i++) {
+    for (int i = 0; i < pit_get_freq() && !c->online; i++) {
         smp_delay_us(10000);
     }
     if (!c->online) {

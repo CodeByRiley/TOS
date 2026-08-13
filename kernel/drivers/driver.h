@@ -12,7 +12,7 @@
 #ifndef DRIVER_H
 #define DRIVER_H
 
-#include "pci/pci.h"
+#include <pci/pci.h>
 #include <stdint.h>
 
 enum device_bus {
@@ -33,6 +33,9 @@ struct driver {
     enum device_bus bus;
     int (*match)(const struct device *device);
     int (*probe)(struct device *device);
+    /* Optional nonblocking maintenance pass. The driver core calls this from
+     * one shared poll task for every bound device that provides it. */
+    void (*poll)(struct device *device);
 };
 
 struct device {
@@ -42,8 +45,20 @@ struct device {
         struct isa_device isa;
     } bus_info;
 
+    int enabled;
     const struct driver *driver;
     void *driver_data;
+};
+
+#define DRIVER_SNAP_MAX      16
+#define DRIVER_SNAP_NAME_MAX 32
+
+struct driver_snap {
+    char name[DRIVER_SNAP_NAME_MAX];
+    int bus;
+    int poll;
+    int enabled;
+    uint32_t bound_devices;
 };
 
 void driver_core_init(void);
@@ -57,6 +72,11 @@ int driver_register_isa_device(uint16_t io_base, uint8_t irq);
 int driver_probe_pci_devices(void);
 
 uint32_t driver_device_count(void);
+
 const struct device *driver_device_at(uint32_t index);
+
+/* Copy registered driver rows for panic/debug reporting. Allocation-free and
+ * safe to call from fatal paths that can tolerate a best-effort snapshot. */
+int driver_snapshot(struct driver_snap *out, int max);
 
 #endif

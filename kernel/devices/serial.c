@@ -4,9 +4,9 @@
  * (visible in QEMU's serial window). Loopback self-test on init catches
  * a missing UART before the rest of the boot continues to lean on it.
  */
-#include "devices/serial.h"
-#include "display/print.h"
-#include "devices/io.h"
+#include <devices/serial.h>
+#include <display/print.h>
+#include <devices/io.h>
 
 #define COM1 0x3F8
 

@@ -10,12 +10,12 @@
  * running context. Kernel-shared subtrees are linked by physical address
  * into every process PML4, so writes there propagate to kernel_pml4 too.
  */
-#include "memory/vmm.h"
-#include "memory/hhdm.h"
-#include "memory/pmm.h"
-#include "arch/cpu.h"
-#include "utilities/string.h"
-#include "utilities/log.h"
+#include <memory/vmm.h>
+#include <memory/hhdm.h>
+#include <memory/pmm.h>
+#include <arch/cpu.h>
+#include <utilities/string.h>
+#include <utilities/log.h>
 #include <stdint.h>
 
 #define PAGE_SIZE 4096

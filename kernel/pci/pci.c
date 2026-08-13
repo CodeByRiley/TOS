@@ -8,12 +8,12 @@
  * Capability list walk lets vendor-specific drivers (virtio) find their
  * caps without re-walking the config header.
  */
-#include "acpi/pci_mcfg.h"
-#include "pci/pci.h"
-#include "devices/io.h"
-#include "memory/vmm.h"
-#include "sync/spinlock.h"
-#include "utilities/log.h"
+#include <acpi/pci_mcfg.h>
+#include <pci/pci.h>
+#include <devices/io.h>
+#include <memory/vmm.h>
+#include <sync/spinlock.h>
+#include <utilities/log.h>
 #include <stdint.h>
 
 #define PCI_CFG_ADDR 0xCF8
@@ -101,7 +101,7 @@ static void cfg_write32_locked(struct pci_addr a, uint16_t off,
     outl(PCI_CFG_DATA, value);
 }
 
-uint32_t pci_cfg_read32(struct pci_addr a, uint16_t off) {
+uint32_t pci_read32(struct pci_addr a, uint16_t off) {
     if (off > 0xFFC)
         return 0xFFFFFFFFu;
     uint64_t flags = spin_lock_irqsave(&cfg_lock);
@@ -110,7 +110,7 @@ uint32_t pci_cfg_read32(struct pci_addr a, uint16_t off) {
     return value;
 }
 
-uint16_t pci_cfg_read16(struct pci_addr a, uint16_t off) {
+uint16_t pci_read16(struct pci_addr a, uint16_t off) {
     if (off > 0xFFE)
         return 0xFFFFu;
     uint64_t flags = spin_lock_irqsave(&cfg_lock);
@@ -119,7 +119,7 @@ uint16_t pci_cfg_read16(struct pci_addr a, uint16_t off) {
     return (uint16_t)(value >> ((off & 2) * 8));
 }
 
-uint8_t pci_cfg_read8(struct pci_addr a, uint16_t off) {
+uint8_t pci_read8(struct pci_addr a, uint16_t off) {
     if (off > 0xFFF)
         return 0xFFu;
     uint64_t flags = spin_lock_irqsave(&cfg_lock);
@@ -128,7 +128,7 @@ uint8_t pci_cfg_read8(struct pci_addr a, uint16_t off) {
     return (uint8_t)(value >> ((off & 3) * 8));
 }
 
-void pci_cfg_write32(struct pci_addr a, uint16_t off, uint32_t val) {
+void pci_write32(struct pci_addr a, uint16_t off, uint32_t val) {
     if (off > 0xFFC)
         return;
     uint64_t flags = spin_lock_irqsave(&cfg_lock);
@@ -136,7 +136,7 @@ void pci_cfg_write32(struct pci_addr a, uint16_t off, uint32_t val) {
     spin_unlock_irqrestore(&cfg_lock, flags);
 }
 
-void pci_cfg_write16(struct pci_addr a, uint16_t off, uint16_t val) {
+void pci_write16(struct pci_addr a, uint16_t off, uint16_t val) {
     if (off > 0xFFE)
         return;
     uint64_t flags = spin_lock_irqsave(&cfg_lock);
@@ -148,7 +148,7 @@ void pci_cfg_write16(struct pci_addr a, uint16_t off, uint16_t val) {
     spin_unlock_irqrestore(&cfg_lock, flags);
 }
 
-void pci_cfg_write8(struct pci_addr a, uint16_t off, uint8_t val) {
+void pci_write8(struct pci_addr a, uint16_t off, uint8_t val) {
     if (off > 0xFFF)
         return;
     uint64_t flags = spin_lock_irqsave(&cfg_lock);
@@ -166,7 +166,7 @@ void pci_cfg_write8(struct pci_addr a, uint16_t off, uint8_t val) {
  * consumed (1 or 2). */
 static int probe_bar(struct pci_addr a, int idx, struct pci_bar *out) {
     uint16_t off = (uint16_t)(PCI_CFG_BAR0 + idx * 4);
-    uint32_t orig = pci_cfg_read32(a, off);
+    uint32_t orig = pci_read32(a, off);
     if (orig == 0) {
         out->valid = 0;
         return 1;
@@ -174,9 +174,9 @@ static int probe_bar(struct pci_addr a, int idx, struct pci_bar *out) {
 
     if (orig & PCI_BAR_IO) {
         /* I/O BAR (port space). */
-        pci_cfg_write32(a, off, 0xFFFFFFFFu);
-        uint32_t mask = pci_cfg_read32(a, off);
-        pci_cfg_write32(a, off, orig);
+        pci_write32(a, off, 0xFFFFFFFFu);
+        uint32_t mask = pci_read32(a, off);
+        pci_write32(a, off, orig);
         out->base     = orig & ~0x3ULL;
         out->size     = (~(mask & ~0x3u)) + 1u;
         out->is_io    = 1;
@@ -188,23 +188,23 @@ static int probe_bar(struct pci_addr a, int idx, struct pci_bar *out) {
 
     /* MMIO BAR. */
     int is_64 = (orig & PCI_BAR_TYPE_MASK) == PCI_BAR_TYPE_64;
-    pci_cfg_write32(a, off, 0xFFFFFFFFu);
-    uint32_t mask_lo = pci_cfg_read32(a, off);
-    pci_cfg_write32(a, off, orig);
+    pci_write32(a, off, 0xFFFFFFFFu);
+    uint32_t mask_lo = pci_read32(a, off);
+    pci_write32(a, off, orig);
 
     uint64_t base = orig & 0xFFFFFFF0u;
     uint64_t size = (uint64_t)(~(mask_lo & 0xFFFFFFF0u)) + 1u;
 
     if (is_64) {
         // read original high DWORD and read low mask (assumed already read as mask_lo)
-        uint32_t orig_hi = pci_cfg_read32(a, off + 4);
+        uint32_t orig_hi = pci_read32(a, off + 4);
 
         // write all 1s to test writable address bits in the high DWORD
-        pci_cfg_write32(a, off + 4, 0xFFFFFFFFu);
-        uint32_t mask_hi = pci_cfg_read32(a, off + 4);
+        pci_write32(a, off + 4, 0xFFFFFFFFu);
+        uint32_t mask_hi = pci_read32(a, off + 4);
 
         // restore original high DWORD
-        pci_cfg_write32(a, off + 4, orig_hi);
+        pci_write32(a, off + 4, orig_hi);
 
         // combine base address (clearing bottom 4 flag bits from orig/mask_lo)
         base = ((uint64_t)orig_hi << 32) | (orig & ~0x0Fu);
@@ -218,10 +218,10 @@ static int probe_bar(struct pci_addr a, int idx, struct pci_bar *out) {
     }
 
     // if (is_64) {
-    //     uint32_t orig_hi = pci_cfg_read32(a, off + 4);
-    //     pci_cfg_write32(a, off + 4, 0xFFFFFFFFu);
-    //     uint32_t mask_hi = pci_cfg_read32(a, off + 4);
-    //     pci_cfg_write32(a, off + 4, orig_hi);
+    //     uint32_t orig_hi = pci_read32(a, off + 4);
+    //     pci_write32(a, off + 4, 0xFFFFFFFFu);
+    //     uint32_t mask_hi = pci_read32(a, off + 4);
+    //     pci_write32(a, off + 4, orig_hi);
     //     base |= ((uint64_t)orig_hi << 32);
     //     /* Extend size mask into the high dword. If high mask is all-ones,
     //      * the region fits in 32 bits; if not, combine. */
@@ -241,13 +241,13 @@ static int probe_bar(struct pci_addr a, int idx, struct pci_bar *out) {
 }
 
 static void probe_rom(struct pci_addr a, struct pci_rom *out) {
-    uint32_t original = pci_cfg_read32(a, PCI_CFG_ROM_ADDRESS);
+    uint32_t original = pci_read32(a, PCI_CFG_ROM_ADDRESS);
 
     /* The enable bit is not part of the address mask and must remain clear
      * during the standard size-discovery write. */
-    pci_cfg_write32(a, PCI_CFG_ROM_ADDRESS, 0xFFFFFFFEu);
-    uint32_t mask = pci_cfg_read32(a, PCI_CFG_ROM_ADDRESS);
-    pci_cfg_write32(a, PCI_CFG_ROM_ADDRESS, original);
+    pci_write32(a, PCI_CFG_ROM_ADDRESS, 0xFFFFFFFEu);
+    uint32_t mask = pci_read32(a, PCI_CFG_ROM_ADDRESS);
+    pci_write32(a, PCI_CFG_ROM_ADDRESS, original);
 
     uint32_t address_mask = mask & PCI_ROM_ADDR_MASK;
     if (mask == 0xFFFFFFFFu || address_mask == 0) {
@@ -266,26 +266,26 @@ static void probe_rom(struct pci_addr a, struct pci_rom *out) {
 
 static void describe_fn(struct pci_addr a) {
     if (pci_count >= MAX_PCI_DEVICES) return;
-    uint16_t vendor = pci_cfg_read16(a, PCI_CFG_VENDOR_ID);
+    uint16_t vendor = pci_read16(a, PCI_CFG_VENDOR_ID);
     if (vendor == 0xFFFF) return;
 
     struct pci_device *d = &pci_table[pci_count++];
     d->addr          = a;
     d->vendor        = vendor;
-    d->device        = pci_cfg_read16(a, PCI_CFG_DEVICE_ID);
-    d->revision      = pci_cfg_read8 (a, PCI_CFG_REVISION);
-    d->prog_if       = pci_cfg_read8 (a, PCI_CFG_PROG_IF);
-    d->subclass      = pci_cfg_read8 (a, PCI_CFG_SUBCLASS);
-    d->class_code    = pci_cfg_read8 (a, PCI_CFG_CLASS);
-    d->header_type   = pci_cfg_read8 (a, PCI_CFG_HEADER_TYPE) & 0x7F;
-    d->subsys_vendor = pci_cfg_read16(a, PCI_CFG_SUBSYS_VENDOR);
-    d->subsys_id     = pci_cfg_read16(a, PCI_CFG_SUBSYS_ID);
-    d->int_line      = pci_cfg_read8 (a, PCI_CFG_INT_LINE);
-    d->int_pin       = pci_cfg_read8 (a, PCI_CFG_INT_PIN);
+    d->device        = pci_read16(a, PCI_CFG_DEVICE_ID);
+    d->revision      = pci_read8 (a, PCI_CFG_REVISION);
+    d->prog_if       = pci_read8 (a, PCI_CFG_PROG_IF);
+    d->subclass      = pci_read8 (a, PCI_CFG_SUBCLASS);
+    d->class_code    = pci_read8 (a, PCI_CFG_CLASS);
+    d->header_type   = pci_read8 (a, PCI_CFG_HEADER_TYPE) & 0x7F;
+    d->subsys_vendor = pci_read16(a, PCI_CFG_SUBSYS_VENDOR);
+    d->subsys_id     = pci_read16(a, PCI_CFG_SUBSYS_ID);
+    d->int_line      = pci_read8 (a, PCI_CFG_INT_LINE);
+    d->int_pin       = pci_read8 (a, PCI_CFG_INT_PIN);
 
-    uint16_t status  = pci_cfg_read16(a, PCI_CFG_STATUS);
+    uint16_t status  = pci_read16(a, PCI_CFG_STATUS);
     d->cap_ptr = (status & PCI_STATUS_CAP_LIST)
-               ? (pci_cfg_read8(a, PCI_CFG_CAP_PTR) & 0xFC)
+               ? (pci_read8(a, PCI_CFG_CAP_PTR) & 0xFC)
                : 0;
 
     /* Type 1 (PCI-to-PCI bridge) has BARs at 0/1 only — skip BARs for
@@ -305,7 +305,7 @@ static void describe_fn(struct pci_addr a) {
 }
 
 static void check_fn(struct pci_addr a) {
-    uint16_t v = pci_cfg_read16(a, PCI_CFG_VENDOR_ID);
+    uint16_t v = pci_read16(a, PCI_CFG_VENDOR_ID);
     if (v == 0xFFFF) return;
     describe_fn(a);
 }
@@ -317,12 +317,12 @@ static void check_dev(uint16_t segment, uint8_t bus, uint8_t dev) {
         .fn = 0,
         .segment = segment,
     };
-    uint16_t v = pci_cfg_read16(a, PCI_CFG_VENDOR_ID);
+    uint16_t v = pci_read16(a, PCI_CFG_VENDOR_ID);
     if (v == 0xFFFF) return;
     check_fn(a);
 
     /* Multifunction bit (header type 0x80): scan fns 1..7. */
-    uint8_t hdr = pci_cfg_read8(a, PCI_CFG_HEADER_TYPE);
+    uint8_t hdr = pci_read8(a, PCI_CFG_HEADER_TYPE);
     if (hdr & 0x80) {
         for (uint8_t fn = 1; fn < 8; fn++) {
             struct pci_addr af = {
@@ -437,15 +437,15 @@ int pci_device_at(uint32_t idx, struct pci_device *out) {
 }
 
 uint8_t pci_find_capability(struct pci_addr a, uint8_t cap_id) {
-    uint16_t status = pci_cfg_read16(a, PCI_CFG_STATUS);
+    uint16_t status = pci_read16(a, PCI_CFG_STATUS);
     if (!(status & PCI_STATUS_CAP_LIST)) return 0;
 
-    uint8_t off = pci_cfg_read8(a, PCI_CFG_CAP_PTR) & 0xFC;
+    uint8_t off = pci_read8(a, PCI_CFG_CAP_PTR) & 0xFC;
     int hops = 0;
     while (off && hops++ < 48) {
-        uint8_t id   = pci_cfg_read8(a, off);
+        uint8_t id   = pci_read8(a, off);
         if (id == cap_id) return off;
-        uint8_t next = pci_cfg_read8(a, off + 1) & 0xFC;
+        uint8_t next = pci_read8(a, off + 1) & 0xFC;
         if (next == off) break;
         off = next;
     }
@@ -457,7 +457,7 @@ uint16_t pci_find_ext_capability(struct pci_addr a, uint16_t cap_id) {
     int hops = 0;
 
     while (off && off <= 0xFFC && hops++ < 256) {
-        uint32_t header = pci_cfg_read32(a, off);
+        uint32_t header = pci_read32(a, off);
         if (header == 0 || header == 0xFFFFFFFFu)
             return 0;
         if ((header & 0xFFFFu) == cap_id)
@@ -475,16 +475,16 @@ int pci_enable_memory(struct pci_device *d) {
     if (!d)
         return -1;
 
-    uint16_t cmd = pci_cfg_read16(d->addr, PCI_CFG_COMMAND);
+    uint16_t cmd = pci_read16(d->addr, PCI_CFG_COMMAND);
     if (cmd & PCI_CMD_MEM)
         return 0;
 
-    pci_cfg_write16(d->addr, PCI_CFG_COMMAND, cmd | PCI_CMD_MEM);
-    return (pci_cfg_read16(d->addr, PCI_CFG_COMMAND) & PCI_CMD_MEM) ? 0 : -1;
+    pci_write16(d->addr, PCI_CFG_COMMAND, cmd | PCI_CMD_MEM);
+    return (pci_read16(d->addr, PCI_CFG_COMMAND) & PCI_CMD_MEM) ? 0 : -1;
 }
 
 void pci_enable(struct pci_device *d) {
-    uint16_t cmd = pci_cfg_read16(d->addr, PCI_CFG_COMMAND);
+    uint16_t cmd = pci_read16(d->addr, PCI_CFG_COMMAND);
     /* I/O as well as memory: plenty of devices (UHCI, IDE, legacy NICs) put
      * their entire register set behind an I/O BAR, and leaving IO decoding
      * off means every inb/outb to it reads back 0xFF and drops writes. We got
@@ -492,5 +492,5 @@ void pci_enable(struct pci_device *d) {
     cmd |= PCI_CMD_IO | PCI_CMD_MEM | PCI_CMD_BUS_MASTER;
     /* Keep INTx enabled (clear INT_DISABLE) for legacy IRQ delivery. */
     cmd &= ~PCI_CMD_INT_DISABLE;
-    pci_cfg_write16(d->addr, PCI_CFG_COMMAND, cmd);
+    pci_write16(d->addr, PCI_CFG_COMMAND, cmd);
 }
