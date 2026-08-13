@@ -60,6 +60,10 @@ static int bind_device(struct device *device) {
             continue;
         }
         device->driver = driver;
+        /* A successful probe means the device is operational. Keep this
+         * explicit so diagnostics can distinguish a registered driver from
+         * one that actually owns working hardware. */
+        device->enabled = 1;
         if (driver->poll)
             ensure_poll_task();
         log_write_string("DRIVER: bound", driver->name, KERNEL, LOG_INFO);
@@ -105,6 +109,7 @@ int driver_register_isa_device(uint16_t io_base, uint8_t irq) {
 
     struct device *device = &devices[device_count];
     device->bus = DEVICE_BUS_ISA;
+    device->enabled = 0;
     device->driver = 0;
     device->driver_data = 0;
     device->bus_info.isa.io_base = io_base;
@@ -133,6 +138,7 @@ int driver_probe_pci_devices(void) {
 
         struct device *device = &devices[device_count];
         device->bus = DEVICE_BUS_PCI;
+        device->enabled = 0;
         device->driver = 0;
         device->driver_data = 0;
 

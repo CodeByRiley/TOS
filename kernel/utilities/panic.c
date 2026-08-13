@@ -451,8 +451,10 @@ static void diag_drivers(struct gfx_surface *surface, int *y) {
   int count = driver_snapshot(snaps, DRIVER_SNAP_MAX);
 
   diag_line(surface, y, 8, "Kernel drivers", PANIC_MUTED);
-  diag_line(surface, y, 8, "IDX   BUS   POLL  BOUND  ENABLED   NAME",
-            PANIC_DIM);
+  snprintf(screen_line, sizeof(screen_line),
+           "%-4s  %-4s  %-4s   %-5s    %-8s %s",
+           "IDX", "BUS", "POLL", "BOUND", "ENABLED", "NAME");
+  diag_line(surface, y, 8, screen_line, PANIC_DIM);
   for (int i = 0; i < count && *y + GFX_GLYPH_H < surface->h; i++) {
     snprintf(screen_line, sizeof(screen_line),
              "%04d  %-4s  %-4s   %05u    %-8s %-31s", i,

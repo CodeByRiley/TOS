@@ -504,9 +504,9 @@ void isr_handler(struct interrupt_frame *r) {
     // Check if the fault happened in User Mode (Ring 3)
     if ((r->cs & 3) == 3) {
       // User program misbehaved (e.g., null pointer). Kill it!
-      //log_write("USER SEGFAULT: killing task", KERNEL, LOG_ERROR);
-      //task_exit(-11); // -11 is conventionally SIGSEGV
-      panic_from_exception(name, r, cr2, r->int_num == 14);
+      log_write("USER SEGFAULT: killing task", KERNEL, LOG_ERROR);
+      task_exit(-11); // -11 is conventionally SIGSEGV
+      //panic_from_exception(name, r, cr2, r->int_num == 14);
     } else {
       // Kernel misbehaved. The system is compromised. Panic!
       panic_from_exception(name, r, cr2, r->int_num == 14);
