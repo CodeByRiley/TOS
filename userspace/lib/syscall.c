@@ -6,7 +6,7 @@
  * that isn't a syscall (winman IPC helpers, etc.) lives elsewhere — see
  * lib/wm.c.
  */
-#include "syscall.h"
+#include <lib/syscall.h>
 
 /* File / I/O */
 long write(int fd, const void *buf, size_t n) {
@@ -122,6 +122,20 @@ long fb_damage(uint32_t x, uint32_t y, uint32_t w, uint32_t h) {
     return syscall4(SYS_FB_DAMAGE, x, y, w, h);
 }
 
+long fb_present(const void *pixels, uint32_t pitch,
+                const struct fb_rect *rects, uint32_t rect_count) {
+    return syscall4(SYS_FB_PRESENT, (sysarg_t)(uintptr_t)pixels, pitch,
+                    (sysarg_t)(uintptr_t)rects, rect_count);
+}
+
+long fb_register(const void *pixels, uint32_t pitch) {
+    return syscall2(SYS_FB_REGISTER, (sysarg_t)(uintptr_t)pixels, pitch);
+}
+
+long fb_unregister(void) {
+    return syscall0(SYS_FB_UNREGISTER);
+}
+
 long kbd_poll(int *pressed, uint16_t *key) {
     return syscall2(SYS_KBD_POLL, (sysarg_t)(uintptr_t)pressed, (sysarg_t)(uintptr_t)key);
 }
@@ -182,6 +196,40 @@ long sleep_ticks(unsigned long n) {
 
 long get_pid(void) {
     return syscall0(SYS_GET_PID);
+}
+
+/* PCM audio */
+long audio_open(uint32_t sample_rate, uint32_t channels, uint32_t format) {
+    return syscall3(SYS_AUDIO_OPEN, sample_rate, channels, format);
+}
+
+long audio_write(const void *pcm, size_t bytes) {
+    return syscall2(SYS_AUDIO_WRITE, (sysarg_t)(uintptr_t)pcm,
+                    (sysarg_t)bytes);
+}
+
+long audio_status(struct audio_status *out) {
+    return syscall1(SYS_AUDIO_STATUS, (sysarg_t)(uintptr_t)out);
+}
+
+long audio_drain(void) {
+    return syscall0(SYS_AUDIO_DRAIN);
+}
+
+long audio_close(void) {
+    return syscall0(SYS_AUDIO_CLOSE);
+}
+
+long audio_set_volume(int percent) {
+    return syscall1(SYS_AUDIO_SET_VOLUME, percent);
+}
+
+long audio_pause(void) {
+    return syscall0(SYS_AUDIO_PAUSE);
+}
+
+long audio_resume(void) {
+    return syscall0(SYS_AUDIO_RESUME);
 }
 
 /* IPC and shared memory */

@@ -4,7 +4,7 @@
  * sound code. Uses small approximations rather than full IEEE-754 libm
  * implementations.
  */
-#include "../include/math.h"
+#include <include/math.h>
 #include <limits.h>
 
 #ifndef M_PI

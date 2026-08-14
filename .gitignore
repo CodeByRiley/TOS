@@ -4,6 +4,7 @@
 *.o
 *.elf
 
+
 # Generated boot media and ISO staging files
 /boot/**/iso/boot/disk.img
 /boot/**/iso/boot/kernel.bin

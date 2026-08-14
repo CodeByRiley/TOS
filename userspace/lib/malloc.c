@@ -11,8 +11,8 @@
  *     userspace apps currently run at (shell, btop, DOOM).
  *   - Not thread-safe (no userspace threads yet).
  */
-#include "syscall.h"
-#include "../include/string.h"
+#include <lib/syscall.h>
+#include <include/string.h>
 #include <stdint.h>
 
 #define PAGE_SIZE       4096ULL

@@ -11,7 +11,7 @@
  * teardown, at the price of a stable call order.
  */
 #include "ui.h"
-#include "syscall.h"   /* MOUSE_BTN_LEFT */
+#include <lib/syscall.h>   /* MOUSE_BTN_LEFT */
 
 const struct ui_theme ui_theme_default = {
     .face        = 0x00C0C0C0u,
@@ -280,4 +280,64 @@ void ui_progress(struct ui_context *c, struct gfx_rect r, int percent,
             text_in(c, inner, label, t->accent_text, 1);
         }
     }
+}
+
+int ui_slider(struct ui_context *c, struct gfx_rect r,
+              int min, int max, int *value) {
+    return ui_slider_id(c, ui_next_id(c), r, min, max, value);
+}
+
+int ui_slider_id(struct ui_context *c, int id, struct gfx_rect r,
+                 int min, int max, int *value) {
+    if (gfx_rect_empty(r)) return 0;
+
+    const struct ui_theme *t = c->theme;
+    ui_well(c, r);
+
+    if (!value || min >= max) return 0;
+
+    int changed = 0;
+    if (*value < min) { *value = min; changed = 1; }
+    if (*value > max) { *value = max; changed = 1; }
+
+    int hover, held;
+    int clicked = ui_interact(c, id, r, &hover, &held);
+
+    struct gfx_rect inner = gfx_rect_inset(r, t->border + 1);
+    if (gfx_rect_empty(inner)) return changed;
+    int thumb_w = r.h / 2;
+    if (thumb_w < 8) thumb_w = 8;
+    if (thumb_w > 14) thumb_w = 14;
+    if (thumb_w > inner.w) thumb_w = inner.w;
+
+    int left = inner.x + thumb_w / 2;
+    int right = inner.x + inner.w - 1 - (thumb_w - 1) / 2;
+    int span = right - left;
+    if (span < 1) return changed;
+
+    if (held || clicked) {
+        int x = c->mx;
+        if (x < left) x = left;
+        if (x > right) x = right;
+        int next = min + (int)(((int64_t)(x - left) * (max - min)
+                              + span / 2) / span);
+        if (next != *value) {
+            *value = next;
+            changed = 1;
+        }
+    }
+
+    int thumb_x = left + (int)(((int64_t)(*value - min) * span)
+                             / (max - min));
+    int track_y = r.y + r.h / 2;
+    gfx_hline(c->s, left, track_y, span + 1, t->dark);
+    gfx_hline(c->s, left, track_y + 1, thumb_x - left + 1, t->accent);
+
+    struct gfx_rect thumb = gfx_rect_make(thumb_x - thumb_w / 2,
+                                           inner.y, thumb_w, inner.h);
+    uint32_t face = held ? t->face_active : (hover ? t->face_hover : t->face);
+    gfx_fill(c->s, thumb, face);
+    if (held) gfx_bevel(c->s, thumb, t->dark, t->light, t->border);
+    else      gfx_bevel(c->s, thumb, t->light, t->dark, t->border);
+    return changed;
 }

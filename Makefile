@@ -21,7 +21,7 @@ kernel_object_files := $(kernel_c_object_files) $(kernel_asm_object_files) $(ap_
 # nothing and the link silently reuses objects compiled against the old
 # definitions — the resulting binary is a mix of both, which reads as "my fix
 # had no effect".
-kernel_c_flags := -I kernel -ffreestanding -mno-red-zone -mcmodel=kernel -fno-pic -fno-pie -MMD -MP
+kernel_c_flags := -I kernel -ffreestanding -mno-red-zone -mcmodel=kernel -fno-pic -fno-pie -MMD -MP -std=gnu23
 
 kernel_dep_files := $(kernel_c_object_files:.o=.d)
 
@@ -152,12 +152,12 @@ $(HOST_TEST_DIR)/stdio_mode_test.exe: tests/stdio_mode_test.c \
 
 $(HOST_TEST_DIR)/bmp_decode_test.exe: tests/bmp_decode_test.c \
 		userspace/lib/bmp.c userspace/lib/bmp.h | $(HOST_TEST_DIR)
-	$(HOST_CC) $(HOST_TEST_CFLAGS) -I userspace/lib \
+	$(HOST_CC) $(HOST_TEST_CFLAGS) -I userspace -I userspace/lib \
 		tests/bmp_decode_test.c userspace/lib/bmp.c -o $@
 
 $(HOST_TEST_DIR)/gfx_ui_test.exe: tests/gfx_ui_test.c userspace/lib/gfx.c \
 		userspace/lib/ui.c userspace/lib/bmp.c | $(HOST_TEST_DIR)
-	$(HOST_CC) $(HOST_TEST_CFLAGS) -I userspace/lib tests/gfx_ui_test.c \
+	$(HOST_CC) $(HOST_TEST_CFLAGS) -I userspace -I userspace/lib tests/gfx_ui_test.c \
 		userspace/lib/gfx.c userspace/lib/ui.c userspace/lib/bmp.c -o $@
 
 $(HOST_TEST_DIR)/fb_damage_test.exe: tests/fb_damage_test.c | $(HOST_TEST_DIR)
@@ -178,6 +178,7 @@ test-qemu-heavy: build-x86_64
 		python3 tests/smp_async_spawn_test.py --cpus 4 --timeout 90 && \
 		python3 tests/system_stress_test.py --cpus 4 --timeout 240 && \
 		python3 tests/window_lifecycle_test.py --timeout 120 && \
+		python3 tests/muse_liveness_test.py --timeout 90 && \
 		python3 tests/fb_mapping_lifetime_test.py --timeout 90 && \
 		python3 tests/virtio_resize_test.py --boot-timeout 90 && \
 		python3 tests/deskelf_test.py --timeout 90 && \

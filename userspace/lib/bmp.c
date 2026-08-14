@@ -10,7 +10,7 @@
  * photographs, and the FAT driver has no readahead worth streaming for.
  */
 #include "bmp.h"
-#include "syscall.h"
+#include <lib/syscall.h>
 
 extern void *malloc(size_t n);
 extern void  free(void *p);

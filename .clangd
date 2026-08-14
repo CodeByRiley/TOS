@@ -1,6 +1,9 @@
 CompileFlags:
   Add:
     - "-IE:/Projects/Weird/TOS/kernel"
+    - "-IE:/Projects/Weird/TOS/userspace"
+    - "-IE:/Projects/Weird/TOS/userspace/include"
+    - "-IE:/Projects/Weird/TOS/userspace/lib"
 
 Diagnostics:
   Suppress:
@@ -9,3 +12,16 @@ Diagnostics:
   - Wpointer-to-int-cast
   - Wint-to-void-pointer-cast
   - Wdiscarded-qualifiers
+
+---
+If:
+  PathMatch: ".*\\.(c|h)$"
+
+CompileFlags:
+  Remove:
+    - "-x"
+    - "-std=*"
+  Add:
+    - "-xc"
+    - "-std=gnu23"
+    - "-ffreestanding"

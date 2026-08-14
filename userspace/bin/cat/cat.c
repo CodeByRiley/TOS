@@ -1,5 +1,5 @@
 /* userspace/bin/cat/cat.c — dump one or more files to stdout. */
-#include "../../lib/syscall.h"
+#include <lib/syscall.h>
 #include <stddef.h>
 
 extern void *fopen(const char *, const char *);

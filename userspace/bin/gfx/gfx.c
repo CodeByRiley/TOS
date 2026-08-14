@@ -10,8 +10,8 @@
  * into memory nobody ever pushes to the host — the program runs, responds
  * to keys, exits cleanly, and is invisible the whole time.
  */
-#include "../../lib/syscall.h"
-#include "../../include/key_codes.h"
+#include <lib/syscall.h>
+#include <include/key_codes.h>
 
 extern int printf(const char *, ...);
 

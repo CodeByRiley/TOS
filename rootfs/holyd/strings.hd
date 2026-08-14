@@ -1,0 +1,11 @@
+auto first = "Terry";
+auto last = "Davis";
+
+auto full = first ~ " " ~ last;
+
+Print("Full name: ");
+Print(full);
+Print("\n");
+
+auto greeting = "Hello from " ~ "Holy D!\n";
+Print(greeting);

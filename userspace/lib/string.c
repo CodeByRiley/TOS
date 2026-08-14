@@ -4,7 +4,7 @@
  * structs) and fall through to byte copies for the tail. str* routines
  * are straightforward byte loops. Nothing here uses SIMD or libc tricks.
  */
-#include "../include/string.h"
+#include <include/string.h>
 #include <stdint.h>
 
 /* Copy n bytes from src to dst. dst and src must not overlap. */

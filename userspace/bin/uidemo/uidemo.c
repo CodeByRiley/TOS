@@ -10,11 +10,11 @@
  * teardown — the window's appearance is a pure function of the handful of
  * variables in main(), recomputed every frame.
  */
-#include "../../lib/syscall.h"
-#include "../../lib/wm.h"
-#include "../../lib/gfx.h"
-#include "../../lib/ui.h"
-#include "../../include/key_codes.h"
+#include <lib/syscall.h>
+#include <lib/wm.h>
+#include <lib/gfx.h>
+#include <lib/ui.h>
+#include <include/key_codes.h>
 
 extern int printf(const char *, ...);
 extern void *memset(void *, int, size_t);
@@ -192,6 +192,8 @@ int main(void) {
         char buf[48];
         label_with_number(buf, sizeof(buf), "count: ", count);
         ui_progress(&ui, ui_layout_row(&col, ROW_H), count, buf);
+        if (ui_slider(&ui, ui_layout_row(&col, ROW_H), 0, 100, &count))
+            clicks++;
 
         ui_checkbox(&ui, ui_layout_row(&col, ROW_H), "auto advance",
                     &auto_run);

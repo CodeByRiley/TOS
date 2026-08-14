@@ -11,7 +11,7 @@
 
 #include <stddef.h>
 #include <stdarg.h>
-#include "../lib/syscall.h"
+#include <lib/syscall.h>
 
 #define EOF (-1)
 #define SEEK_SET 0

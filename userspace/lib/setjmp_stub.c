@@ -5,7 +5,7 @@
  * uses it; we accept the hang in lieu of a real save/restore. Replace
  * when a real implementation matters.
  */
-#include "../include/setjmp.h"
+#include <include/setjmp.h>
 
 /* Always returns 0 on the (single) "initial" call. */
 int setjmp(jmp_buf env) { (void)env; return 0; }

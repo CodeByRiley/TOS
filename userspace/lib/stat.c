@@ -15,8 +15,8 @@
  *               a wall clock to convert it against, and a plausible-looking
  *               wrong time is worse than an obvious zero.
  */
-#include "../include/sys/stat.h"
-#include "syscall.h"
+#include <include/sys/stat.h>
+#include <syscall.h>
 
 #define FAT_ATTR_READ_ONLY 0x01
 

@@ -1,5 +1,7 @@
-#include "./winman.h"
-#include "display/print.h"
+#include "winman.h"
+#include <display/print.h>
+#include <stdbool.h>
+#include <string.h>
 
 static int cursor_w(void) {
   return cursor_img.pixels ? cursor_img.width : CURSOR_W;
@@ -17,8 +19,16 @@ static u32 last_click_tick = 0;
  * stopping for — it just leaves the built-in mask in place. */
 static void cursor_load(void) {
   if (bmp_load(CURSOR_BMP_PATH, &cursor_img) == 0) {
-    printf("winman: cursor %dx%d from %s\n", cursor_img.width,
-           cursor_img.height, CURSOR_BMP_PATH);
+    if (cursor_img.width > 0 && cursor_img.height > 0 &&
+        cursor_img.width <= CURSOR_MAX_SOURCE_DIM &&
+        cursor_img.height <= CURSOR_MAX_SOURCE_DIM) {
+      printf("winman: cursor %dx%d from %s\n", cursor_img.width,
+             cursor_img.height, CURSOR_BMP_PATH);
+    } else {
+      printf("winman: %s has invalid cursor dimensions, using built-in cursor\n",
+             CURSOR_BMP_PATH);
+      bmp_free(&cursor_img);
+    }
   } else {
     printf("winman: %s unavailable, using built-in cursor\n", CURSOR_BMP_PATH);
   }
@@ -338,7 +348,29 @@ static int build_taskbar_entries(struct tb_entry *out, int max) {
     if (!windows[i].in_use)
       continue;
     out[n].handle = windows[i].handle;
-    out[n].title = windows[i].title;
+    size_t title_len = strlen(windows[i].title);
+
+    if (title_len <= TASKBAR_BTN_W) {
+      out[n].title = windows[i].title;
+    } else {
+      // Allocate enough bytes for the first (TASKBAR_BTN_W - 3) characters,
+      // plus 3 bytes for "...", plus 1 byte for the null terminator.
+      char *trunc = malloc(TASKBAR_BTN_W + 1);
+      if (trunc) {
+        // Copy the characters that fit
+        strncpy(trunc, windows[i].title, TASKBAR_BTN_W - 3);
+
+        trunc[TASKBAR_BTN_W - 3] = '\0';
+
+        // Append the ellipsis
+        strcat(trunc, "...");
+
+        out[n].title = trunc;
+      } else {
+        // Fallback if malloc fails: just show the original (or handle error)
+        out[n].title = windows[i].title;
+      }
+    }
     n++;
   }
   return n;
@@ -665,6 +697,10 @@ static int backbuffer_reserve(size_t required) {
   if (new_fb == MAP_FAILED)
     return -1;
 
+  if (fb_registered) {
+    fb_unregister();
+    fb_registered = 0;
+  }
   if (fb && fb_capacity)
     munmap(fb, fb_capacity);
   fb = new_fb;
@@ -672,8 +708,50 @@ static int backbuffer_reserve(size_t required) {
   return 0;
 }
 
+/* Registration snapshots the backbuffer's physical pages once. Presents can
+ * then dispatch directly to APs without walking every user page each frame. */
+static int backbuffer_register(void) {
+  if (!fb || fb_stride <= 0)
+    return -1;
+  if (fb_register(fb, (uint32_t)fb_stride * 4U) != 0) {
+    /* A failed replacement may leave an older registration active. Drop it so
+     * later reallocations cannot be rejected as overlapping a pinned range. */
+    fb_unregister();
+    fb_registered = 0;
+    return -1;
+  }
+  fb_registered = 1;
+  return 0;
+}
+
 static inline uint32_t *fb_pix(int x, int y) {
   return fb + (size_t)y * (size_t)fb_stride + (size_t)x;
+}
+
+/* Compose clip: the region present_dirty() is about to copy out to the
+ * hardware framebuffer. Everything compose() draws outside it is thrown
+ * away, so culling against it is pure win. Regions outside keep their
+ * previously-composed pixels, which stay correct because any change to
+ * them goes through mark_dirty() and so widens the box. */
+static int clip_x, clip_y, clip_w, clip_h;
+
+static void clip_set(int x, int y, int w, int h) {
+  if (x < 0) { w += x; x = 0; }
+  if (y < 0) { h += y; y = 0; }
+  if (x + w > fb_w) w = fb_w - x;
+  if (y + h > fb_h) h = fb_h - y;
+  clip_x = x;
+  clip_y = y;
+  clip_w = w < 0 ? 0 : w;
+  clip_h = h < 0 ? 0 : h;
+}
+
+/* True when [x,x+w) x [y,y+h) has any pixel inside the clip. */
+static int clip_hits(int x, int y, int w, int h) {
+  if (w <= 0 || h <= 0 || clip_w <= 0 || clip_h <= 0)
+    return 0;
+  return x < clip_x + clip_w && x + w > clip_x &&
+         y < clip_y + clip_h && y + h > clip_y;
 }
 
 static void fb_fill_rect(int x, int y, int w, int h, uint32_t color) {
@@ -826,10 +904,12 @@ static void blit_surface(const struct window *w) {
   int cw = w->client_w;
   int ch = w->client_h;
 
-  int x0 = dst_x < 0 ? 0 : dst_x;
-  int y0 = dst_y < 0 ? 0 : dst_y;
-  int x1 = (dst_x + cw) > fb_w ? fb_w : dst_x + cw;
-  int y1 = (dst_y + ch) > fb_h ? fb_h : dst_y + ch;
+  /* Clamp to the clip box, not just the screen: rows and columns outside
+   * the region about to be presented would be copied for nothing. */
+  int x0 = dst_x < clip_x ? clip_x : dst_x;
+  int y0 = dst_y < clip_y ? clip_y : dst_y;
+  int x1 = (dst_x + cw) > clip_x + clip_w ? clip_x + clip_w : dst_x + cw;
+  int y1 = (dst_y + ch) > clip_y + clip_h ? clip_y + clip_h : dst_y + ch;
   if (x0 >= x1 || y0 >= y1)
     return;
 
@@ -910,10 +990,8 @@ static void draw_start_menu(void) {
     int item_w = START_MENU_W - (START_MENU_PAD * 2);
 
     // Highlight if hovered
-    uint32_t bg =
-        (i == start_menu_hover) ? MENU_HOVER_BG : MENU_BG;
-    uint32_t fg =
-        (i == start_menu_hover) ? MENU_HOVER_FG : MENU_TEXT;
+    uint32_t bg = (i == start_menu_hover) ? MENU_HOVER_BG : MENU_BG;
+    uint32_t fg = (i == start_menu_hover) ? MENU_HOVER_FG : MENU_TEXT;
 
     fb_fill_rect(item_x, item_y, item_w, START_MENU_ITEM_H - 2, bg);
     draw_text_fb(item_x + 4, item_y + (START_MENU_ITEM_H - FONT_GLYPH_H) / 2,
@@ -1315,6 +1393,9 @@ static void compose_handle(int handle) {
   if (handle == HANDLE_CONSOLE) {
     if (!con.enabled)
       return;
+    if (!clip_hits(con.x, con.y, outer_w_dims(con.client_w),
+                   outer_h_dims(con.client_h)))
+      return;
     struct window cw = {0};
     cw.x = con.x;
     cw.y = con.y;
@@ -1329,39 +1410,51 @@ static void compose_handle(int handle) {
   struct window *w = find_handle(handle);
   if (!w)
     return;
+  if (!clip_hits(w->x, w->y, outer_w(w), outer_h(w)))
+    return;
   draw_chrome(w, w->handle == focused_handle);
   blit_surface(w);
 }
 
 static void compose(void) {
+  if (clip_w <= 0 || clip_h <= 0)
+    return;
+
+  int cx0 = clip_x, cy0 = clip_y;
+  int cx1 = clip_x + clip_w, cy1 = clip_y + clip_h;
+
   /* Draw Desktop Background (Tiled) */
   if (wallpaper_loaded) {
     int w = wallpaper_img.width;
     int h = wallpaper_img.height;
 
-    for (int y = 0; y < fb_h; y++) {
+    for (int y = cy0; y < cy1; y++) {
       // Get the correct source row from the wallpaper (wrapping vertically)
       uint32_t *src_row = &wallpaper_img.pixels[(y % h) * w];
       uint32_t *dst_row = fb_pix(0, y);
 
-      int x = 0;
-      // Tile horizontally across the screen
-      while (x < fb_w) {
-        int chunk = w;
-        if (x + chunk > fb_w) {
-          chunk = fb_w - x; // Don't draw past the edge of the screen
-        }
+      int x = cx0;
+      // Tile horizontally across the clip box
+      while (x < cx1) {
+        int col = x % w;              // where we are within the tile
+        int chunk = w - col;          // rest of this tile
+        if (x + chunk > cx1)
+          chunk = cx1 - x;
         // Fast copy of a chunk of pixels
-        memcpy(dst_row + x, src_row, (size_t)chunk * 4);
+        memcpy(dst_row + x, src_row + col, (size_t)chunk * 4);
         x += chunk;
       }
     }
   } else {
-    fb_fill_rect(0, 0, fb_w, fb_h, DESKTOP_BG); // Fallback to teal
+    fb_fill_rect(cx0, cy0, cx1 - cx0, cy1 - cy0, DESKTOP_BG);
   }
 
   /* Draw Desktop Icons */
   for (int i = 0; i < desktop_icon_count; i++) {
+    /* Label sits under the icon, so extend the cull box downward. */
+    if (!clip_hits(desktop_icons[i].x, desktop_icons[i].y, desktop_icons[i].w,
+                   desktop_icons[i].h + 2 + FONT_GLYPH_H))
+      continue;
     if (desktop_icons[i].loaded) {
       // Pass target size (desktop_icons[i].w / h) and source size (img.width /
       // height)
@@ -1385,20 +1478,49 @@ static void compose(void) {
   }
 
   /* Draw Taskbar (always on top) */
-  draw_taskbar();
+  if (clip_hits(0, taskbar_y(), fb_w, TASKBAR_PX))
+    draw_taskbar();
   draw_start_menu();
+}
+
+/* Hand normal backbuffer copies to the kernel so large regions can use its AP
+ * work queue. Keep the direct path as a fallback for an older kernel or a
+ * rejected request. */
+static void present_backbuffer_rects(const struct fb_rect *rects,
+                                     uint32_t rect_count) {
+  if (rect_count == 0)
+    return;
+  if (fb_present(fb, (uint32_t)fb_stride * 4U, rects, rect_count) == 0)
+    return;
+
+  for (uint32_t i = 0; i < rect_count; i++) {
+    const struct fb_rect *rect = &rects[i];
+    for (uint32_t row = 0; row < rect->h; row++) {
+      uint32_t *src = fb_pix((int)rect->x, (int)(rect->y + row));
+      uint32_t *dst = fb_hw + (size_t)(rect->y + row) * (size_t)fb_stride +
+                      (size_t)rect->x;
+      memcpy(dst, src, (size_t)rect->w * 4);
+    }
+    fb_damage(rect->x, rect->y, rect->w, rect->h);
+  }
+}
+
+static void present_backbuffer_rect(int x, int y, int w, int h) {
+  const struct fb_rect rect = {
+      .x = (uint32_t)x,
+      .y = (uint32_t)y,
+      .w = (uint32_t)w,
+      .h = (uint32_t)h,
+  };
+  present_backbuffer_rects(&rect, 1);
 }
 
 static void present_full_desktop(void) {
   if (!fb_hw || !fb || fb_bytes == 0)
     return;
+  clip_set(0, 0, fb_w, fb_h);
   compose();
-  for (int y = 0; y < fb_h; y++) {
-    uint32_t *src = fb + (size_t)y * (size_t)fb_stride;
-    uint32_t *dst = fb_hw + (size_t)y * (size_t)fb_stride;
-    memcpy(dst, src, (size_t)fb_w * 4);
-  }
-  fb_damage(0, 0, (uint32_t)fb_w, (uint32_t)fb_h);
+  present_backbuffer_rect(0, 0, fb_w, fb_h);
   desktop_dirty = 0;
 }
 
@@ -1406,21 +1528,13 @@ static void present_dirty(void) {
   if (!fb_hw || !fb || fb_bytes == 0 || !desktop_dirty)
     return;
 
-  // Still composite the whole screen to the back buffer.
-  // (Software compositing is fast enough; the bottleneck is the memcpy).
+  // Composite only the region we are about to copy out. Everything else
+  // would be discarded, and at 1280x800 redrawing the whole desktop for a
+  // small dirty box was costing ~6x winman's loop rate.
+  clip_set(dirty_x, dirty_y, dirty_w, dirty_h);
   compose();
 
-  // Only copy the dirty bounding box to the hardware framebuffer
-  for (int yy = 0; yy < dirty_h; yy++) {
-    uint32_t *src = fb_pix(dirty_x, dirty_y + yy);
-    uint32_t *dst =
-        fb_hw + (size_t)(dirty_y + yy) * (size_t)fb_stride + (size_t)dirty_x;
-    memcpy(dst, src, (size_t)dirty_w * 4);
-  }
-
-  // Tell the kernel (and thus VirtIO) to ONLY flush this rect!
-  fb_damage((uint32_t)dirty_x, (uint32_t)dirty_y, (uint32_t)dirty_w,
-            (uint32_t)dirty_h);
+  present_backbuffer_rect(dirty_x, dirty_y, dirty_w, dirty_h);
 
   desktop_dirty = 0;
   dirty_w = 0;
@@ -1456,42 +1570,109 @@ static inline void blend_px(uint32_t *dst, uint32_t src) {
   *dst = (r << 16) | (g << 8) | b;
 }
 
-static void draw_cursor(int32_t x, int32_t y) {
-  int scale = cursor_scale();
-  int src_w = cursor_w();
-  int src_h = cursor_h();
-  int draw_w = src_w * scale;
-  int draw_h = src_h * scale;
-
+static int cursor_rect(int32_t x, int32_t y, int scale,
+                       struct fb_rect *rect) {
+  int draw_w = cursor_w() * scale;
+  int draw_h = cursor_h() * scale;
   int x0 = x < 0 ? 0 : (int)x;
   int y0 = y < 0 ? 0 : (int)y;
   int x1 = ((int)x + draw_w) > fb_w ? fb_w : (int)x + draw_w;
   int y1 = ((int)y + draw_h) > fb_h ? fb_h : (int)y + draw_h;
 
   if (x0 >= x1 || y0 >= y1)
+    return 0;
+
+  *rect = (struct fb_rect){
+      .x = (uint32_t)x0,
+      .y = (uint32_t)y0,
+      .w = (uint32_t)(x1 - x0),
+      .h = (uint32_t)(y1 - y0),
+  };
+  return 1;
+}
+
+static void draw_cursor(int32_t x, int32_t y) {
+  int scale = cursor_scale();
+  int src_w = cursor_w();
+  int src_h = cursor_h();
+  if (src_w <= 0 || src_h <= 0 || src_w > CURSOR_MAX_SOURCE_DIM ||
+      src_h > CURSOR_MAX_SOURCE_DIM)
     return;
 
-  for (int yy = 0; yy < y1 - y0; yy++) {
-    uint32_t *p = fb_hw + (size_t)(y0 + yy) * (size_t)fb_stride + (size_t)x0;
+  struct fb_rect new_rect;
+  int have_new = cursor_rect(x, y, scale, &new_rect);
+  if (!have_new)
+    return;
+  if (have_new) {
+    int clipped_w = (int)new_rect.w;
+    int clipped_h = (int)new_rect.h;
+    int x0 = (int)new_rect.x;
+    int y0 = (int)new_rect.y;
+    for (int yy = 0; yy < clipped_h; yy++) {
+      uint32_t *p = fb_pix(x0, y0 + yy);
+      memcpy(cursor_under + (size_t)yy * CURSOR_MAX_DRAW_DIM, p,
+             (size_t)clipped_w * 4);
 
-    int src_y = (y0 + yy - (int)y) / scale;
+      int src_y = (y0 + yy - (int)y) / scale;
 
-    for (int xx = 0; xx < x1 - x0; xx++) {
-      int src_x = (x0 + xx - (int)x) / scale;
+      for (int xx = 0; xx < clipped_w; xx++) {
+        int src_x = (x0 + xx - (int)x) / scale;
 
-      if (cursor_img.pixels) {
-        blend_px(&p[xx], cursor_img.pixels[(size_t)src_y * src_w + src_x]);
-      } else {
-        uint8_t mv = fallback_cursor_mask[src_y][src_x];
-        if (mv == 1)
-          p[xx] = COLOR_BORDER;
-        else if (mv == 2)
-          p[xx] = COLOR_FILL;
+        if (cursor_img.pixels) {
+          blend_px(&p[xx], cursor_img.pixels[(size_t)src_y * src_w + src_x]);
+        } else {
+          uint8_t mv = fallback_cursor_mask[src_y][src_x];
+          if (mv == 1)
+            p[xx] = COLOR_BORDER;
+          else if (mv == 2)
+            p[xx] = COLOR_FILL;
+        }
       }
     }
+
   }
-  fb_damage((uint32_t)x0, (uint32_t)y0, (uint32_t)(x1 - x0),
-            (uint32_t)(y1 - y0));
+
+  present_backbuffer_rects(&new_rect, 1);
+
+  for (uint32_t yy = 0; yy < new_rect.h; yy++) {
+    memcpy(fb_pix((int)new_rect.x, (int)(new_rect.y + yy)),
+           cursor_under + (size_t)yy * CURSOR_MAX_DRAW_DIM,
+           (size_t)new_rect.w * 4);
+  }
+}
+
+static struct fb_rect cursor_repair;
+static int cursor_repair_active;
+static uint32_t cursor_repair_deadline;
+
+static void cursor_repair_add(int32_t x, int32_t y) {
+  struct fb_rect rect;
+  if (!cursor_rect(x, y, cursor_scale(), &rect))
+    return;
+  if (!cursor_repair_active) {
+    cursor_repair = rect;
+    cursor_repair_active = 1;
+    return;
+  }
+
+  uint32_t x0 = cursor_repair.x < rect.x ? cursor_repair.x : rect.x;
+  uint32_t y0 = cursor_repair.y < rect.y ? cursor_repair.y : rect.y;
+  uint32_t repair_x1 = cursor_repair.x + cursor_repair.w;
+  uint32_t repair_y1 = cursor_repair.y + cursor_repair.h;
+  uint32_t rect_x1 = rect.x + rect.w;
+  uint32_t rect_y1 = rect.y + rect.h;
+  cursor_repair = (struct fb_rect){
+      .x = x0,
+      .y = y0,
+      .w = (repair_x1 > rect_x1 ? repair_x1 : rect_x1) - x0,
+      .h = (repair_y1 > rect_y1 ? repair_y1 : rect_y1) - y0,
+  };
+}
+
+static void cursor_repair_present(void) {
+  if (!cursor_repair_active)
+    return;
+  present_backbuffer_rects(&cursor_repair, 1);
 }
 
 static void present_rect(int x, int y, int w, int h) {
@@ -1509,12 +1690,7 @@ static void present_rect(int x, int y, int w, int h) {
     h = fb_h - y;
   if (w <= 0 || h <= 0)
     return;
-  for (int yy = 0; yy < h; yy++) {
-    uint32_t *src = fb_pix(x, y + yy);
-    uint32_t *dst = fb_hw + (size_t)(y + yy) * (size_t)fb_stride + (size_t)x;
-    memcpy(dst, src, (size_t)w * 4);
-  }
-  fb_damage((uint32_t)x, (uint32_t)y, (uint32_t)w, (uint32_t)h);
+  present_backbuffer_rect(x, y, w, h);
 }
 
 /* Restore the four 1px sides of a previously-drawn ghost outline by blitting
@@ -1954,22 +2130,35 @@ static void forward_input(int target_pid, int win_handle, const struct msg *m) {
   if (target_pid <= 0)
     return;
 
-  int wx = 0, wy = 0, wcw = 0, wch = 0;
-  int local_x = m->x;
-  int local_y = m->y;
-  if (win_get_rect(win_handle, &wx, &wy, &wcw, &wch)) {
-    /* Client area starts at (wx + BORDER_PX, wy + TITLEBAR_PX). */
-    local_x = m->x - (wx + BORDER_PX);
-    local_y = m->y - (wy + TITLEBAR_PX);
-  }
-
   struct ipc_msg out;
   memset(&out, 0, sizeof(out));
   out.type = IPC_WM_INPUT;
   out.a = m->type;
-  out.b = m->param;
-  out.c = local_x;
-  out.d = local_y;
+
+  /* Check if event is mouse-related */
+  if (m->type == MSG_MOUSE_MOVE || m->type == MSG_MOUSE_DOWN ||
+      m->type == MSG_MOUSE_UP) {
+    int wx = 0, wy = 0, wcw = 0, wch = 0;
+    int local_x = m->x;
+    int local_y = m->y;
+
+    if (win_get_rect(win_handle, &wx, &wy, &wcw, &wch)) {
+      local_x = m->x - (wx + BORDER_PX);
+      local_y = m->y - (wy + TITLEBAR_PX);
+    }
+
+    out.b = m->param; /* Mouse button state/mask */
+    out.c = local_x;
+    out.d = local_y;
+  } else {
+    /* Keyboard event: pass key parameters cleanly without transforming mouse
+     * coords */
+    out.b = m->param; /* Key code / ASCII value */
+    out.c = m->x; /* Pass auxiliary key details (e.g. key flags or scancodes) if
+                     set */
+    out.d = m->y;
+  }
+
   ipc_send(target_pid, &out);
 }
 
@@ -2384,6 +2573,8 @@ int main(int argc, char **argv) {
     printf("winman: back buffer alloc failed\n");
     return 4;
   }
+  if (backbuffer_register() != 0)
+    printf("winman: back buffer registration failed, using fallback\n");
   printf("winman: back buffer @%p bytes=%d\n", (void *)fb, (int)fb_capacity);
 
   cursor_load();
@@ -2404,10 +2595,15 @@ int main(int argc, char **argv) {
 
   for (;;) {
     if ((int)wm_pid() != self_pid) {
+      /* Another process may replace the kernel's single display registration
+       * while it owns the framebuffer. Re-establish ours on return. */
+      fb_registered = 0;
       have_last = 0;
       sleep_ticks(1);
       continue;
     }
+    if (!fb_registered && backbuffer_register() != 0)
+      sleep_ticks(1);
 
     /* Host-driven resize: kernel may have re-pointed the scanout at a
      * different-sized backing under us. Re-query dims; on change, rebind
@@ -2435,6 +2631,8 @@ int main(int argc, char **argv) {
           fb_h = (int)cur.height;
           fb_stride = (int)(cur.pitch / 4);
           fb_bytes = new_bytes;
+          if (backbuffer_register() != 0)
+            printf("winman: resized back buffer registration failed\n");
           present_full_desktop();
           have_last = 0;
           printf("winman: rebound fb to %dx%d\n", fb_w, fb_h);
@@ -2445,6 +2643,28 @@ int main(int argc, char **argv) {
     pump_ipc();
     pump_input();
     drain_tty_into_console();
+
+    /* The taskbar is outside most dirty boxes, so nothing else would repaint
+     * it. Track what it renders from and dirty the strip when that changes,
+     * otherwise a new window's button never appears. */
+    {
+      static uint64_t taskbar_sig_prev;
+      uint64_t sig = (uint64_t)(uint32_t)focused_handle * 1000003u;
+      sig = sig * 31 + (uint64_t)con.enabled;
+      for (int i = 0; i < MAX_WINDOWS; i++) {
+        sig = sig * 31 + (uint64_t)windows[i].in_use;
+        if (!windows[i].in_use)
+          continue;
+        sig = sig * 31 + (uint64_t)windows[i].handle;
+        sig = sig * 31 + (uint64_t)windows[i].minimized;
+        for (const char *t = windows[i].title; *t; t++)
+          sig = sig * 31 + (unsigned char)*t;
+      }
+      if (sig != taskbar_sig_prev) {
+        taskbar_sig_prev = sig;
+        mark_dirty(0, taskbar_y(), fb_w, TASKBAR_PX);
+      }
+    }
 
     /* Advance once per iteration, not once per repaint. This used to
      * live inside the `desktop_dirty && (++tick % 2)` test below, where
@@ -2472,9 +2692,13 @@ int main(int argc, char **argv) {
       if (drag.have_ghost) {
         erase_ghost(drag.last_gx, drag.last_gy, drag.last_gw, drag.last_gh);
       }
-      if (have_last) {
+      // Redraw cursor every 128 (128 / 500hz = 0.256s ticks) or on mouse move
+      if ((have_last && (mx != last_cx || my != last_cy)) || (tick & 127) == 0) {
         int s = cursor_scale();
         present_rect(last_cx, last_cy, cursor_w() * s, cursor_h() * s);
+        cursor_repair_add(last_cx, last_cy);
+        cursor_repair_add(mx, my);
+        cursor_repair_deadline = (uint32_t)get_ticks() + 2;
       }
       int gx, gy, gw, gh;
       compute_ghost((int)mx, (int)my, &gx, &gy, &gw, &gh);
@@ -2485,7 +2709,9 @@ int main(int argc, char **argv) {
       drag.last_gh = gh;
       drag.have_ghost = 1;
 
-      draw_cursor(mx, my);
+
+      if (!have_last || mx != last_cx || my != last_cy)
+      	draw_cursor(mx, my);
       last_cx = mx;
       last_cy = my;
       have_last = 1;
@@ -2506,14 +2732,26 @@ int main(int argc, char **argv) {
       present_dirty();
     }
 
-    /* ALWAYS erase the old cursor if we have one. If present_dirty()
-       already drew over it, this just harmlessly redraws the same pixels. */
-    if (have_last) {
+    int cursor_moved = have_last && (mx != last_cx || my != last_cy);
+    if (cursor_moved) {
+      cursor_repair_add(last_cx, last_cy);
+      cursor_repair_add(mx, my);
+      cursor_repair_present();
+      cursor_repair_deadline = (uint32_t)get_ticks() + 2;
+    } else if (cursor_repair_active &&
+               (int32_t)((uint32_t)get_ticks() - cursor_repair_deadline) >= 0) {
+      /* Small VirtIO damage updates may have reached the host out of order.
+       * Recompose once at the end of the movement burst so no stale cursor can
+       * survive after the pointer stops. */
+      present_full_desktop();
+      recompose = 1;
+      cursor_repair_active = 0;
+    } else if (have_last && recompose) {
       int s = cursor_scale();
       present_rect(last_cx, last_cy, cursor_w() * s, cursor_h() * s);
     }
-
-    draw_cursor(mx, my);
+    if (!have_last || recompose || cursor_moved)
+      draw_cursor(mx, my);
     last_cx = mx;
     last_cy = my;
     have_last = 1;

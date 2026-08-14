@@ -5,10 +5,10 @@
  * Buffering: none. fputc / fputs go straight through write(). fflush is a
  * no-op. Stream FILE structs are static so fileno-equivalent code works.
  */
-#include "syscall.h"
-#include "../include/stdio.h"
-#include "../include/string.h"
-#include "../include/stdlib.h"
+#include <lib/syscall.h>
+#include <include/stdio.h>
+#include <include/string.h>
+#include <include/stdlib.h>
 
 static FILE _stdout = { 1, 0 };
 static FILE _stderr = { 2, 0 };

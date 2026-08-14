@@ -4,7 +4,7 @@ USER_ELF_LD  := x86_64-elf-ld
 USER_PE_CC   := x86_64-w64-mingw32-gcc
 USER_AS      := nasm
 USER_CFLAGS  := -ffreestanding -nostdlib -fno-pie -mno-red-zone -static \
-                -I lib -I ../kernel -O2 -Wall -Wextra
+                  -I . -I lib -I include -I ../kernel -O2 -Wall -Wextra -std=gnu23
 USER_LDFLAGS := -nostdlib -static -T lib/user.ld
 BUILD_DOOM ?= 0
 SHOW_DOOM_INFO ?= 0
@@ -19,8 +19,8 @@ SHOW_DOOM_INFO ?= 0
 # -fno-asynchronous-unwind-tables drops .pdata/.xdata: nothing unwinds, and
 # it keeps the section count down to what the loader has to walk.
 PE_CFLAGS := -ffreestanding -nostdlib -fno-pie -mno-red-zone -static \
-             -fno-asynchronous-unwind-tables \
-             -I lib -I ../kernel -O2 -Wall -Wextra
+							-fno-asynchronous-unwind-tables \
+              -I . -I lib -I include -I ../kernel -O2 -Wall -Wextra -std=gnu23
 
 # mingw counterparts of crt0.s and syscall.s; everything else is the same
 # source the ELF build uses.
@@ -59,11 +59,23 @@ LIB_C_OBJS := $(filter-out lib/crt0.o lib/syscall_asm.o, $(LIB_OBJS)) $(TTF_OBJS
 
 # One binary per directory under bin/, named after the directory.
 # Doom is special (multi-source) and gets its own rules.
-SIMPLE_BINS := hello cat gfx ls sh shutdown reboot mtest btop pkill plist fdchild vmtest uidemo thread deskelf stress stress_peer
+SIMPLE_BINS := hello cat gfx ls sh shutdown reboot mtest btop pkill \
+							plist fdchild vmtest uidemo thread deskelf stress \
+						 	stress_peer audiotest muse mmaptest faulter
+
 SIMPLE_BIN_OBJS := $(foreach b,$(SIMPLE_BINS),bin/$(b)/$(b).o)
 SIMPLE_BIN_ELFS := $(foreach b,$(SIMPLE_BINS),bin/$(b)/$(b).elf)
 WINMAN_OBJ := bin/winman/winman.o
 WINMAN_ELF := bin/winman/winman.elf
+
+HOLYD_SRC_DIR := bin/holyd
+# Find all .c files in the holyd root and its subdirectories
+HOLYD_SOURCES := $(wildcard $(HOLYD_SRC_DIR)/*.c) \
+                 $(wildcard $(HOLYD_SRC_DIR)/lexer/*.c) \
+                 $(wildcard $(HOLYD_SRC_DIR)/parser/*.c) \
+                 $(wildcard $(HOLYD_SRC_DIR)/ast/*.c)
+HOLYD_OBJS := $(HOLYD_SOURCES:.c=.o)
+HOLYD_CFLAGS := $(USER_CFLAGS) -I $(HOLYD_SRC_DIR)
 
 DOOM_SRC_DIR := games/doom/doomgeneric
 DOOM_SOURCES := $(filter-out \
@@ -92,11 +104,11 @@ DOOM_EXTRA_OBJS := lib/string_extra.o lib/stdio_extra.o \
                    lib/math_stub.o lib/setjmp_stub.o lib/errno.o \
                    lib/time_stub.o lib/unistd_stub.o
 
-DOOM_CFLAGS := -ffreestanding -nostdlib -fno-pie -mno-red-zone -static \
-                -I include -I lib \
-                -I $(DOOM_SRC_DIR) \
-                -O2 -Wno-error \
-                -DNORMALUNIX -DLINUX
+DOOM_CFLAGS  := -ffreestanding -nostdlib -fno-pie -mno-red-zone -static \
+                  -I . -I include -I lib \
+                  -I $(DOOM_SRC_DIR) \
+                  -std=gnu17 -O2 -Wno-error \
+                  -DNORMALUNIX -DLINUX
 
 
 bin/doom/doom.elf: $(DOOM_OBJS) $(DOOM_PLATFORM_OBJS) $(LIB_OBJS) $(DOOM_EXTRA_OBJS)
@@ -114,7 +126,7 @@ endif
 %.o: %.c
 	$(USER_ELF_CC) $(DOOM_CFLAGS) -c $< -o $@
 
-USERSPACE_TARGETS := $(SIMPLE_BIN_ELFS) $(WINMAN_ELF) $(PE_BIN_EXES) $(PE_VARIANT_EXES)
+USERSPACE_TARGETS := $(SIMPLE_BIN_ELFS) $(WINMAN_ELF) $(PE_BIN_EXES) $(PE_VARIANT_EXES) bin/holyd/holyd.elf
 ifeq ($(BUILD_DOOM),1)
 USERSPACE_TARGETS += bin/doom/doom.elf
 endif
@@ -147,6 +159,16 @@ $(SIMPLE_BIN_ELFS): bin/%.elf: bin/%.o $(LIB_OBJS)
 	$(USER_ELF_LD) $(USER_LDFLAGS) $^ -o $@
 
 $(WINMAN_ELF): $(WINMAN_OBJ) $(LIB_OBJS) $(TTF_OBJS)
+	$(USER_ELF_LD) $(USER_LDFLAGS) $^ -o $@
+
+# --- holyd rules ---------------------------------------------------------
+
+# HolyD headers use paths rooted at bin/holyd (for example, lexer/lexer.h).
+$(HOLYD_OBJS): %.o: %.c
+	$(USER_ELF_CC) $(HOLYD_CFLAGS) -c $< -o $@
+
+# Link holyd.elf
+bin/holyd/holyd.elf: $(HOLYD_OBJS) $(LIB_OBJS)
 	$(USER_ELF_LD) $(USER_LDFLAGS) $^ -o $@
 
 # --- PE binaries ---------------------------------------------------------
@@ -182,4 +204,4 @@ $(PE_VARIANT_EXES): bin/%.exe: bin/%.pe.o $(PE_LIB_OBJS)
 	$(USER_PE_CC) $(PE_LDFLAGS) $^ -o $@
 
 clean:
-	rm -f lib/*.o bin/*/*.o bin/*/*.elf bin/*/*.exe
+	rm -f lib/*.o bin/*/*.o bin/*/*/*.o bin/*/*.elf bin/*/*.exe

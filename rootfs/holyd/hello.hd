@@ -1,0 +1,7 @@
+Print("Hello, Holy D!\n");
+Print("Running on bare metal...\n");
+
+I64 version = 1;
+Print("Version: ");
+Print(version);
+Print("\n");

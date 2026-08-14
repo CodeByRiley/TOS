@@ -1,0 +1,24 @@
+I64 a = 10;
+I64 b = 20;
+
+auto sum = a + b;
+auto product = a * b;
+auto complex = (a + b) * 2 - 5;
+
+Print("a = ");
+Print(a);
+Print(", b = ");
+Print(b);
+Print("\n");
+
+Print("Sum: ");
+Print(sum);
+Print("\n");
+
+Print("Product: ");
+Print(product);
+Print("\n");
+
+Print("Complex math (a + b) * 2 - 5: ");
+Print(complex);
+Print("\n");

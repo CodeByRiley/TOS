@@ -1,7 +1,7 @@
 /* Shared-memory verifier used by stress.elf. */
-#include "../../include/stdio.h"
-#include "../../include/stdlib.h"
-#include "../../lib/syscall.h"
+#include <include/stdio.h>
+#include <include/stdlib.h>
+#include <lib/syscall.h>
 #include <stdint.h>
 
 #define IPC_STRESS_READY (IPC_USER_FIRST + 0x20)

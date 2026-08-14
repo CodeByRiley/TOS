@@ -4,8 +4,8 @@
  * in seconds. Apps that need monotonic timing get something usable; apps
  * that expect a real Unix epoch will misbehave.
  */
-#include "../include/time.h"
-#include "syscall.h"
+#include <include/time.h>
+#include <lib/syscall.h>
 
 /* Returns uptime in seconds. If `t` is non-NULL, also stores the value. */
 time_t time(time_t *t) {

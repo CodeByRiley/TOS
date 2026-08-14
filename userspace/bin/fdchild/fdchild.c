@@ -1,5 +1,5 @@
-#include "../../include/stdio.h"
-#include "../../lib/syscall.h"
+#include <include/stdio.h>
+#include <lib/syscall.h>
 
 int main(void) {
     int fd = (int)open("readme.txt", 0);

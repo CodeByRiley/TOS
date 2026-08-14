@@ -7,10 +7,10 @@
  * pattern. Name matching is substring, so `pkill sh` also hits `shutdown`
  * — list first with `plist <name>` if that matters.
  */
-#include "../../include/stdio.h"
-#include "../../include/stdlib.h"
-#include "../../include/string.h"
-#include "../../lib/syscall.h"
+#include <include/stdio.h>
+#include <include/stdlib.h>
+#include <include/string.h>
+#include <lib/syscall.h>
 
 /* Matches sys_proc_list's own cap. */
 #define MAX_PROCS 64

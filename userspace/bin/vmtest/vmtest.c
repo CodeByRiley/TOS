@@ -7,7 +7,7 @@
  * user faults kill the faulting task instead, the two cases marked
  * ENFORCEMENT below become worth writing.
  */
-#include "../../lib/syscall.h"
+#include <lib/syscall.h>
 
 extern int printf(const char *, ...);
 

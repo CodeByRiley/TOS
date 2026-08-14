@@ -4,8 +4,8 @@
  * that compiles + behaves harmlessly. sleep/usleep busy-wait against the
  * tick counter — fine for the current single-task workloads.
  */
-#include "../include/unistd.h"
-#include "syscall.h"
+#include <include/unistd.h>
+#include <lib/syscall.h>
 
 /* TTY detection unsupported — treat every fd as a pipe/file. */
 int isatty(int fd)                       { (void)fd; return 0; }

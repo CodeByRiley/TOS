@@ -1,0 +1,17 @@
+U0 Greet(I64 age) {
+    Print("Hello from a function!\n");
+    Print("You are ");
+    Print(age);
+    Print(" years old.\n");
+}
+
+I64 Add(I64 a, I64 b) {
+    return a + b;
+}
+
+Greet(25);
+
+auto result = Add(10, 20);
+Print("10 + 20 = ");
+Print(result);
+Print("\n");

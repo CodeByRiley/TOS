@@ -12,11 +12,11 @@
  *   - TAB completes command names from PATH or files from the current dir.
  */
 // #region INCLUDES
-#include "../../lib/syscall.h"
-#include "../../lib/keymap.h"
-#include "../../lib/console.h"
-#include "../../include/key_codes.h"
-#include "utilities/types.h"
+#include <lib/syscall.h>
+#include <lib/keymap.h>
+#include <lib/console.h>
+#include <include/key_codes.h>
+#include <utilities/types.h>
 #include <stdarg.h>
 // #endregion INCLUDES
 

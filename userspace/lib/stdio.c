@@ -4,7 +4,7 @@
  * for DOOM's WAD loader and a few small tools: no buffering, no ungetc,
  * no error flag. Add a real I/O cache before pushing this beyond toy use.
  */
-#include "syscall.h"
+#include <lib/syscall.h>
 #include <stdint.h>
 
 #define SEEK_SET 0

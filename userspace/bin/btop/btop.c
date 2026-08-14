@@ -9,10 +9,10 @@
  * stack on entry and restores it on exit. Quits on ESC.
  */
 // #region INCLUDES
-#include "../../lib/syscall.h"
-#include "../../lib/console.h"
-#include "../../lib/keymap.h"
-#include "../../include/key_codes.h"
+#include <lib/syscall.h>
+#include <lib/console.h>
+#include <lib/keymap.h>
+#include <include/key_codes.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stddef.h>

@@ -4,8 +4,7 @@
  * are mapped. Function keys, arrows, and modifiers return 0 — callers that
  * care about them inspect the raw KEY_* code themselves.
  */
-#include "../include/key_codes.h"
-#include "syscall.h"
+#include <include/key_codes.h>
 #include <stdint.h>
 
 /* Translate Linux KEY_* code → ASCII. `shift` selects upper-case / symbol

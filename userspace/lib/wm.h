@@ -13,8 +13,8 @@
 #ifndef USER_WM_H
 #define USER_WM_H
 
-#include "../include/stdio.h"
-#include "syscall.h"
+#include <include/stdio.h>
+#include <lib/syscall.h>
 #include <stdint.h>
 
 /* ---------------- Wire protocol ---------------------------------------- */

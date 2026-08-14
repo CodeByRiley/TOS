@@ -1,10 +1,10 @@
-#include "../../lib/bmp.h"
-#include "../../lib/gfx.h"
-#include "../../lib/syscall.h"
-#include "../../lib/ttf.h"
-#include "../../lib/wm.h"
-#include "display/fonts/font8x8.h"
-#include "utilities/types.h"
+#include <lib/bmp.h>
+#include <lib/gfx.h>
+#include <lib/syscall.h>
+#include <lib/ttf.h>
+#include <lib/wm.h>
+#include <display/fonts/font8x8.h>
+#include <include/sys/types.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -85,10 +85,14 @@ static void titlebar_btn_rect(int win_x, int win_y, int outer_w,
 
 #define CURSOR_W 12
 #define CURSOR_H 12
+#define CURSOR_MAX_SOURCE_DIM 32
+#define CURSOR_MAX_SCALE 4
+#define CURSOR_MAX_DRAW_DIM (CURSOR_MAX_SOURCE_DIM * CURSOR_MAX_SCALE)
 #define COLOR_BORDER 0x00000000u
 #define COLOR_FILL 0x00FFFFFFu
 
 static struct bmp_image cursor_img; /* pixels == 0 until a load succeeds */
+static uint32_t cursor_under[CURSOR_MAX_DRAW_DIM * CURSOR_MAX_DRAW_DIM];
 
 static const uint8_t fallback_cursor_mask[CURSOR_H][CURSOR_W] = {
     {1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, {1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
@@ -117,7 +121,7 @@ static const uint8_t fallback_cursor_mask[CURSOR_H][CURSOR_W] = {
 
 /* Taskbar: always-on-top strip pinned to the bottom of the desktop.
  * Buttons list the console + every client window; clicking a button focuses
- * (and would raise, if winman had explicit z-order) that handle. */
+ * that handle. */
 #define TASKBAR_PX 24
 #define TASKBAR_BG 0x00808080u
 #define TASKBAR_BTN_BG 0x00C0C0C0u
@@ -230,6 +234,7 @@ static uint32_t *fb;           /* page-aligned compositor backbuffer */
 static size_t fb_bytes;        /* bytes in the current visible row span */
 static size_t fb_capacity;     /* allocated compositor-buffer bytes */
 static size_t fb_mapped_bytes; /* framebuffer prefix mapped in this task */
+static int fb_registered;      /* kernel has cached the current backbuffer */
 static int fb_w, fb_h, fb_stride;
 static int desktop_dirty = 0;
 static int dirty_x = 0, dirty_y = 0, dirty_w = 0, dirty_h = 0;

@@ -4,6 +4,8 @@ set -euo pipefail
 # Run from the repository root; every path below is repo-relative.
 cd "$(dirname "$0")/.."
 
+MIN_SIZE=64
+
 # Output image. Lives in build/ so `make clean` takes it with everything else.
 IMG="${IMG:-build/disk.img}"
 mkdir -p "$(dirname "$IMG")"
@@ -14,6 +16,13 @@ mkdir -p "$(dirname "$IMG")"
 payloads=(
 	"rootfs/readme.txt::readme.txt"
 	"rootfs/cursor.bmp::cursor.bmp"
+	"rootfs/holyd/array.hd::holyd/array.hd"
+	"rootfs/holyd/conditionals.hd::holyd/conditionals.hd"
+	"rootfs/holyd/strings.hd::holyd/strings.hd"
+	"rootfs/holyd/hello.hd::holyd/hello.hd"
+	"rootfs/holyd/math.hd::holyd/math.hd"
+	"rootfs/holyd/functions.hd::holyd/functions.hd"
+	"rootfs/holyd/no_semis.hd::holyd/no_semis.hd"
 	"rootfs/music/beethoven.wav::music/beethoven.wav"
 	"rootfs/system/fonts/SansDisplayStatic.ttf::system/fonts/sansdisplaystatic.ttf"
 	"rootfs/system/fonts/SansDisplayVariable.ttf::system/fonts/sansdisplayvariable.ttf"
@@ -42,6 +51,11 @@ payloads=(
 	"userspace/bin/deskelf/deskelf.elf::usr/bin/deskelf.elf"
 	"userspace/bin/stress/stress.elf::usr/bin/stress.elf"
 	"userspace/bin/stress_peer/stress_peer.elf::usr/bin/stress_peer.elf"
+	"userspace/bin/audiotest/audiotest.elf::usr/bin/audiotest.elf"
+	"userspace/bin/holyd/holyd.elf::bin/holyd.elf"
+	"userspace/bin/muse/muse.elf::usr/bin/muse.elf"
+	"userspace/bin/mmaptest/mmaptest.elf::usr/bin/mmaptest.elf"
+	"userspace/bin/faulter/faulter.elf::usr/bin/faulter.elf"
 )
 
 # Firmware and DOOM are optional: QEMU and non-NVIDIA systems continue to
@@ -80,8 +94,8 @@ if [[ -z "${DISK_SIZE_MIB:-}" ]]; then
 	# reads the geometry as FAT16 and refuses the volume, because a real
 	# FAT16 needs the fixed root table this image would not have. At one
 	# 512-byte sector per cluster that floor is 32 MiB; 64 gives room.
-	if ((DISK_SIZE_MIB < 64)); then
-		DISK_SIZE_MIB=64
+	if ((DISK_SIZE_MIB < MIN_SIZE)); then
+		DISK_SIZE_MIB=$MIN_SIZE
 	fi
 fi
 

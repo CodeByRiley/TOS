@@ -1,0 +1,12 @@
+I64 x = 10
+I64 y = 20
+
+if (x < y) {
+    Print("x is less than y\n")
+}
+
+auto nums = [1, 2, 3]
+foreach (n; nums) {
+    Print(n)
+    Print("\n")
+}

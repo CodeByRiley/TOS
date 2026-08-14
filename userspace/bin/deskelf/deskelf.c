@@ -1,11 +1,20 @@
-/* userspace/bin/deskelf/deskelf.c
+/* userspace/bin/deskelf/deskelf.c - DESKELF: Desktop File Explorer.
  *
- * DESKELF - a small windowed file explorer for the FAT root filesystem.
- * Directory operations use absolute paths kept in local state; the process
- * cwd is left alone so launched programs inherit the caller's cwd normally.
+ * Traverses FAT32/16 directory entries and manages file/folder operations.
+ * Operates visually alongside the SH(ell).ELF prompt, listening for keyboard
+ * events to navigate directory trees, launch executables via spawn(), and
+ * organize the local volume.
+ *
  */
 
-#include "deskelf.h"
+#include <lib/gfx.h>
+#include <lib/keymap.h>
+#include <lib/syscall.h>
+#include <lib/ui.h>
+#include <lib/wm.h>
+#include <include/key_codes.h>
+#include <include/stdio.h>
+#include <include/string.h>
 
 #define WINDOW_W 560
 #define WINDOW_H 380

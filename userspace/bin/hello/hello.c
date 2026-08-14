@@ -4,7 +4,7 @@
  * pull-in beyond syscall.h). Returns 42 so the shell shows a recognisable
  * non-zero exit code, confirming the user→kernel→user round trip.
  */
-#include "../../lib/syscall.h"
+#include <lib/syscall.h>
 
 int main(int argc, char **argv) {
     (void)argc; (void)argv;

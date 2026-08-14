@@ -6,8 +6,8 @@
  * The readdir buffer holds a packed sequence of NUL-terminated names; the
  * inner loop walks past each name with strlen() to find the next.
  */
-#include "../../lib/syscall.h"
-#include "../../include/string.h"
+#include <lib/syscall.h>
+#include <include/string.h>
 
 extern int printf(const char *, ...);
 extern size_t strlen(const char *);

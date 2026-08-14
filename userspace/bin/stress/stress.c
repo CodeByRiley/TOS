@@ -1,9 +1,9 @@
 /* Heavy in-guest regression test for VM, FAT, IPC, Winman and task churn. */
-#include "../../include/fcntl.h"
-#include "../../include/stdio.h"
-#include "../../include/string.h"
-#include "../../lib/syscall.h"
-#include "../../lib/wm.h"
+#include <include/fcntl.h>
+#include <include/stdio.h>
+#include <include/string.h>
+#include <lib/syscall.h>
+#include <lib/wm.h>
 #include <stdint.h>
 
 #define PAGE_SIZE 4096

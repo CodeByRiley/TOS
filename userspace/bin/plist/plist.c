@@ -5,9 +5,9 @@
  * With a pattern, only rows whose name contains it are shown. Data comes
  * from SYS_PROC_LIST, which snapshots the scheduler's task array.
  */
-#include "../../include/stdio.h"
-#include "../../include/string.h"
-#include "../../lib/syscall.h"
+#include <include/stdio.h>
+#include <include/string.h>
+#include <lib/syscall.h>
 
 /* sys_proc_list caps its reply at 64 rows and MAX_TASKS is 16 today, so a
  * fixed buffer covers every possible answer without an allocation that

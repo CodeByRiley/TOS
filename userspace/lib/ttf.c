@@ -5,9 +5,9 @@
  * link TTF support without pulling in a host C runtime or the DOOM-only math
  * object.
  */
-#include "../include/stdio.h"
-#include "../include/stdlib.h"
-#include "../include/string.h"
+#include <include/stdio.h>
+#include <include/stdlib.h>
+#include <include/string.h>
 
 static int ttf_stb_ifloor(double x) {
     int i = (int)x;
@@ -143,10 +143,10 @@ static double ttf_stb_acos(double x) {
 #define STBTT_cos(x)        ttf_stb_cos((double)(x))
 #define STBTT_acos(x)       ttf_stb_acos((double)(x))
 
-#include "ttf.h"
+#include <lib/ttf.h>
 
 #define STB_TRUETYPE_IMPLEMENTATION
-#include "../include/fonts/stb_truetype.h"
+#include <include/fonts/stb_truetype.h>
 
 struct ttf_font *g_sys_font = NULL;
 

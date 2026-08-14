@@ -48,6 +48,9 @@
 #define SYS_FB_INFO     	 100
 #define SYS_FB_MAP      	 101
 #define SYS_FB_DAMAGE   	 108
+#define SYS_FB_PRESENT    109
+#define SYS_FB_REGISTER   110
+#define SYS_FB_UNREGISTER 111
 #define SYS_KBD_POLL    	 102
 #define SYS_GET_TICKS   	 103
 #define SYS_EXEC        	 104
@@ -74,6 +77,23 @@
 #define SYS_KILL           145
 #define SYS_CON_ZOOM       146
 
+#define SYS_AUDIO_OPEN       147
+#define SYS_AUDIO_WRITE      148
+#define SYS_AUDIO_STATUS     149
+#define SYS_AUDIO_DRAIN      150
+#define SYS_AUDIO_CLOSE      151
+#define SYS_AUDIO_SET_VOLUME 152
+#define SYS_AUDIO_PAUSE      153
+#define SYS_AUDIO_RESUME     154
+
+#define AUDIO_FORMAT_S16_LE 1
+#define AUDIO_CHANNELS_STEREO 2
+
+#define AUDIO_ERR_NO_DEVICE (-1)
+#define AUDIO_ERR_BUSY      (-2)
+#define AUDIO_ERR_INVALID   (-3)
+#define AUDIO_ERR_NOT_OWNER (-4)
+
 #define SYS_THREAD_CREATE  200
 #define SYS_THREAD_EXIT    201
 #define SYS_THREAD_JOIN	   202
@@ -92,8 +112,9 @@
  *   - MAP_FIXED FAILS if any page in the range is already mapped, rather
  *     than replacing it. A loader probing its preferred image base gets
  *     "taken, go relocate" instead of a silently clobbered mapping.
- *   - PROT_NONE is rejected. Mappings are eagerly backed by real frames,
- *     so there is no reserved-but-absent state to put a page into.
+ *   - PROT_NONE is rejected. Mappings reserve virtual space but are not
+ *     backed until accessed, but there is no use-case for mapping a region
+ *     as completely inaccessible, so PROT_NONE is still an error.
  *
  * Mappings are always anonymous, private, and zero-filled. There is no
  * file-backed mapping: map the range, then read() into it. */
@@ -166,6 +187,26 @@ struct mem_stats {
 _Static_assert(sizeof(struct mem_stats) == 24,
                "mem_stats must match kernel mem_stats_user size");
 
+/* PCM output status. ring_queued is data waiting in the kernel queue;
+ * device_queued has already reached DMA but has not finished playing. */
+struct audio_status {
+    uint32_t available;
+    uint32_t playing;
+    uint32_t paused;
+    uint32_t sample_rate;
+    uint32_t channels;
+    uint32_t format;
+    uint32_t ring_capacity;
+    uint32_t ring_queued;
+    uint32_t device_queued;
+    uint32_t underruns;
+    uint32_t volume;
+    int32_t  owner_pid;
+};
+
+_Static_assert(sizeof(struct audio_status) == 48,
+               "audio_status must match the kernel ABI");
+
 /* ---------------- Input-event ring (SYS_MSG_GET/PEEK) ------------------- */
 #define MSG_NONE        0
 #define MSG_KEY_DOWN    1
@@ -219,6 +260,15 @@ struct fb_info { uint64_t width, height, pitch, bpp; };
 _Static_assert(sizeof(struct fb_info) == 32,
                "fb_info must match kernel fb_info size");
 
+#define FB_PRESENT_MAX_RECTS 16
+
+struct fb_rect {
+    uint32_t x, y, w, h;
+};
+
+_Static_assert(sizeof(struct fb_rect) == 16,
+               "fb_rect must match kernel fb_rect size");
+
 /* ---------------- Raw syscall trampolines -------------------------------
  *
  * Everything crossing the syscall boundary is sysarg_t, never `long`.
@@ -265,14 +315,15 @@ char *getcwd(char *buf, size_t size);
 long stat_raw(const char *path, struct stat_user *out);
 long fstat_raw(int fd, struct stat_user *out);
 
-/* Anonymous, private, zero-filled, eagerly backed.
+/* Anonymous, private, zero-filled, demand-paged.
  *
  * addr is a request, honoured only with MAP_FIXED — and MAP_FIXED fails
  * rather than replacing an existing mapping. Returns MAP_FAILED on error.
  *
- * mprotect is all-or-nothing: it validates the whole range before
- * touching a PTE, so a failure leaves permissions exactly as they were.
- * Both addr arguments must be page-aligned. */
+ * Physical memory is NOT allocated immediately. The kernel only reserves
+ * the virtual address space. Physical RAM is allocated one page at a time
+ * by the page fault handler when the program actually reads or writes to it.
+ */
 void *mmap(void *addr, size_t len, int prot, int flags);
 int   mprotect(void *addr, size_t len, int prot);
 int   munmap(void *addr, size_t len);
@@ -284,6 +335,10 @@ long mouse_pos(int32_t *x, int32_t *y, uint8_t *buttons);
 long  fb_info(struct fb_info *out);
 void *fb_map(void);
 long  fb_damage(uint32_t x, uint32_t y, uint32_t w, uint32_t h);
+long  fb_present(const void *pixels, uint32_t pitch,
+                 const struct fb_rect *rects, uint32_t rect_count);
+long  fb_register(const void *pixels, uint32_t pitch);
+long  fb_unregister(void);
 long  kbd_poll(int *pressed, uint16_t *key);
 long  get_ticks(void);
 
@@ -303,6 +358,18 @@ long  con_pop(void);
 long  con_zoom(long delta);
 long  sleep_ticks(unsigned long n);
 long  get_pid(void);
+
+/* Audio output. audio_write is non-blocking and can return a short count or
+ * zero when the ring is full. Input must be frame-aligned S16-LE stereo PCM.
+ * audio_drain blocks until queued samples finish; audio_close discards them. */
+long audio_open(uint32_t sample_rate, uint32_t channels, uint32_t format);
+long audio_write(const void *pcm, size_t bytes);
+long audio_status(struct audio_status *out);
+long audio_drain(void);
+long audio_close(void);
+long audio_set_volume(int percent);
+long audio_pause(void);
+long audio_resume(void);
 
 /* IPC and shared memory primitives. The kernel fills in from_pid on the
  * receiver side; senders may leave it zero. */

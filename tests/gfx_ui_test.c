@@ -494,6 +494,24 @@ static void test_ui_widgets(void) {
     ui_end(&ui);
     expect(checked == 0, "checkbox toggled back off");
 
+    int slider = 50;
+    struct gfx_rect sr = gfx_rect_make(4, 20, 56, 16);
+    frame(&ui, &g.s, 52, 28, 1);
+    expect(ui_slider(&ui, sr, 0, 100, &slider) == 1,
+           "slider changes on press");
+    ui_end(&ui);
+    expect(slider > 75, "slider maps the pointer into its range");
+
+    frame(&ui, &g.s, -20, 28, 1);
+    expect(ui_slider(&ui, sr, 0, 100, &slider) == 1,
+           "slider keeps tracking outside its bounds");
+    ui_end(&ui);
+    expect(slider == 0, "slider clamps a drag at its minimum");
+
+    frame(&ui, &g.s, -20, 28, 0);
+    ui_slider(&ui, sr, 0, 100, &slider);
+    ui_end(&ui);
+
     /* Progress clamps rather than overdrawing. */
     frame(&ui, &g.s, 0, 0, 0);
     ui_progress(&ui, gfx_rect_make(0, 20, 60, 10), 250, 0);

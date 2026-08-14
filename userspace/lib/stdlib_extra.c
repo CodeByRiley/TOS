@@ -4,8 +4,8 @@
  * the linear-congruential rand(), and a Shellsort-grade qsort. None of it
  * is fast or robust — just enough to bring DOOM and the shell up.
  */
-#include "syscall.h"
-#include "../include/stdlib.h"
+#include <lib/syscall.h>
+#include <include/stdlib.h>
 
 /* Integer absolute value. */
 int abs(int x)   { return x < 0 ? -x : x; }

@@ -7,8 +7,8 @@
 
 #include <stdint.h>
 #include <stddef.h>
-#include "gfx.h"
-#include "../include/fonts/stb_truetype.h"
+#include <lib/gfx.h>
+#include <include/fonts/stb_truetype.h>
 
 struct ttf_font {
     uint8_t *file_buffer;     /* Raw TTF file data loaded into memory. */

@@ -1,0 +1,16 @@
+dictionaries = ["en_gb"]
+words = [
+    "HHDM",
+    "MMIO",
+    "kmalloc",
+    "nic",
+    "uncacheable",
+]
+include_tags = [
+    "comment",
+    "string",
+]
+exclude_tags = [
+    "identifier.variable",
+    "identifier.parameter",
+]

@@ -14,7 +14,7 @@
  * which is why both appear in every clobber list. "memory" keeps the
  * compiler from caching across a call that can read or write anything.
  */
-#include "syscall.h"
+#include <lib/syscall.h>
 
 sysarg_t syscall0(sysarg_t n) {
     sysarg_t ret;

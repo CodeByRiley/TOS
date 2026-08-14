@@ -4,8 +4,8 @@
  * compares, and a stubbed strerror. None of them are particularly fast;
  * they exist so DOOM and the shell link cleanly.
  */
-#include "syscall.h"
-#include "../include/string.h"
+#include <lib/syscall.h>
+#include <include/string.h>
 
 /* strcpy(3) — caller guarantees dst is big enough. */
 char *strcpy(char *dst, const char *src) { char *d=dst; while ((*d++=*src++)); return dst; }

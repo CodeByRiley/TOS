@@ -8,7 +8,7 @@
 #define UNISTD_H
 
 #include <stddef.h>
-#include "../lib/syscall.h"
+#include <lib/syscall.h>
 
 /* TTY detection — currently always returns 0 (no isatty support). */
 int    isatty(int fd);

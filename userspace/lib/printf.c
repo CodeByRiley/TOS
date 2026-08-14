@@ -11,7 +11,7 @@
  * buffer (snprintf path) or a NULL pointer for "measure only" usage; the
  * total-bytes counter is updated either way so callers can size buffers.
  */
-#include "syscall.h"
+#include <syscall.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stddef.h>

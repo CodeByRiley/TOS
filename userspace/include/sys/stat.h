@@ -12,7 +12,7 @@
 #ifndef SYS_STAT_H
 #define SYS_STAT_H
 
-#include "types.h"
+#include <include/sys/types.h>
 #include <stdint.h>
 
 struct stat {

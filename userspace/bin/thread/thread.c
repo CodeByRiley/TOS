@@ -1,5 +1,5 @@
-#include "../../include/stdio.h"
-#include "../../include/sys/pthread.h"
+#include <include/stdio.h>
+#include <include/sys/pthread.h>
 
 volatile int t1_counter = 0;
 volatile int t2_counter = 0;

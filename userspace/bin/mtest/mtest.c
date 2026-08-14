@@ -5,9 +5,9 @@
  * Exercises window create/poll/invalidate, multi-button mouse state, and
  * the WM_EV_RESIZE surface-rebind path (grip-drag → fresh shared buffer).
  */
-#include "../../lib/syscall.h"
-#include "../../lib/wm.h"
-#include "../../include/key_codes.h"
+#include <lib/syscall.h>
+#include <lib/wm.h>
+#include <include/key_codes.h>
 
 extern int printf(const char *, ...);
 

@@ -31,7 +31,7 @@
 #ifndef UI_H
 #define UI_H
 
-#include "gfx.h"
+#include <lib/gfx.h>
 
 /* Theme */
 
@@ -138,6 +138,14 @@ int  ui_checkbox_id(struct ui_context *c, int id, struct gfx_rect r,
  * non-NULL it is centred over the bar. */
 void ui_progress(struct ui_context *c, struct gfx_rect r, int percent,
                  const char *label);
+
+/* Draggable integer slider. The value is clamped to min..max and updated
+ * while the primary button is held, including when a drag leaves the track.
+ * Returns 1 when the value changed during this frame. */
+int ui_slider(struct ui_context *c, struct gfx_rect r,
+              int min, int max, int *value);
+int ui_slider_id(struct ui_context *c, int id, struct gfx_rect r,
+                 int min, int max, int *value);
 
 /* Horizontal rule centred in `r`. */
 void ui_separator(struct ui_context *c, struct gfx_rect r);

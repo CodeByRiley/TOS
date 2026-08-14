@@ -4,9 +4,9 @@
  * is responsible for the actual reset (triple-fault / ACPI / 8042). The
  * syscall doesn't return on success.
  */
-#include "../../lib/syscall.h"
-#include "../../include/stdlib.h"
-#include "../../include/string.h"
+#include <lib/syscall.h>
+#include <include/stdlib.h>
+#include <include/string.h>
 
 extern int printf(const char *, ...);
 

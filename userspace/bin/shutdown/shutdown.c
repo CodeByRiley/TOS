@@ -3,9 +3,9 @@
  * Thin wrapper over SYS_SHUTDOWN. Accepts a delay and a free-form reason
  * string the kernel logs before powering off. Doesn't return on success.
  */
-#include "../../lib/syscall.h"
-#include "../../include/stdlib.h"
-#include "../../include/string.h"
+#include <lib/syscall.h>
+#include <include/stdlib.h>
+#include <include/string.h>
 
 extern int printf(const char *, ...);
 
