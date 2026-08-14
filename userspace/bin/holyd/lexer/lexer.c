@@ -3,6 +3,9 @@
 
 // --- Freestanding helpers (no libc needed) ---
 static int is_digit(char c) { return c >= '0' && c <= '9'; }
+static int is_hex_digit(char c) {
+    return is_digit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+}
 static int is_alpha(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'; }
 static int is_alnum(char c) { return is_alpha(c) || is_digit(c); }
 static int is_space(char c) { return c == ' ' || c == '\t' || c == '\r'; }
@@ -63,6 +66,17 @@ static void skip_whitespace(Lexer* lexer) {
             while (peek(lexer) != '\n' && peek(lexer) != '\0') {
                 advance(lexer);
             }
+        } else if (c == '/' && peek_next(lexer) == '*') {
+            advance(lexer);
+            advance(lexer);
+            while (!(peek(lexer) == '*' && peek_next(lexer) == '/') && peek(lexer) != '\0') {
+                if (peek(lexer) == '\n') lexer->line++;
+                advance(lexer);
+            }
+            if (peek(lexer) == '*') {
+                advance(lexer);
+                advance(lexer);
+            }
         } else {
             break;
         }
@@ -86,6 +100,14 @@ static Token string(Lexer* lexer) {
 }
 
 static Token number(Lexer* lexer) {
+    if (lexer->start[0] == '0' && (peek(lexer) == 'x' || peek(lexer) == 'X')) {
+        advance(lexer);
+        while (is_hex_digit(peek(lexer))) {
+            advance(lexer);
+        }
+        return make_token(lexer, TOKEN_NUMBER);
+    }
+
     while (is_digit(peek(lexer))) {
         advance(lexer);
     }
@@ -101,17 +123,35 @@ static Token identifier(Lexer* lexer) {
     int length = (int)(lexer->current - lexer->start);
 
     // Check for keywords
-    if (length == 2 && string_match(lexer->start, "\n", 1)) return make_token(lexer, TOKEN_NEWLINE);
     if (length == 2 && string_match(lexer->start, "U0", 2)) return make_token(lexer, TOKEN_U0);
+    if (length == 2 && string_match(lexer->start, "I8", 2)) return make_token(lexer, TOKEN_I8);
+    if (length == 2 && string_match(lexer->start, "U8", 2)) return make_token(lexer, TOKEN_U8);
+    if (length == 3 && string_match(lexer->start, "I16", 3)) return make_token(lexer, TOKEN_I16);
+    if (length == 3 && string_match(lexer->start, "U16", 3)) return make_token(lexer, TOKEN_U16);
+    if (length == 3 && string_match(lexer->start, "I32", 3)) return make_token(lexer, TOKEN_I32);
     if (length == 3 && string_match(lexer->start, "I64", 3)) return make_token(lexer, TOKEN_I64);
     if (length == 3 && string_match(lexer->start, "U32", 3)) return make_token(lexer, TOKEN_U32);
+    if (length == 3 && string_match(lexer->start, "U64", 3)) return make_token(lexer, TOKEN_U64);
     if (length == 3 && string_match(lexer->start, "F64", 3)) return make_token(lexer, TOKEN_F64);
+    if (length == 4 && string_match(lexer->start, "void", 4)) return make_token(lexer, TOKEN_VOID);
+    if (length == 3 && string_match(lexer->start, "int", 3)) return make_token(lexer, TOKEN_INT);
+    if (length == 4 && string_match(lexer->start, "uint", 4)) return make_token(lexer, TOKEN_UINT);
+    if (length == 4 && string_match(lexer->start, "long", 4)) return make_token(lexer, TOKEN_LONG);
+    if (length == 5 && string_match(lexer->start, "ulong", 5)) return make_token(lexer, TOKEN_ULONG);
+    if (length == 6 && string_match(lexer->start, "double", 6)) return make_token(lexer, TOKEN_DOUBLE);
+    if (length == 4 && string_match(lexer->start, "bool", 4)) return make_token(lexer, TOKEN_BOOL);
+    if (length == 6 && string_match(lexer->start, "string", 6)) return make_token(lexer, TOKEN_STRING_TYPE);
     if (length == 4 && string_match(lexer->start, "auto", 4)) return make_token(lexer, TOKEN_AUTO);
     if (length == 7 && string_match(lexer->start, "foreach", 7)) return make_token(lexer, TOKEN_FOREACH);
+    if (length == 3 && string_match(lexer->start, "for", 3)) return make_token(lexer, TOKEN_FOR);
     if (length == 2 && string_match(lexer->start, "if", 2)) return make_token(lexer, TOKEN_IF);
     if (length == 4 && string_match(lexer->start, "else", 4)) return make_token(lexer, TOKEN_ELSE);
     if (length == 5 && string_match(lexer->start, "while", 5)) return make_token(lexer, TOKEN_WHILE);
     if (length == 6 && string_match(lexer->start, "return", 6)) return make_token(lexer, TOKEN_RETURN);
+    if (length == 4 && string_match(lexer->start, "true", 4)) return make_token(lexer, TOKEN_TRUE);
+    if (length == 5 && string_match(lexer->start, "false", 5)) return make_token(lexer, TOKEN_FALSE);
+    if (length == 6 && string_match(lexer->start, "module", 6)) return make_token(lexer, TOKEN_MODULE);
+    if (length == 6 && string_match(lexer->start, "import", 6)) return make_token(lexer, TOKEN_IMPORT);
 
     return make_token(lexer, TOKEN_IDENTIFIER);
 }
@@ -149,8 +189,9 @@ Token LexerNextToken(Lexer* lexer) {
         case ';': return make_token(lexer, TOKEN_SEMICOLON);
         case ':': return make_token(lexer, TOKEN_COLON);
         case ',': return make_token(lexer, TOKEN_COMMA);
-        case '+': return make_token(lexer, TOKEN_PLUS);
-        case '-': return make_token(lexer, TOKEN_MINUS);
+        case '.': return make_token(lexer, TOKEN_DOT);
+        case '+': return make_token(lexer, match(lexer, '+') ? TOKEN_PLUSPLUS : TOKEN_PLUS);
+        case '-': return make_token(lexer, match(lexer, '-') ? TOKEN_MINUSMINUS : TOKEN_MINUS);
         case '*': return make_token(lexer, TOKEN_STAR);
         case '/': return make_token(lexer, TOKEN_SLASH);
         case '~': return make_token(lexer, TOKEN_TILDE);
@@ -172,16 +213,37 @@ const char* TokenTypeToString(TokenType type) {
         case TOKEN_STRING: return "STRING";
         case TOKEN_IDENTIFIER: return "IDENTIFIER";
         case TOKEN_U0: return "U0";
+        case TOKEN_I8: return "I8";
+        case TOKEN_U8: return "U8";
+        case TOKEN_I16: return "I16";
+        case TOKEN_U16: return "U16";
+        case TOKEN_I32: return "I32";
         case TOKEN_I64: return "I64";
         case TOKEN_U32: return "U32";
+        case TOKEN_U64: return "U64";
         case TOKEN_F64: return "F64";
+        case TOKEN_VOID: return "VOID";
+        case TOKEN_INT: return "INT";
+        case TOKEN_UINT: return "UINT";
+        case TOKEN_LONG: return "LONG";
+        case TOKEN_ULONG: return "ULONG";
+        case TOKEN_DOUBLE: return "DOUBLE";
+        case TOKEN_BOOL: return "BOOL";
+        case TOKEN_STRING_TYPE: return "STRING_TYPE";
         case TOKEN_AUTO: return "AUTO";
         case TOKEN_FOREACH: return "FOREACH";
+        case TOKEN_FOR: return "FOR";
         case TOKEN_IF: return "IF";
         case TOKEN_ELSE: return "ELSE";
         case TOKEN_WHILE: return "WHILE";
         case TOKEN_RETURN: return "RETURN";
+        case TOKEN_TRUE: return "TRUE";
+        case TOKEN_FALSE: return "FALSE";
+        case TOKEN_MODULE: return "MODULE";
+        case TOKEN_IMPORT: return "IMPORT";
         case TOKEN_ASSIGN: return "ASSIGN";
+        case TOKEN_PLUSPLUS: return "PLUSPLUS";
+        case TOKEN_MINUSMINUS: return "MINUSMINUS";
         case TOKEN_PLUS: return "PLUS";
         case TOKEN_MINUS: return "MINUS";
         case TOKEN_STAR: return "STAR";
@@ -198,6 +260,7 @@ const char* TokenTypeToString(TokenType type) {
         case TOKEN_SEMICOLON: return "SEMICOLON";
         case TOKEN_COLON: return "COLON";
         case TOKEN_COMMA: return "COMMA";
+        case TOKEN_DOT: return "DOT";
         case TOKEN_LPAREN: return "LPAREN";
         case TOKEN_RPAREN: return "RPAREN";
         case TOKEN_LBRACE: return "LBRACE";

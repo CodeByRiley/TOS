@@ -32,9 +32,12 @@ typedef struct EnvEntry {
 
 typedef struct Environment {
     EnvEntry* head;
+    struct Environment* parent;
 } Environment;
 
 void EnvInit(Environment* env);
+void EnvInitChild(Environment* env, Environment* parent);
+void EnvDefine(Environment* env, const char* name, size_t name_len, HDValue value);
 void EnvSet(Environment* env, const char* name, size_t name_len, HDValue value);
 HDValue* EnvGet(Environment* env, const char* name, size_t name_len);
 

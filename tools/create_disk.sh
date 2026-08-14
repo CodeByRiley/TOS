@@ -23,6 +23,7 @@ payloads=(
 	"rootfs/holyd/math.hd::holyd/math.hd"
 	"rootfs/holyd/functions.hd::holyd/functions.hd"
 	"rootfs/holyd/no_semis.hd::holyd/no_semis.hd"
+	"rootfs/holyd/holyc_d_style.hd::holyd/holyc_d_style.hd"
 	"rootfs/music/beethoven.wav::music/beethoven.wav"
 	"rootfs/system/fonts/SansDisplayStatic.ttf::system/fonts/sansdisplaystatic.ttf"
 	"rootfs/system/fonts/SansDisplayVariable.ttf::system/fonts/sansdisplayvariable.ttf"
@@ -61,6 +62,8 @@ payloads=(
 # Firmware and DOOM are optional: QEMU and non-NVIDIA systems continue to
 # build the same root filesystem without them.
 optional_payloads=(
+	"userspace/libc/build-musl-tos/muslhello.elf::usr/bin/muslhello.elf"
+	"userspace/libc/build-musl-tos/muslposix.elf::usr/bin/muslposix.elf"
 	"rootfs/games/doom/doom.wad::games/doom/doom.wad"
 	"userspace/bin/doom/doom.elf::usr/bin/doom.elf"
 	"rootfs/firmware/gsp_ga10x.bin::firmware/gsp_ga10x.bin"

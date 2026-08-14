@@ -12,8 +12,79 @@ static int cursor_h(void) {
 }
 
 /* Double-click tracking */
-static int last_clicked_icon = -1;
-static u32 last_click_tick = 0;
+static int last_icon_clicked = -1;
+static u32 last_icon_click_tick = 0;
+static int last_title_clicked = -1;
+static u32 last_title_click_tick = 0;
+static int last_title_click_x = 0;
+static int last_title_click_y = 0;
+
+#define DOUBLE_CLICK_TICKS 370u
+#define DOUBLE_CLICK_SLOP 4
+#define CLIENT_DIM_HARD_LIMIT 2048
+
+static int max_client_w = MIN_CLIENT_W;
+static int max_client_h = MIN_CLIENT_H;
+
+/* Recompute the largest client area that can fit above the taskbar. Keep the
+ * allocator's existing hard limit as a second ceiling, and retain the minimum
+ * valid chrome dimensions for unusually small framebuffer modes. */
+static void update_client_size_limits(void) {
+  int new_max_w = fb_w - 2 * BORDER_PX;
+  int new_max_h = fb_h - TASKBAR_PX - TITLEBAR_PX - BORDER_PX;
+
+  if (new_max_w > CLIENT_DIM_HARD_LIMIT)
+    new_max_w = CLIENT_DIM_HARD_LIMIT;
+  if (new_max_h > CLIENT_DIM_HARD_LIMIT)
+    new_max_h = CLIENT_DIM_HARD_LIMIT;
+  if (new_max_w < MIN_CLIENT_W)
+    new_max_w = MIN_CLIENT_W;
+  if (new_max_h < MIN_CLIENT_H)
+    new_max_h = MIN_CLIENT_H;
+
+  max_client_w = new_max_w;
+  max_client_h = new_max_h;
+}
+
+static void clamp_client_size(int *client_w, int *client_h) {
+  if (*client_w < MIN_CLIENT_W)
+    *client_w = MIN_CLIENT_W;
+  if (*client_h < MIN_CLIENT_H)
+    *client_h = MIN_CLIENT_H;
+  if (*client_w > max_client_w)
+    *client_w = max_client_w;
+  if (*client_h > max_client_h)
+    *client_h = max_client_h;
+}
+
+static void reset_titlebar_click(void) {
+  last_title_clicked = -1;
+  last_title_click_tick = 0;
+}
+
+/* Consume a second click on the same titlebar when it is close enough in both
+ * time and position. Reset after a match so a triple-click only toggles once. */
+static int titlebar_click_is_double(int handle, int x, int y, u32 now) {
+  int dx = x - last_title_click_x;
+  int dy = y - last_title_click_y;
+  if (dx < 0)
+    dx = -dx;
+  if (dy < 0)
+    dy = -dy;
+
+  if (handle == last_title_clicked &&
+      now - last_title_click_tick < DOUBLE_CLICK_TICKS &&
+      dx <= DOUBLE_CLICK_SLOP && dy <= DOUBLE_CLICK_SLOP) {
+    reset_titlebar_click();
+    return 1;
+  }
+
+  last_title_clicked = handle;
+  last_title_click_tick = now;
+  last_title_click_x = x;
+  last_title_click_y = y;
+  return 0;
+}
 
 /* Try the on-disk cursor once at startup. Failure is not an error worth
  * stopping for — it just leaves the built-in mask in place. */
@@ -25,8 +96,9 @@ static void cursor_load(void) {
       printf("winman: cursor %dx%d from %s\n", cursor_img.width,
              cursor_img.height, CURSOR_BMP_PATH);
     } else {
-      printf("winman: %s has invalid cursor dimensions, using built-in cursor\n",
-             CURSOR_BMP_PATH);
+      printf(
+          "winman: %s has invalid cursor dimensions, using built-in cursor\n",
+          CURSOR_BMP_PATH);
       bmp_free(&cursor_img);
     }
   } else {
@@ -134,6 +206,8 @@ static int outer_h(const struct window *w) {
  * conditional writes — the dominant cost when winman drains the TTY ring. */
 static uint32_t con_glyph_lut[256][FONT_GLYPH_W];
 
+static char trunc_titles[MAX_WINDOWS][TASKBAR_BTN_W + 1];
+
 static void build_con_glyph_lut(void) {
   for (int b = 0; b < 256; b++) {
     for (int c = 0; c < FONT_GLYPH_W; c++) {
@@ -146,7 +220,16 @@ static void build_con_glyph_lut(void) {
  * the destination is 8-aligned, falls back to single stores at the tail.
  * Used for big solid rectangles and console scroll fills. */
 static void fill_dwords(uint32_t *dst, size_t n, uint32_t color) {
-  if (((uintptr_t)dst & 7) == 0 && n >= 2) {
+  if (n == 0)
+    return;
+
+  /* Force 8-byte alignment if currently only 4-byte aligned */
+  if ((uintptr_t)dst & 4) {
+    *dst++ = color;
+    n--;
+  }
+
+  if (n >= 2) {
     uint64_t v = ((uint64_t)color << 32) | color;
     uint64_t *p = (uint64_t *)dst;
     size_t pairs = n >> 1;
@@ -155,8 +238,10 @@ static void fill_dwords(uint32_t *dst, size_t n, uint32_t color) {
     dst += pairs * 2;
     n &= 1;
   }
-  while (n--)
-    *dst++ = color;
+
+  if (n) {
+    *dst = color;
+  }
 }
 
 /* Union the new rect into the existing dirty bounding box. */
@@ -280,12 +365,12 @@ static void con_try_load_ttf(void) {
 
 static int win_get_rect(int handle, int *x, int *y, int *cw, int *ch) {
   if (handle == HANDLE_CONSOLE) {
-    if (!con.enabled)
+    if (!con.win.in_use)
       return 0;
-    *x = con.x;
-    *y = con.y;
-    *cw = con.client_w;
-    *ch = con.client_h;
+    *x = con.win.x;
+    *y = con.win.y;
+    *cw = con.win.client_w;
+    *ch = con.win.client_h;
     return 1;
   }
   for (int i = 0; i < MAX_WINDOWS; i++) {
@@ -302,8 +387,8 @@ static int win_get_rect(int handle, int *x, int *y, int *cw, int *ch) {
 
 static void win_set_pos(int handle, int x, int y) {
   if (handle == HANDLE_CONSOLE) {
-    con.x = x;
-    con.y = y;
+    con.win.x = x;
+    con.win.y = y;
     return;
   }
   for (int i = 0; i < MAX_WINDOWS; i++) {
@@ -339,37 +424,29 @@ struct tb_entry {
 
 static int build_taskbar_entries(struct tb_entry *out, int max) {
   int n = 0;
-  if (con.enabled && n < max) {
+  if (con.win.in_use && n < max) {
     out[n].handle = HANDLE_CONSOLE;
-    out[n].title = con.title;
+    out[n].title = con.win.title;
     n++;
   }
+
+  /* Calculate how many characters actually fit in the button width */
+  int max_chars = (TASKBAR_BTN_W - 8) / FONT_GLYPH_W;
+
   for (int i = 0; i < MAX_WINDOWS && n < max; i++) {
     if (!windows[i].in_use)
       continue;
     out[n].handle = windows[i].handle;
     size_t title_len = strlen(windows[i].title);
 
-    if (title_len <= TASKBAR_BTN_W) {
+    if ((int)title_len <= max_chars) {
       out[n].title = windows[i].title;
     } else {
-      // Allocate enough bytes for the first (TASKBAR_BTN_W - 3) characters,
-      // plus 3 bytes for "...", plus 1 byte for the null terminator.
-      char *trunc = malloc(TASKBAR_BTN_W + 1);
-      if (trunc) {
-        // Copy the characters that fit
-        strncpy(trunc, windows[i].title, TASKBAR_BTN_W - 3);
-
-        trunc[TASKBAR_BTN_W - 3] = '\0';
-
-        // Append the ellipsis
-        strcat(trunc, "...");
-
-        out[n].title = trunc;
-      } else {
-        // Fallback if malloc fails: just show the original (or handle error)
-        out[n].title = windows[i].title;
-      }
+      char *trunc = trunc_titles[i];
+      strncpy(trunc, windows[i].title, max_chars - 3);
+      trunc[max_chars - 3] = '\0';
+      strcat(trunc, "...");
+      out[n].title = trunc;
     }
     n++;
   }
@@ -438,7 +515,7 @@ static int hit_test_at(int mx, int my, int *out_handle) {
     int tb_handle = 0;
     if (hit_taskbar(mx, my, &tb_handle)) {
       *out_handle = tb_handle;
-      return HIT_TASKBAR_BTN; // Make sure this is defined in winman.h!
+      return HIT_TASKBAR_BTN;
     }
     return HIT_NONE; // Clicked on empty taskbar area
   }
@@ -492,7 +569,7 @@ static void clamp_to_desktop(int *x, int *y, int cw, int ch) {
  * the still-visible region of the old surface into the new one so existing
  * glyphs survive. Cursor is clamped to the new grid. */
 static void console_resize(int new_cw, int new_ch) {
-  if (!con.enabled)
+  if (!con.win.in_use)
     return;
   /* Snap to glyph grid so cells line up without trailing fractional row. */
   int cell_w = con_cell_w();
@@ -503,7 +580,7 @@ static void console_resize(int new_cw, int new_ch) {
     new_cw = MIN_CLIENT_W;
   if (new_ch < MIN_CLIENT_H)
     new_ch = MIN_CLIENT_H;
-  if (new_cw == con.client_w && new_ch == con.client_h)
+  if (new_cw == con.win.client_w && new_ch == con.win.client_h)
     return;
 
   size_t pixel_bytes = (size_t)new_cw * (size_t)new_ch * 4;
@@ -549,8 +626,8 @@ static void console_resize(int new_cw, int new_ch) {
     }
   }
 
-  if (con.raw)
-    free(con.raw);
+  if (con.win.surface_raw)
+    free(con.win.surface_raw);
   if (con_backing_raw)
     free(con_backing_raw);
   if (con.cells)
@@ -558,14 +635,14 @@ static void console_resize(int new_cw, int new_ch) {
   if (con_saved_cells)
     free(con_saved_cells);
 
-  con.surface = new_surf;
-  con.raw = new_raw;
+  con.win.surface = new_surf;
+  con.win.surface_raw = new_raw;
   con.cells = new_cells;
   con_backing = new_back;
   con_backing_raw = new_back_raw;
   con_saved_cells = new_saved;
-  con.client_w = new_cw;
-  con.client_h = new_ch;
+  con.win.client_w = new_cw;
+  con.win.client_h = new_ch;
   con.cols = new_cols;
   con.rows = new_rows;
   if (con.cx >= con.cols)
@@ -587,6 +664,13 @@ static void console_resize(int new_cw, int new_ch) {
  * that may have been recycled. Clients are expected to stop drawing on
  * receipt of the notify; well-behaved ones won't race. */
 static void client_window_resize(int handle, int new_cw, int new_ch) {
+  clamp_client_size(&new_cw, &new_ch);
+
+  if (handle == HANDLE_CONSOLE) {
+    console_resize(new_cw, new_ch);
+    return;
+  }
+
   struct window *w = 0;
   for (int i = 0; i < MAX_WINDOWS; i++) {
     if (windows[i].in_use && windows[i].handle == handle) {
@@ -594,12 +678,11 @@ static void client_window_resize(int handle, int new_cw, int new_ch) {
       break;
     }
   }
-  if (!w)
+  if (!w) {
+    printf("winman: client_window_resize: no window found for handle=%d\n",
+           handle);
     return;
-  if (new_cw < MIN_CLIENT_W)
-    new_cw = MIN_CLIENT_W;
-  if (new_ch < MIN_CLIENT_H)
-    new_ch = MIN_CLIENT_H;
+  }
   if (new_cw == w->client_w && new_ch == w->client_h)
     return;
 
@@ -610,7 +693,6 @@ static void client_window_resize(int handle, int new_cw, int new_ch) {
   uint32_t *surface = (uint32_t *)aligned_page_alloc(pages, &raw);
   if (!surface)
     return;
-  memset(surface, 0, pages * 4096);
 
   /* Preserve the upper-left intersection of the old surface — same idea
    * as console_resize. The client can't paint until it receives the
@@ -729,17 +811,24 @@ static inline uint32_t *fb_pix(int x, int y) {
 }
 
 /* Compose clip: the region present_dirty() is about to copy out to the
- * hardware framebuffer. Everything compose() draws outside it is thrown
- * away, so culling against it is pure win. Regions outside keep their
- * previously-composed pixels, which stay correct because any change to
- * them goes through mark_dirty() and so widens the box. */
+ * hardware framebuffer. Every compositor primitive must honour this clip:
+ * the backbuffer persists between frames, so an out-of-clip write is not
+ * harmless. Cursor and drag repairs may expose it during a later present. */
 static int clip_x, clip_y, clip_w, clip_h;
 
 static void clip_set(int x, int y, int w, int h) {
-  if (x < 0) { w += x; x = 0; }
-  if (y < 0) { h += y; y = 0; }
-  if (x + w > fb_w) w = fb_w - x;
-  if (y + h > fb_h) h = fb_h - y;
+  if (x < 0) {
+    w += x;
+    x = 0;
+  }
+  if (y < 0) {
+    h += y;
+    y = 0;
+  }
+  if (x + w > fb_w)
+    w = fb_w - x;
+  if (y + h > fb_h)
+    h = fb_h - y;
   clip_x = x;
   clip_y = y;
   clip_w = w < 0 ? 0 : w;
@@ -750,8 +839,13 @@ static void clip_set(int x, int y, int w, int h) {
 static int clip_hits(int x, int y, int w, int h) {
   if (w <= 0 || h <= 0 || clip_w <= 0 || clip_h <= 0)
     return 0;
-  return x < clip_x + clip_w && x + w > clip_x &&
-         y < clip_y + clip_h && y + h > clip_y;
+  return x < clip_x + clip_w && x + w > clip_x && y < clip_y + clip_h &&
+         y + h > clip_y;
+}
+
+static int clip_contains_point(int x, int y) {
+  return clip_w > 0 && clip_h > 0 && x >= clip_x && y >= clip_y &&
+         x < clip_x + clip_w && y < clip_y + clip_h;
 }
 
 static void fb_fill_rect(int x, int y, int w, int h, uint32_t color) {
@@ -767,6 +861,18 @@ static void fb_fill_rect(int x, int y, int w, int h, uint32_t color) {
     w = fb_w - x;
   if (y + h > fb_h)
     h = fb_h - y;
+  if (x < clip_x) {
+    w -= clip_x - x;
+    x = clip_x;
+  }
+  if (y < clip_y) {
+    h -= clip_y - y;
+    y = clip_y;
+  }
+  if (x + w > clip_x + clip_w)
+    w = clip_x + clip_w - x;
+  if (y + h > clip_y + clip_h)
+    h = clip_y + clip_h - y;
   if (w <= 0 || h <= 0)
     return;
   uint32_t *row = fb_pix(x, y);
@@ -779,17 +885,30 @@ static void fb_fill_rect(int x, int y, int w, int h, uint32_t color) {
 static void draw_glyph_fb(int x, int y, char c, uint32_t fg, uint32_t bg) {
   if (c < FONT_FIRST || c > FONT_LAST)
     c = ' ';
-  /* Single-shot rect clip instead of per-pixel bounds checks. Glyphs that
-   * land fully off-screen short-circuit; glyphs that partly hang off the
-   * edges trim once and then the inner loops run clean. */
-  if (x + FONT_GLYPH_W <= 0 || x >= fb_w)
+  /* Single-shot intersection with the screen and active compose clip keeps
+   * the inner glyph loop free of per-pixel bounds checks. */
+  int x0 = x > clip_x ? x : clip_x;
+  int y0 = y > clip_y ? y : clip_y;
+  if (x0 < 0)
+    x0 = 0;
+  if (y0 < 0)
+    y0 = 0;
+  int x1 = x + FONT_GLYPH_W;
+  int y1 = y + FONT_GLYPH_H;
+  if (x1 > fb_w)
+    x1 = fb_w;
+  if (y1 > fb_h)
+    y1 = fb_h;
+  if (x1 > clip_x + clip_w)
+    x1 = clip_x + clip_w;
+  if (y1 > clip_y + clip_h)
+    y1 = clip_y + clip_h;
+  if (x0 >= x1 || y0 >= y1)
     return;
-  if (y + FONT_GLYPH_H <= 0 || y >= fb_h)
-    return;
-  int col_first = x < 0 ? -x : 0;
-  int col_last = x + FONT_GLYPH_W > fb_w ? fb_w - x : FONT_GLYPH_W;
-  int row_first = y < 0 ? -y : 0;
-  int row_last = y + FONT_GLYPH_H > fb_h ? fb_h - y : FONT_GLYPH_H;
+  int col_first = x0 - x;
+  int col_last = x1 - x;
+  int row_first = y0 - y;
+  int row_last = y1 - y;
   const uint8_t *glyph = font8x8[(int)c - FONT_FIRST];
   for (int r = row_first; r < row_last; r++) {
     uint8_t bits = glyph[r];
@@ -837,7 +956,8 @@ static void draw_button_mask(int x, int y,
         continue;
       int px = x + c;
       int py = y + r;
-      if (px < 0 || px >= fb_w || py < 0 || py >= fb_h)
+      if (px < 0 || px >= fb_w || py < 0 || py >= fb_h ||
+          !clip_contains_point(px, py))
         continue;
       *fb_pix(px, py) = fg;
     }
@@ -857,7 +977,8 @@ draw_button_mask_large(int x, int y,
         continue;
       int px = x + c;
       int py = y + r;
-      if (px < 0 || px >= fb_w || py < 0 || py >= fb_h)
+      if (px < 0 || px >= fb_w || py < 0 || py >= fb_h ||
+          !clip_contains_point(px, py))
         continue;
       *fb_pix(px, py) = fg;
     }
@@ -1004,15 +1125,15 @@ static void con_draw_glyph(int gx, int gy, char c) {
   int cell_h = con_cell_h();
   int px = gx * cell_w;
   int py = gy * cell_h;
-  if (px + cell_w > con.client_w)
+  if (px + cell_w > con.win.client_w)
     return;
-  if (py + cell_h > con.client_h)
+  if (py + cell_h > con.win.client_h)
     return;
 
   if (con_ttf_ready) {
     for (int y = 0; y < cell_h; y++) {
-      uint32_t *line =
-          con.surface + (size_t)(py + y) * (size_t)con.client_w + (size_t)px;
+      uint32_t *line = con.win.surface +
+                       (size_t)(py + y) * (size_t)con.win.client_w + (size_t)px;
       fill_dwords(line, (size_t)cell_w, CONSOLE_BG);
     }
 
@@ -1020,7 +1141,8 @@ static void con_draw_glyph(int gx, int gy, char c) {
       return;
 
     struct gfx_surface s;
-    gfx_surface_init(&s, con.surface, con.client_w, con.client_h, con.client_w);
+    gfx_surface_init(&s, con.win.surface, con.win.client_w, con.win.client_h,
+                     con.win.client_w);
     struct gfx_rect prev =
         gfx_clip_push(&s, gfx_rect_make(px, py, cell_w, cell_h));
 
@@ -1045,10 +1167,10 @@ static void con_draw_glyph(int gx, int gy, char c) {
 
   if (con.scale == 1) {
     uint32_t *line =
-        con.surface + (size_t)py * (size_t)con.client_w + (size_t)px;
+        con.win.surface + (size_t)py * (size_t)con.win.client_w + (size_t)px;
     for (int r = 0; r < FONT_GLYPH_H; r++) {
       memcpy(line, con_glyph_lut[glyph[r]], FONT_GLYPH_W * sizeof(uint32_t));
-      line += con.client_w;
+      line += con.win.client_w;
     }
     return;
   }
@@ -1057,7 +1179,7 @@ static void con_draw_glyph(int gx, int gy, char c) {
     for (int sy = 0; sy < con.scale; sy++) {
       int y = py + r * con.scale + sy;
       uint32_t *line =
-          con.surface + (size_t)y * (size_t)con.client_w + (size_t)px;
+          con.win.surface + (size_t)y * (size_t)con.win.client_w + (size_t)px;
       for (int col = 0; col < FONT_GLYPH_W; col++) {
         uint32_t color = ((glyph[r] >> col) & 1) ? CONSOLE_FG : CONSOLE_BG;
         for (int sx = 0; sx < con.scale; sx++)
@@ -1068,10 +1190,10 @@ static void con_draw_glyph(int gx, int gy, char c) {
 }
 
 static void con_redraw(void) {
-  if (!con.enabled || !con.surface || !con.cells)
+  if (!con.win.in_use || !con.win.surface || !con.cells)
     return;
-  fill_dwords(con.surface, (size_t)con.client_w * (size_t)con.client_h,
-              CONSOLE_BG);
+  fill_dwords(con.win.surface,
+              (size_t)con.win.client_w * (size_t)con.win.client_h, CONSOLE_BG);
   for (int y = 0; y < con.rows; y++) {
     for (int x = 0; x < con.cols; x++) {
       char c = con.cells[y * con.cols + x];
@@ -1079,12 +1201,12 @@ static void con_redraw(void) {
         con_draw_glyph(x, y, c);
     }
   }
-  mark_dirty(con.x, con.y, outer_w_dims(con.client_w),
-             outer_h_dims(con.client_h));
+  mark_dirty(con.win.x, con.win.y, outer_w_dims(con.win.client_w),
+             outer_h_dims(con.win.client_h));
 }
 
 static int con_set_scale(int new_scale) {
-  if (!con.enabled)
+  if (!con.win.in_use)
     return -1;
   if (new_scale < CON_SCALE_MIN)
     new_scale = CON_SCALE_MIN;
@@ -1093,8 +1215,8 @@ static int con_set_scale(int new_scale) {
   if (new_scale == con.scale)
     return con.scale;
 
-  int new_cols = con.client_w / con_cell_w_for_scale(new_scale);
-  int new_rows = con.client_h / con_cell_h_for_scale(new_scale);
+  int new_cols = con.win.client_w / con_cell_w_for_scale(new_scale);
+  int new_rows = con.win.client_h / con_cell_h_for_scale(new_scale);
   if (new_cols <= 0 || new_rows <= 0)
     return -1;
 
@@ -1162,22 +1284,22 @@ static void con_newline(void) {
 /* Wipe the live console surface back to CONSOLE_BG and home the cursor.
  * Used by both TTY_CTRL_CLEAR and the entry path of TTY_CTRL_PUSH. */
 static void con_wipe(void) {
-  if (!con.enabled || !con.surface)
+  if (!con.win.in_use || !con.win.surface)
     return;
-  fill_dwords(con.surface, (size_t)con.client_w * (size_t)con.client_h,
-              CONSOLE_BG);
+  fill_dwords(con.win.surface,
+              (size_t)con.win.client_w * (size_t)con.win.client_h, CONSOLE_BG);
   if (con.cells)
     memset(con.cells, 0, (size_t)con.cols * (size_t)con.rows);
   con.cx = con.cy = 0;
-  mark_dirty(con.x, con.y, outer_w_dims(con.client_w),
-             outer_h_dims(con.client_h));
+  mark_dirty(con.win.x, con.win.y, outer_w_dims(con.win.client_w),
+             outer_h_dims(con.win.client_h));
 }
 
 static void con_save(void) {
-  if (!con.enabled || !con.surface || !con_backing)
+  if (!con.win.in_use || !con.win.surface || !con_backing)
     return;
-  size_t pixels = (size_t)con.client_w * (size_t)con.client_h;
-  memcpy(con_backing, con.surface, pixels * 4);
+  size_t pixels = (size_t)con.win.client_w * (size_t)con.win.client_h;
+  memcpy(con_backing, con.win.surface, pixels * 4);
   if (con.cells && con_saved_cells)
     memcpy(con_saved_cells, con.cells, (size_t)con.cols * (size_t)con.rows);
   con_saved_cx = con.cx;
@@ -1186,21 +1308,21 @@ static void con_save(void) {
 }
 
 static void con_restore(void) {
-  if (!con.enabled || !con.surface || !con_backing || !con_saved_valid)
+  if (!con.win.in_use || !con.win.surface || !con_backing || !con_saved_valid)
     return;
-  size_t pixels = (size_t)con.client_w * (size_t)con.client_h;
-  memcpy(con.surface, con_backing, pixels * 4);
+  size_t pixels = (size_t)con.win.client_w * (size_t)con.win.client_h;
+  memcpy(con.win.surface, con_backing, pixels * 4);
   if (con.cells && con_saved_cells)
     memcpy(con.cells, con_saved_cells, (size_t)con.cols * (size_t)con.rows);
   con.cx = con_saved_cx;
   con.cy = con_saved_cy;
   con_saved_valid = 0;
-  mark_dirty(con.x, con.y, outer_w_dims(con.client_w),
-             outer_h_dims(con.client_h));
+  mark_dirty(con.win.x, con.win.y, outer_w_dims(con.win.client_w),
+             outer_h_dims(con.win.client_h));
 }
 
 static void con_putc(char c) {
-  if (!con.enabled)
+  if (!con.win.in_use)
     return;
 
   /* Control characters (newline, scroll, clear, etc.) call con_redraw/con_wipe,
@@ -1221,8 +1343,8 @@ static void con_putc(char c) {
       con_draw_glyph(con.cx, con.cy, ' ');
 
       /* Mark only the erased cell dirty */
-      int cell_x = con.x + BORDER_PX + con.cx * con_cell_w();
-      int cell_y = con.y + TITLEBAR_PX + con.cy * con_cell_h();
+      int cell_x = con.win.x + BORDER_PX + con.cx * con_cell_w();
+      int cell_y = con.win.y + TITLEBAR_PX + con.cy * con_cell_h();
       mark_dirty(cell_x, cell_y, con_cell_w(), con_cell_h());
     }
     return;
@@ -1261,8 +1383,8 @@ static void con_putc(char c) {
   con.cells[con.cy * con.cols + con.cx] = c;
   con_draw_glyph(con.cx, con.cy, c);
 
-  int cell_x = con.x + BORDER_PX + con.cx * con_cell_w();
-  int cell_y = con.y + TITLEBAR_PX + con.cy * con_cell_h();
+  int cell_x = con.win.x + BORDER_PX + con.cx * con_cell_w();
+  int cell_y = con.win.y + TITLEBAR_PX + con.cy * con_cell_h();
   mark_dirty(cell_x, cell_y, con_cell_w(), con_cell_h());
 
   con.cx++;
@@ -1283,25 +1405,25 @@ static void con_alloc(void) {
 
   size_t pixel_bytes = (size_t)cw * (size_t)ch * 4;
   size_t pages = (pixel_bytes + 4095) / 4096;
-  con.surface = (uint32_t *)aligned_page_alloc(pages, &con.raw);
-  if (!con.surface)
+  con.win.surface = (uint32_t *)aligned_page_alloc(pages, &con.win.surface_raw);
+  if (!con.win.surface)
     return;
 
-  fill_dwords(con.surface, (size_t)cw * (size_t)ch, CONSOLE_BG);
+  fill_dwords(con.win.surface, (size_t)cw * (size_t)ch, CONSOLE_BG);
 
   /* Alt-screen backing buffer — same dimensions as the live surface so
    * memcpy push/pop is unconditional. Allocated once; never freed. */
   con_backing = (uint32_t *)aligned_page_alloc(pages, &con_backing_raw);
   if (!con_backing) {
-    free(con.raw);
-    con.raw = 0;
-    con.surface = 0;
+    free(con.win.surface_raw);
+    con.win.surface_raw = 0;
+    con.win.surface = 0;
     return;
   }
 
   build_con_glyph_lut();
-  con.client_w = cw;
-  con.client_h = ch;
+  con.win.client_w = cw;
+  con.win.client_h = ch;
   con.cols = cw / cell_w;
   con.rows = ch / cell_h;
   con.cells = (char *)malloc((size_t)con.cols * (size_t)con.rows);
@@ -1312,28 +1434,28 @@ static void con_alloc(void) {
     if (con_saved_cells)
       free(con_saved_cells);
     free(con_backing_raw);
-    free(con.raw);
+    free(con.win.surface_raw);
     con.cells = 0;
     con_saved_cells = 0;
     con_backing = 0;
     con_backing_raw = 0;
-    con.surface = 0;
-    con.raw = 0;
+    con.win.surface = 0;
+    con.win.surface_raw = 0;
     return;
   }
   memset(con.cells, 0, (size_t)con.cols * (size_t)con.rows);
   memset(con_saved_cells, 0, (size_t)con.cols * (size_t)con.rows);
-  con.x = margin;
-  con.y = margin;
+  con.win.x = margin;
+  con.win.y = margin;
   con.cx = con.cy = 0;
   const char *t = "Console";
   size_t tn = 0;
-  while (t[tn] && tn < sizeof(con.title) - 1) {
-    con.title[tn] = t[tn];
+  while (t[tn] && tn < sizeof(con.win.title) - 1) {
+    con.win.title[tn] = t[tn];
     tn++;
   }
-  con.title[tn] = 0;
-  con.enabled = 1;
+  con.win.title[tn] = 0;
+  con.win.in_use = 1;
   z_bring_to_front(HANDLE_CONSOLE);
 }
 
@@ -1355,29 +1477,51 @@ static void blit_icon(int dst_x, int dst_y, int dst_w, int dst_h, int src_w,
   if (!pixels || src_w <= 0 || src_h <= 0 || dst_w <= 0 || dst_h <= 0)
     return;
 
-  for (int y = 0; y < dst_h; y++) {
-    for (int x = 0; x < dst_w; x++) {
-      if (dst_y + y >= fb_h || dst_x + x >= fb_w)
-        continue;
+  int screen_x0 = dst_x > clip_x ? dst_x : clip_x;
+  int screen_y0 = dst_y > clip_y ? dst_y : clip_y;
+  if (screen_x0 < 0)
+    screen_x0 = 0;
+  if (screen_y0 < 0)
+    screen_y0 = 0;
+  int screen_x1 = dst_x + dst_w;
+  int screen_y1 = dst_y + dst_h;
+  if (screen_x1 > fb_w)
+    screen_x1 = fb_w;
+  if (screen_y1 > fb_h)
+    screen_y1 = fb_h;
+  if (screen_x1 > clip_x + clip_w)
+    screen_x1 = clip_x + clip_w;
+  if (screen_y1 > clip_y + clip_h)
+    screen_y1 = clip_y + clip_h;
+  if (screen_x0 >= screen_x1 || screen_y0 >= screen_y1)
+    return;
 
-      /* Nearest-neighbor sampling: map destination pixel to source pixel */
+  int start_y = screen_y0 - dst_y;
+  int end_y = screen_y1 - dst_y;
+  int start_x = screen_x0 - dst_x;
+  int end_x = screen_x1 - dst_x;
+
+  for (int y = start_y; y < end_y; y++) {
+    for (int x = start_x; x < end_x; x++) {
       int sx = (x * src_w) / dst_w;
       int sy = (y * src_h) / dst_h;
 
       uint32_t src = pixels[sy * src_w + sx];
       uint32_t alpha = src >> 24;
+      uint32_t color = src & 0x00FFFFFF;
+
+      /* Check chroma key FIRST, regardless of alpha.
+       * Because bmp.c promotes 24-bit images to alpha=255, the previous
+       * 'else' block was dead code and transparent magenta backgrounds
+       * were being drawn as solid magenta. */
+      if (color == 0x00FF00FF) {
+        continue;
+      }
 
       if (alpha == 255) {
-        // Fully opaque, just copy it
-        *fb_pix(dst_x + x, dst_y + y) = src & 0x00FFFFFF;
+        *fb_pix(dst_x + x, dst_y + y) = color;
       } else if (alpha > 0) {
-        // Has alpha channel, blend it
         blend_px(fb_pix(dst_x + x, dst_y + y), src);
-      } else {
-        // Alpha is 0. If it's pure magenta, treat it as transparent.
-        if ((src & 0x00FFFFFF) == 0x00FF00FF) {
-          continue; // Transparent! Skip this pixel.
-        }
       }
     }
   }
@@ -1391,25 +1535,27 @@ static void compose_handle(int handle) {
   if (is_minimized(handle))
     return;
   if (handle == HANDLE_CONSOLE) {
-    if (!con.enabled)
+    if (!con.win.in_use)
       return;
-    if (!clip_hits(con.x, con.y, outer_w_dims(con.client_w),
-                   outer_h_dims(con.client_h)))
+    if (!clip_hits(con.win.x, con.win.y, outer_w_dims(con.win.client_w),
+                   outer_h_dims(con.win.client_h)))
       return;
     struct window cw = {0};
-    cw.x = con.x;
-    cw.y = con.y;
-    cw.client_w = con.client_w;
-    cw.client_h = con.client_h;
-    cw.surface = con.surface;
-    memcpy(cw.title, con.title, sizeof(cw.title) - 1);
+    cw.x = con.win.x;
+    cw.y = con.win.y;
+    cw.client_w = con.win.client_w;
+    cw.client_h = con.win.client_h;
+    cw.surface = con.win.surface;
+    memcpy(cw.title, con.win.title, sizeof(cw.title) - 1);
     draw_chrome(&cw, focused_handle == HANDLE_CONSOLE);
     blit_surface(&cw);
     return;
   }
   struct window *w = find_handle(handle);
-  if (!w)
+  if (!w) {
+    printf("winman: compose_handle: no window found for handle=%d\n", handle);
     return;
+  }
   if (!clip_hits(w->x, w->y, outer_w(w), outer_h(w)))
     return;
   draw_chrome(w, w->handle == focused_handle);
@@ -1436,8 +1582,8 @@ static void compose(void) {
       int x = cx0;
       // Tile horizontally across the clip box
       while (x < cx1) {
-        int col = x % w;              // where we are within the tile
-        int chunk = w - col;          // rest of this tile
+        int col = x % w;     // where we are within the tile
+        int chunk = w - col; // rest of this tile
         if (x + chunk > cx1)
           chunk = cx1 - x;
         // Fast copy of a chunk of pixels
@@ -1497,8 +1643,8 @@ static void present_backbuffer_rects(const struct fb_rect *rects,
     const struct fb_rect *rect = &rects[i];
     for (uint32_t row = 0; row < rect->h; row++) {
       uint32_t *src = fb_pix((int)rect->x, (int)(rect->y + row));
-      uint32_t *dst = fb_hw + (size_t)(rect->y + row) * (size_t)fb_stride +
-                      (size_t)rect->x;
+      uint32_t *dst =
+          fb_hw + (size_t)(rect->y + row) * (size_t)fb_stride + (size_t)rect->x;
       memcpy(dst, src, (size_t)rect->w * 4);
     }
     fb_damage(rect->x, rect->y, rect->w, rect->h);
@@ -1570,8 +1716,7 @@ static inline void blend_px(uint32_t *dst, uint32_t src) {
   *dst = (r << 16) | (g << 8) | b;
 }
 
-static int cursor_rect(int32_t x, int32_t y, int scale,
-                       struct fb_rect *rect) {
+static int cursor_rect(int32_t x, int32_t y, int scale, struct fb_rect *rect) {
   int draw_w = cursor_w() * scale;
   int draw_h = cursor_h() * scale;
   int x0 = x < 0 ? 0 : (int)x;
@@ -1591,7 +1736,9 @@ static int cursor_rect(int32_t x, int32_t y, int scale,
   return 1;
 }
 
-static void draw_cursor(int32_t x, int32_t y) {
+static void draw_cursor_with_repairs(int32_t x, int32_t y,
+                                     const struct fb_rect *repairs,
+                                     uint32_t repair_count) {
   int scale = cursor_scale();
   int src_w = cursor_w();
   int src_h = cursor_h();
@@ -1603,36 +1750,54 @@ static void draw_cursor(int32_t x, int32_t y) {
   int have_new = cursor_rect(x, y, scale, &new_rect);
   if (!have_new)
     return;
-  if (have_new) {
-    int clipped_w = (int)new_rect.w;
-    int clipped_h = (int)new_rect.h;
-    int x0 = (int)new_rect.x;
-    int y0 = (int)new_rect.y;
-    for (int yy = 0; yy < clipped_h; yy++) {
-      uint32_t *p = fb_pix(x0, y0 + yy);
-      memcpy(cursor_under + (size_t)yy * CURSOR_MAX_DRAW_DIM, p,
-             (size_t)clipped_w * 4);
 
-      int src_y = (y0 + yy - (int)y) / scale;
+  int clipped_w = (int)new_rect.w;
+  int clipped_h = (int)new_rect.h;
+  int x0 = (int)new_rect.x;
+  int y0 = (int)new_rect.y;
 
+  for (int yy = 0; yy < clipped_h; yy++) {
+    uint32_t *p = fb_pix(x0, y0 + yy);
+    memcpy(cursor_under + (size_t)yy * CURSOR_MAX_DRAW_DIM, p,
+           (size_t)clipped_w * 4);
+
+    int src_y = (y0 + yy - (int)y) / scale;
+
+    if (cursor_img.pixels) {
       for (int xx = 0; xx < clipped_w; xx++) {
         int src_x = (x0 + xx - (int)x) / scale;
+        uint32_t src = cursor_img.pixels[(size_t)src_y * src_w + src_x];
 
-        if (cursor_img.pixels) {
-          blend_px(&p[xx], cursor_img.pixels[(size_t)src_y * src_w + src_x]);
-        } else {
-          uint8_t mv = fallback_cursor_mask[src_y][src_x];
-          if (mv == 1)
-            p[xx] = COLOR_BORDER;
-          else if (mv == 2)
-            p[xx] = COLOR_FILL;
+        /* Treat pure magenta as transparent for 24-bit cursor images
+         * since bmp.c correctly forces alpha to 255 for opaque images. */
+        if ((src & 0x00FFFFFF) == 0x00FF00FF) {
+          continue;
         }
+
+        blend_px(&p[xx], src);
+      }
+    } else {
+      for (int xx = 0; xx < clipped_w; xx++) {
+        int src_x = (x0 + xx - (int)x) / scale;
+        uint8_t mv = fallback_cursor_mask[src_y][src_x];
+        if (mv == 1)
+          p[xx] = COLOR_BORDER;
+        else if (mv == 2)
+          p[xx] = COLOR_FILL;
       }
     }
-
   }
 
-  present_backbuffer_rects(&new_rect, 1);
+  struct fb_rect rects[FB_PRESENT_MAX_RECTS];
+  uint32_t rect_count = 0;
+  for (uint32_t i = 0;
+       i < repair_count && rect_count + 1 < FB_PRESENT_MAX_RECTS; i++) {
+    if (repairs[i].w && repairs[i].h)
+      rects[rect_count++] = repairs[i];
+  }
+  rects[rect_count++] = new_rect;
+
+  present_backbuffer_rects(rects, rect_count);
 
   for (uint32_t yy = 0; yy < new_rect.h; yy++) {
     memcpy(fb_pix((int)new_rect.x, (int)(new_rect.y + yy)),
@@ -1641,38 +1806,14 @@ static void draw_cursor(int32_t x, int32_t y) {
   }
 }
 
-static struct fb_rect cursor_repair;
-static int cursor_repair_active;
-static uint32_t cursor_repair_deadline;
-
-static void cursor_repair_add(int32_t x, int32_t y) {
-  struct fb_rect rect;
-  if (!cursor_rect(x, y, cursor_scale(), &rect))
-    return;
-  if (!cursor_repair_active) {
-    cursor_repair = rect;
-    cursor_repair_active = 1;
-    return;
-  }
-
-  uint32_t x0 = cursor_repair.x < rect.x ? cursor_repair.x : rect.x;
-  uint32_t y0 = cursor_repair.y < rect.y ? cursor_repair.y : rect.y;
-  uint32_t repair_x1 = cursor_repair.x + cursor_repair.w;
-  uint32_t repair_y1 = cursor_repair.y + cursor_repair.h;
-  uint32_t rect_x1 = rect.x + rect.w;
-  uint32_t rect_y1 = rect.y + rect.h;
-  cursor_repair = (struct fb_rect){
-      .x = x0,
-      .y = y0,
-      .w = (repair_x1 > rect_x1 ? repair_x1 : rect_x1) - x0,
-      .h = (repair_y1 > rect_y1 ? repair_y1 : rect_y1) - y0,
-  };
+static void draw_cursor(int32_t x, int32_t y) {
+  draw_cursor_with_repairs(x, y, 0, 0);
 }
 
-static void cursor_repair_present(void) {
-  if (!cursor_repair_active)
-    return;
-  present_backbuffer_rects(&cursor_repair, 1);
+static void present_cursor_repair_at(int32_t x, int32_t y) {
+  struct fb_rect rect;
+  if (cursor_rect(x, y, cursor_scale(), &rect))
+    present_backbuffer_rects(&rect, 1);
 }
 
 static void present_rect(int x, int y, int w, int h) {
@@ -1775,10 +1916,7 @@ static void compute_ghost(int mx, int my, int *gx, int *gy, int *gw, int *gh) {
   } else {
     int ncw = drag.orig_cw + dx;
     int nch = drag.orig_ch + dy;
-    if (ncw < MIN_CLIENT_W)
-      ncw = MIN_CLIENT_W;
-    if (nch < MIN_CLIENT_H)
-      nch = MIN_CLIENT_H;
+    clamp_client_size(&ncw, &nch);
     *gx = drag.orig_x;
     *gy = drag.orig_y;
     *gw = outer_w_dims(ncw);
@@ -1795,21 +1933,27 @@ static struct window *find_slot(void) {
 }
 
 static struct window *find_handle(int handle) {
+  if (handle == HANDLE_CONSOLE)
+    return con.win.in_use ? &con.win : NULL;
+
   for (int i = 0; i < MAX_WINDOWS; i++) {
     if (windows[i].in_use && windows[i].handle == handle)
       return &windows[i];
   }
-  return 0;
+  return NULL;
 }
 
 static int handle_create(int client_pid, int w, int h, const char *title,
                          uint64_t *out_client_va, uint32_t *out_pitch,
                          int *out_handle) {
-  if (w <= 0 || h <= 0 || w > 2048 || h > 2048)
+  if (w <= 0 || h <= 0 || w > CLIENT_DIM_HARD_LIMIT ||
+      h > CLIENT_DIM_HARD_LIMIT)
     return -1;
   struct window *win = find_slot();
-  if (!win)
+  if (!win) {
+    printf("winman: handle_create: no slot found\n");
     return -1;
+  }
 
   size_t pixel_bytes = (size_t)w * (size_t)h * 4;
   size_t pages = (pixel_bytes + 4095) / 4096;
@@ -1818,7 +1962,6 @@ static int handle_create(int client_pid, int w, int h, const char *title,
   uint32_t *surface = (uint32_t *)aligned_page_alloc(pages, &raw);
   if (!surface)
     return -1;
-  memset(surface, 0, pages * 4096);
 
   /* Map the same physical pages into the client's PML4 so the client
    * can write pixels without going through winman. */
@@ -1889,8 +2032,11 @@ static int window_count(void) {
  * dead owner can no longer issue the destroy itself. */
 static void handle_destroy_internal(int handle, int client_pid_check) {
   struct window *w = find_handle(handle);
-  if (!w)
+  if (!w) {
+    printf("winman: handle_destroy_internal: no window found for handle=%d\n",
+           handle);
     return;
+  }
   if (client_pid_check && w->owner_pid != client_pid_check)
     return;
 
@@ -1955,8 +2101,8 @@ static void destroy_windows_for_owner(int owner_pid, const char *why) {
 /* True if window is currently minimized (and therefore must skip compose +
  * hit-test). Console can't be minimized. */
 static int is_minimized(int handle) {
-  if (handle == HANDLE_CONSOLE)
-    return 0;
+  // if (handle == HANDLE_CONSOLE)
+  //   return 0;
   struct window *w = find_handle(handle);
   return w && w->minimized;
 }
@@ -1968,8 +2114,10 @@ static void toggle_minimize(int handle) {
   // if (handle == HANDLE_CONSOLE)
   //   return;
   struct window *w = find_handle(handle);
-  if (!w)
+  if (!w) {
+    printf("winman: toggle_minimize: no window found for handle=%d\n", handle);
     return;
+  }
   w->minimized = !w->minimized;
   if (w->minimized && focused_handle == handle) {
     /* Refocus to next visible handle in z-order, preferring real
@@ -1998,8 +2146,10 @@ static void toggle_maximize(int handle) {
   // if (handle == HANDLE_CONSOLE)
   //   return;
   struct window *w = find_handle(handle);
-  if (!w)
+  if (!w) {
+    printf("winman: toggle_maximize: no window found for handle=%d\n", handle);
     return;
+  }
   if (w->maximized) {
     client_window_resize(handle, w->saved_cw, w->saved_ch);
     win_set_pos(handle, w->saved_x, w->saved_y);
@@ -2009,10 +2159,8 @@ static void toggle_maximize(int handle) {
     w->saved_y = w->y;
     w->saved_cw = w->client_w;
     w->saved_ch = w->client_h;
-    int max_cw = fb_w - 2 * BORDER_PX;
-    int max_ch = fb_h - TASKBAR_PX - TITLEBAR_PX - BORDER_PX;
     win_set_pos(handle, 0, 0);
-    client_window_resize(handle, max_cw, max_ch);
+    client_window_resize(handle, max_client_w, max_client_h);
     w->maximized = 1;
   }
   mark_dirty(w->x, w->y, outer_w(w), outer_h(w));
@@ -2190,6 +2338,11 @@ static void pump_input(void) {
         int dx = m.x - drag.grab_mx;
         int dy = m.y - drag.grab_my;
 
+        if (drag.kind == HIT_TITLEBAR &&
+            (dx < -DOUBLE_CLICK_SLOP || dx > DOUBLE_CLICK_SLOP ||
+             dy < -DOUBLE_CLICK_SLOP || dy > DOUBLE_CLICK_SLOP))
+          reset_titlebar_click();
+
         int old_x, old_y, old_cw, old_ch;
         if (win_get_rect(drag.handle, &old_x, &old_y, &old_cw, &old_ch)) {
           mark_dirty(old_x, old_y, outer_w_dims(old_cw), outer_h_dims(old_ch));
@@ -2206,11 +2359,7 @@ static void pump_input(void) {
           int new_cw = drag.orig_cw + dx;
           int new_ch = drag.orig_ch + dy;
 
-          if (drag.handle == HANDLE_CONSOLE) {
-            console_resize(new_cw, new_ch);
-          } else {
-            client_window_resize(drag.handle, new_cw, new_ch);
-          }
+          client_window_resize(drag.handle, new_cw, new_ch);
         }
 
         drag.active = 0;
@@ -2232,15 +2381,23 @@ static void pump_input(void) {
     else if (m.type == MSG_MOUSE_DOWN && m.param == MOUSE_BTN_LEFT) {
       int hit_handle = 0;
       int kind = hit_test_at(m.x, m.y, &hit_handle);
+      int titlebar_double_click = 0;
+
+      if (kind == HIT_TITLEBAR) {
+        titlebar_double_click = titlebar_click_is_double(
+            hit_handle, m.x, m.y, (u32)m.when);
+      } else {
+        reset_titlebar_click();
+      }
 
       /*
        * Window close button.
        */
       if (kind == HIT_BTN_CLOSE) {
-        if (hit_handle != HANDLE_CONSOLE) {
-          printf("winman: close button -> request handle=%d\n", hit_handle);
-          request_window_close(hit_handle);
-        }
+        // if (hit_handle != HANDLE_CONSOLE) {
+        printf("winman: close button -> request handle=%d\n", hit_handle);
+        request_window_close(hit_handle);
+        //}
 
         continue;
       }
@@ -2283,14 +2440,15 @@ static void pump_input(void) {
       if (kind == HIT_TASKBAR_BTN) {
         int prev_focus = focused_handle;
 
-        if (hit_handle == HANDLE_CONSOLE) {
-          /*
-           * The console is not in windows[], so find_handle()
-           * cannot be used for it.
-           */
-          focused_handle = HANDLE_CONSOLE;
-          z_bring_to_front(HANDLE_CONSOLE);
-        } else {
+        // if (hit_handle == HANDLE_CONSOLE) {
+        //   /*
+        //    * The console is not in windows[], so find_handle()
+        //    * cannot be used for it.
+        //    */
+        //   focused_handle = HANDLE_CONSOLE;
+        //   z_bring_to_front(HANDLE_CONSOLE);
+        // } else
+        {
           struct window *wt = find_handle(hit_handle);
 
           if (wt) {
@@ -2390,6 +2548,26 @@ static void pump_input(void) {
           focused_handle = hit_handle;
           z_bring_to_front(hit_handle);
 
+          mark_dirty(x, y, outer_w_dims(cw), outer_h_dims(ch));
+
+          if (prev_focus != hit_handle) {
+            int prev_x, prev_y, prev_cw, prev_ch;
+            if (win_get_rect(prev_focus, &prev_x, &prev_y, &prev_cw,
+                             &prev_ch)) {
+              mark_dirty(prev_x, prev_y, outer_w_dims(prev_cw),
+                         outer_h_dims(prev_ch));
+            }
+          }
+
+          mark_dirty(0, taskbar_y(), fb_w, TASKBAR_PX);
+
+          if (titlebar_double_click) {
+            printf("winman: titlebar double-click handle=%d\n", hit_handle);
+            toggle_maximize(hit_handle);
+            forward = 0;
+            continue;
+          }
+
           drag.active = 1;
           drag.kind = kind;
           drag.handle = hit_handle;
@@ -2399,15 +2577,6 @@ static void pump_input(void) {
           drag.orig_y = y;
           drag.orig_cw = cw;
           drag.orig_ch = ch;
-
-          mark_dirty(x, y, outer_w_dims(cw), outer_h_dims(ch));
-
-          if (prev_focus != hit_handle &&
-              win_get_rect(prev_focus, &x, &y, &cw, &ch)) {
-            mark_dirty(x, y, outer_w_dims(cw), outer_h_dims(ch));
-          }
-
-          mark_dirty(0, taskbar_y(), fb_w, TASKBAR_PX);
         }
 
         forward = 0;
@@ -2459,16 +2628,16 @@ static void pump_input(void) {
         }
 
         if (clicked_icon >= 0) {
-          uint32_t current_tick = (uint32_t)get_ticks();
+          uint32_t current_tick = (uint32_t)m.when;
 
           printf("winman: clicked icon %d\n", clicked_icon);
 
           printf("winman: tick=%u, last_icon=%d, "
                  "last_tick=%u\n",
-                 current_tick, last_clicked_icon, last_click_tick);
+                 current_tick, last_icon_clicked, last_icon_click_tick);
 
-          if (clicked_icon == last_clicked_icon &&
-              current_tick - last_click_tick < 370) {
+          if (clicked_icon == last_icon_clicked &&
+              current_tick - last_icon_click_tick < DOUBLE_CLICK_TICKS) {
             struct program *prog = &desktop_icons[clicked_icon].program;
 
             char *argv[] = {(char *)prog->path, 0};
@@ -2486,19 +2655,19 @@ static void pump_input(void) {
             /*
              * Prevent a triple-click from launching twice.
              */
-            last_clicked_icon = -1;
-            last_click_tick = 0;
+            last_icon_clicked = -1;
+            last_icon_click_tick = 0;
           } else {
-            last_clicked_icon = clicked_icon;
-            last_click_tick = current_tick;
+            last_icon_clicked = clicked_icon;
+            last_icon_click_tick = current_tick;
           }
         } else {
           /*
            * Clicking elsewhere invalidates the pending
            * desktop-icon double-click.
            */
-          last_clicked_icon = -1;
-          last_click_tick = 0;
+          last_icon_clicked = -1;
+          last_icon_click_tick = 0;
         }
 
         /*
@@ -2566,6 +2735,7 @@ int main(int argc, char **argv) {
   fb_stride = (int)(info.pitch / 4);
   fb_bytes = info.pitch * info.height;
   fb_mapped_bytes = fb_bytes;
+  update_client_size_limits();
   printf("winman: fb %dx%d pitch=%d bytes=%d\n", fb_w, fb_h, fb_stride * 4,
          (int)fb_bytes);
 
@@ -2583,8 +2753,8 @@ int main(int argc, char **argv) {
   memset(windows, 0, sizeof(windows));
   focused_handle = 0;
   con_alloc();
-  printf("winman: con.enabled=%d surface=%p w=%d h=%d\n", con.enabled,
-         (void *)con.surface, con.client_w, con.client_h);
+  printf("winman: con.win.in_use=%d surface=%p w=%d h=%d\n", con.win.in_use,
+         (void *)con.win.surface, con.win.client_w, con.win.client_h);
   present_full_desktop();
   printf("winman: ready\n");
 
@@ -2631,6 +2801,7 @@ int main(int argc, char **argv) {
           fb_h = (int)cur.height;
           fb_stride = (int)(cur.pitch / 4);
           fb_bytes = new_bytes;
+          update_client_size_limits();
           if (backbuffer_register() != 0)
             printf("winman: resized back buffer registration failed\n");
           present_full_desktop();
@@ -2650,7 +2821,7 @@ int main(int argc, char **argv) {
     {
       static uint64_t taskbar_sig_prev;
       uint64_t sig = (uint64_t)(uint32_t)focused_handle * 1000003u;
-      sig = sig * 31 + (uint64_t)con.enabled;
+      sig = sig * 31 + (uint64_t)con.win.in_use;
       for (int i = 0; i < MAX_WINDOWS; i++) {
         sig = sig * 31 + (uint64_t)windows[i].in_use;
         if (!windows[i].in_use)
@@ -2692,14 +2863,10 @@ int main(int argc, char **argv) {
       if (drag.have_ghost) {
         erase_ghost(drag.last_gx, drag.last_gy, drag.last_gw, drag.last_gh);
       }
-      // Redraw cursor every 128 (128 / 500hz = 0.256s ticks) or on mouse move
-      if ((have_last && (mx != last_cx || my != last_cy)) || (tick & 127) == 0) {
-        int s = cursor_scale();
-        present_rect(last_cx, last_cy, cursor_w() * s, cursor_h() * s);
-        cursor_repair_add(last_cx, last_cy);
-        cursor_repair_add(mx, my);
-        cursor_repair_deadline = (uint32_t)get_ticks() + 2;
-      }
+      int cursor_moved = have_last && (mx != last_cx || my != last_cy);
+      int cursor_refresh = !have_last || cursor_moved || ((tick & 127) == 0);
+      if (cursor_moved)
+        present_cursor_repair_at(last_cx, last_cy);
       int gx, gy, gw, gh;
       compute_ghost((int)mx, (int)my, &gx, &gy, &gw, &gh);
       draw_ghost(gx, gy, gw, gh);
@@ -2709,9 +2876,8 @@ int main(int argc, char **argv) {
       drag.last_gh = gh;
       drag.have_ghost = 1;
 
-
-      if (!have_last || mx != last_cx || my != last_cy)
-      	draw_cursor(mx, my);
+      if (cursor_refresh)
+        draw_cursor(mx, my);
       last_cx = mx;
       last_cy = my;
       have_last = 1;
@@ -2733,25 +2899,13 @@ int main(int argc, char **argv) {
     }
 
     int cursor_moved = have_last && (mx != last_cx || my != last_cy);
-    if (cursor_moved) {
-      cursor_repair_add(last_cx, last_cy);
-      cursor_repair_add(mx, my);
-      cursor_repair_present();
-      cursor_repair_deadline = (uint32_t)get_ticks() + 2;
-    } else if (cursor_repair_active &&
-               (int32_t)((uint32_t)get_ticks() - cursor_repair_deadline) >= 0) {
-      /* Small VirtIO damage updates may have reached the host out of order.
-       * Recompose once at the end of the movement burst so no stale cursor can
-       * survive after the pointer stops. */
-      present_full_desktop();
-      recompose = 1;
-      cursor_repair_active = 0;
-    } else if (have_last && recompose) {
-      int s = cursor_scale();
-      present_rect(last_cx, last_cy, cursor_w() * s, cursor_h() * s);
-    }
+    struct fb_rect cursor_repairs[1];
+    uint32_t cursor_repair_count = 0;
+    if (cursor_moved &&
+        cursor_rect(last_cx, last_cy, cursor_scale(), &cursor_repairs[0]))
+      cursor_repair_count = 1;
     if (!have_last || recompose || cursor_moved)
-      draw_cursor(mx, my);
+      draw_cursor_with_repairs(mx, my, cursor_repairs, cursor_repair_count);
     last_cx = mx;
     last_cy = my;
     have_last = 1;

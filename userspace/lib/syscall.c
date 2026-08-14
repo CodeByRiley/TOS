@@ -35,15 +35,15 @@ long chdir(const char *path) {
 
 char *getcwd(char *buf, size_t size) {
     long rc = syscall2(SYS_GETCWD, (sysarg_t)(uintptr_t)buf, (sysarg_t)size);
-    return rc == 0 ? buf : 0;
+    return rc < 0 ? 0 : buf;
 }
 
 long stat_raw(const char *path, struct stat_user *out) {
-    return syscall2(SYS_STAT, (sysarg_t)(uintptr_t)path, (sysarg_t)(uintptr_t)out);
+    return syscall2(SYS_STAT_RAW, (sysarg_t)(uintptr_t)path, (sysarg_t)(uintptr_t)out);
 }
 
 long fstat_raw(int fd, struct stat_user *out) {
-    return syscall2(SYS_FSTAT, fd, (sysarg_t)(uintptr_t)out);
+    return syscall2(SYS_FSTAT_RAW, fd, (sysarg_t)(uintptr_t)out);
 }
 
 /* Memory

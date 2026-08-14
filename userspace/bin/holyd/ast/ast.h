@@ -15,8 +15,12 @@ typedef enum {
     AST_ASSIGN,         // x = expr;
     AST_BINARY_OP,      // expr + expr
     AST_CALL,           // Print(expr)
+    AST_INDEX,          // array[index]
+    AST_ARRAY_LEN_EXPR, // array.length
     AST_BLOCK,          // { statement1; statement2; }
     AST_IF,             // if (cond) { block } else { block }
+    AST_WHILE,          // while (cond) { block }
+    AST_FOR,            // for (init; cond; inc) { block }
     AST_FOREACH,        // foreach (x; arr) { block }
     AST_FUNC_DECL,
     AST_RETURN,				  // return expr
@@ -46,6 +50,10 @@ struct ASTNode {
     ASTNode* left;
     ASTNode* right;
 
+    // For AST_INDEX / AST_ARRAY_LEN_EXPR
+    ASTNode* index_target;
+    ASTNode* index_expr;
+
     // For AST_CALL
     const char* callee_name;
     int callee_len;
@@ -61,8 +69,14 @@ struct ASTNode {
     ASTNode* then_block;
     ASTNode* else_block;
 
+    // For AST_FOR
+    ASTNode* init_stmt;
+    ASTNode* increment;
+
     // For AST_FOREACH
     ASTNode* array_expr;
+    const char* index_name;
+    int index_name_len;
 
     // For AST_FUNC_DECL
     const char** param_names;
@@ -80,10 +94,14 @@ ASTNode* ASTNewVarRef(const char* name, int len);
 ASTNode* ASTNewVarDecl(TokenType type, const char* name, int len, ASTNode* init);
 ASTNode* ASTNewAssign(const char* name, int len, ASTNode* value);
 ASTNode* ASTNewBinaryOp(TokenType op, ASTNode* left, ASTNode* right);
+ASTNode* ASTNewIndex(ASTNode* target, ASTNode* index);
+ASTNode* ASTNewArrayLenExpr(ASTNode* target);
 ASTNode* ASTNewCall(const char* name, int len, ASTNode** args, int arg_count);
 ASTNode* ASTNewBlock(ASTNode** stmts, int count);
 ASTNode* ASTNewIf(ASTNode* cond, ASTNode* then_block, ASTNode* else_block);
-ASTNode* ASTNewForeach(const char* var_name, int var_len, ASTNode* array_expr, ASTNode* body);
+ASTNode* ASTNewWhile(ASTNode* cond, ASTNode* body);
+ASTNode* ASTNewFor(ASTNode* init, ASTNode* cond, ASTNode* inc, ASTNode* body);
+ASTNode* ASTNewForeach(const char* var_name, int var_len, const char* index_name, int index_len, ASTNode* array_expr, ASTNode* body);
 ASTNode* ASTNewFuncDecl(const char* name, int len, const char** params, int* param_lens, int param_count, ASTNode* body);
 ASTNode* ASTNewReturn(ASTNode* expr);
 

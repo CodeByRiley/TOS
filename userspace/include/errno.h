@@ -1,49 +1,60 @@
-/* userspace/include/errno.h — POSIX-style error codes.
- *
- * Numeric values follow the Linux ABI so code ported from Linux compiles
- * unmodified. Most of these aren't actually returned by anything yet;
- * they exist so DOOM and other ported code links. Storage for `errno`
- * lives in lib/errno.c.
- */
+/* userspace/include/errno.h — POSIX-style error codes. */
 #ifndef ERRNO_H
 #define ERRNO_H
 
+#include "utilities/types.h"
+
 extern int errno;
 
-#define EPERM           1
-#define ENOENT          2
-#define ESRCH           3
-#define EINTR           4
-#define EIO             5
-#define ENXIO           6
-#define E2BIG           7
-#define ENOEXEC         8
-#define EBADF           9
-#define ECHILD          10
-#define EAGAIN          11
-#define ENOMEM          12
-#define EACCES          13
-#define EFAULT          14
-#define EBUSY           16
-#define EEXIST          17
-#define EXDEV           18
-#define ENODEV          19
-#define ENOTDIR         20
-#define EISDIR          21
-#define ENFILE          23
-#define EMFILE          24
-#define ENOTTY          25
-#define EFBIG           27
-#define ENOSPC          28
-#define ESPIPE          29
-#define EROFS           30
-#define EMLINK          31
-#define EPIPE           32
-#define EDOM            33
-#define EDEADLK         36
-#define ENAMETOOLONG    38
-#define ENOLCK          39
-#define ENOSYS          40
-#define ENOTEMPTY       41
+/*
+ * If compiling under C23 or newer, use the typed enum.
+ * Otherwise, fall back to standard C99/C17 untyped enum for DOOM.
+ */
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202311L
+enum errornum : uchar {
+#else
+enum errornum {
+#endif
+    EPERM        = 1,
+    ENOENT       = 2,
+    ESRCH        = 3,
+    EINTR        = 4,
+    EIO          = 5,
+    ENXIO        = 6,
+    E2BIG        = 7,
+    ENOEXEC      = 8,
+    EBADF        = 9,
+    ECHILD       = 10,
+    EAGAIN       = 11,
+    ENOMEM       = 12,
+    EACCES       = 13,
+    EFAULT       = 14,
+    ENOTBLK      = 15,
+    EBUSY        = 16,
+    EEXIST       = 17,
+    EXDEV        = 18,
+    ENODEV       = 19,
+    ENOTDIR      = 20,
+    EISDIR       = 21,
+    EINVAL       = 22,
+    ENFILE       = 23,
+    EMFILE       = 24,
+    ENOTTY       = 25,
+    ETXTBSY      = 26,
+    EFBIG        = 27,
+    ENOSPC       = 28,
+    ESPIPE       = 29,
+    EROFS        = 30,
+    EMLINK       = 31,
+    EPIPE        = 32,
+    EDOM         = 33,
+    ERANGE       = 34,
+    EDEADLK      = 35,
+    ENAMETOOLONG = 36,
+    ENOLCK       = 37,
+    ENOSYS       = 38,
+    ENOTEMPTY    = 39,
+    ELOOP        = 40,
+};
 
 #endif

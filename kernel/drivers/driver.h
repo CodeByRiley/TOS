@@ -33,7 +33,8 @@ struct driver {
     enum device_bus bus;
     int (*match)(const struct device *device);
     int (*probe)(struct device *device);
-    /* Optional nonblocking maintenance pass. The driver core calls this from
+
+    /* Optional non-blocking maintenance pass. The driver core calls this from
      * one shared poll task for every bound device that provides it. */
     void (*poll)(struct device *device);
 };
@@ -50,6 +51,7 @@ struct device {
     void *driver_data;
 };
 
+/* Maximum number of driver snapshots to retain for debugging & panic use. */
 #define DRIVER_SNAP_MAX      16
 #define DRIVER_SNAP_NAME_MAX 32
 

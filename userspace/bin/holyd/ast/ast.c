@@ -52,6 +52,21 @@ ASTNode* ASTNewBinaryOp(TokenType op, ASTNode* left, ASTNode* right) {
     return node;
 }
 
+ASTNode* ASTNewIndex(ASTNode* target, ASTNode* index) {
+    ASTNode* node = (ASTNode*)malloc(sizeof(ASTNode));
+    node->type = AST_INDEX;
+    node->index_target = target;
+    node->index_expr = index;
+    return node;
+}
+
+ASTNode* ASTNewArrayLenExpr(ASTNode* target) {
+    ASTNode* node = (ASTNode*)malloc(sizeof(ASTNode));
+    node->type = AST_ARRAY_LEN_EXPR;
+    node->index_target = target;
+    return node;
+}
+
 ASTNode* ASTNewCall(const char* name, int len, ASTNode** args, int arg_count) {
     ASTNode* node = (ASTNode*)malloc(sizeof(ASTNode));
     node->type = AST_CALL;
@@ -79,11 +94,31 @@ ASTNode* ASTNewIf(ASTNode* cond, ASTNode* then_block, ASTNode* else_block) {
     return node;
 }
 
-ASTNode* ASTNewForeach(const char* var_name, int var_len, ASTNode* array_expr, ASTNode* body) {
+ASTNode* ASTNewWhile(ASTNode* cond, ASTNode* body) {
+    ASTNode* node = (ASTNode*)malloc(sizeof(ASTNode));
+    node->type = AST_WHILE;
+    node->condition = cond;
+    node->then_block = body;
+    return node;
+}
+
+ASTNode* ASTNewFor(ASTNode* init, ASTNode* cond, ASTNode* inc, ASTNode* body) {
+    ASTNode* node = (ASTNode*)malloc(sizeof(ASTNode));
+    node->type = AST_FOR;
+    node->init_stmt = init;
+    node->condition = cond;
+    node->increment = inc;
+    node->then_block = body;
+    return node;
+}
+
+ASTNode* ASTNewForeach(const char* var_name, int var_len, const char* index_name, int index_len, ASTNode* array_expr, ASTNode* body) {
     ASTNode* node = (ASTNode*)malloc(sizeof(ASTNode));
     node->type = AST_FOREACH;
     node->var_name = var_name;
     node->var_name_len = var_len;
+    node->index_name = index_name;
+    node->index_name_len = index_len;
     node->array_expr = array_expr;
     node->then_block = body; // Reuse then_block for the foreach body
     return node;

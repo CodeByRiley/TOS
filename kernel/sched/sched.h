@@ -92,6 +92,7 @@ struct task {
   uint64_t user_entry;            /* used by user-task first-run trampoline*/
   uint64_t user_rsp_initial;      /* used by user-task first-run trampoline*/
   uint64_t user_arg;                 /* argument for user task                */
+  uint64_t fs_base;               /* IA32_FS_BASE for userspace TLS        */
 
   enum task_state state;
   int prio;                       /* SCHED_PRIO_*; 0 (NORMAL) by default   */
@@ -113,6 +114,9 @@ struct task {
   uint64_t wake_tick;             /* PIT tick to wake at (TASK_SLEEPING)   */
   struct fat_file *fds[TASK_MAX_FDS];
   char cwd[TASK_CWD_MAX];					/* current working directory of the task ./bin etc */
+  uint8_t fd_is_dir[TASK_MAX_FDS];
+  uint32_t fd_dir_index[TASK_MAX_FDS];
+  char fd_dir_path[TASK_MAX_FDS][TASK_CWD_MAX];
   /* Per-task input ring (kbd/mouse events). Allocated on task spawn. */
   struct msg *input_ring;
   volatile int input_head;
@@ -222,6 +226,8 @@ void task_exit(long code) __attribute__((noreturn));
 void task_exit_thread(void) __attribute__((noreturn));
 int task_kill(int pid, long code);
 struct task *task_current(void);
+int task_set_fs_base(uint64_t base);
+uint64_t task_get_fs_base(void);
 
 /* Move `t` to `prio`. Safe on a queued task: it is lifted off its current
  * ready list and re-queued on the new one. Returns 0, or -1 on a bad

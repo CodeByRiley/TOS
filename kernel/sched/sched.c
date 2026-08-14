@@ -77,6 +77,20 @@ extern uint64_t user_rsp_save;      /* syscall.asm */
 /* Free a process PML4 — defined in loader/process.c. */
 extern void free_user_pml4(uint64_t *pml4);
 
+#define MSR_FS_BASE 0xC0000100u
+
+static void sched_wrmsr(uint32_t msr, uint64_t value) {
+  uint32_t lo = (uint32_t)value;
+  uint32_t hi = (uint32_t)(value >> 32);
+  __asm__ volatile ("wrmsr" :: "c"(msr), "a"(lo), "d"(hi) : "memory");
+}
+
+static uint64_t sched_rdmsr(uint32_t msr) {
+  uint32_t lo, hi;
+  __asm__ volatile ("rdmsr" : "=a"(lo), "=d"(hi) : "c"(msr));
+  return ((uint64_t)hi << 32) | lo;
+}
+
 static struct task tasks[MAX_TASKS];
 static int next_pid = 1;
 static struct task *current = 0;
@@ -331,6 +345,20 @@ void sched_init(void) {
 
 struct task *task_current(void) { return current; }
 
+int task_set_fs_base(uint64_t base) {
+  struct task *t = task_current();
+  if (!t)
+    return -1;
+  t->fs_base = base;
+  sched_wrmsr(MSR_FS_BASE, base);
+  return 0;
+}
+
+uint64_t task_get_fs_base(void) {
+  struct task *t = task_current();
+  return t ? t->fs_base : 0;
+}
+
 void task_set_name(struct task *t, const char *name) {
   if (!t) return;
   size_t i = 0;
@@ -389,6 +417,7 @@ struct task *task_spawn(void (*entry)(void)) {
   t->user_rsp_saved = 0;
   t->user_entry = 0;
   t->user_rsp_initial = 0;
+  t->fs_base = 0;
   t->state = TASK_READY;
   t->prio = SCHED_PRIO_NORMAL;   /* callers raise it explicitly if needed */
   t->pid = next_pid++;
@@ -429,6 +458,7 @@ struct task *task_spawn_user(uint64_t *user_pml4, uint64_t entry,
   t->user_rsp_saved = user_rsp;
   t->user_entry = entry;
   t->user_rsp_initial = user_rsp;
+  t->fs_base = 0;
   t->state = TASK_READY;
   t->prio = SCHED_PRIO_NORMAL;
   t->pid = next_pid++;
@@ -549,6 +579,7 @@ struct task *task_spawn_thread(uint64_t entry, uint64_t user_stack) {
     t->user_rsp_saved = user_stack;
     t->user_entry = entry;
     t->user_rsp_initial = user_stack;
+    t->fs_base = parent->fs_base;
 
     t->state = TASK_READY;
     t->prio = SCHED_PRIO_NORMAL;
@@ -578,6 +609,7 @@ struct task *task_spawn_thread(uint64_t entry, uint64_t user_stack) {
 static void stage_for(struct task *next) {
   kernel_rsp_top = next->syscall_kstack_top;
   user_rsp_save  = next->user_rsp_saved;
+  sched_wrmsr(MSR_FS_BASE, next->fs_base);
   tss_set_rsp0(next->syscall_kstack_top);
 }
 
@@ -585,6 +617,7 @@ static void stage_for(struct task *next) {
  * value survives across other tasks running. */
 static void capture_from(struct task *prev) {
   prev->user_rsp_saved = user_rsp_save;
+  prev->fs_base = sched_rdmsr(MSR_FS_BASE);
 }
 
 void task_yield(void) {

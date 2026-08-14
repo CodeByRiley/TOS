@@ -33,8 +33,10 @@ USERSPACE_CLEAN ?= 0
 BUILD_DOOM ?= 0
 
 nvidia_firmware_files := $(wildcard rootfs/firmware/*.bin)
+holyd_sample_files := $(wildcard rootfs/holyd/*.hd)
 rootfs_payload_files := rootfs/readme.txt rootfs/cursor.bmp \
                         rootfs/music/beethoven.wav \
+                        $(holyd_sample_files) \
                         $(nvidia_firmware_files)
 
 $(kernel_c_object_files): build/kernel/%.o : kernel/%.c
@@ -117,7 +119,8 @@ HOST_TEST_BINS := \
 	$(HOST_TEST_DIR)/stdio_mode_test.exe \
 	$(HOST_TEST_DIR)/bmp_decode_test.exe \
 	$(HOST_TEST_DIR)/gfx_ui_test.exe \
-	$(HOST_TEST_DIR)/fb_damage_test.exe
+	$(HOST_TEST_DIR)/fb_damage_test.exe \
+	$(HOST_TEST_DIR)/holyd_compiler_test.exe
 
 $(HOST_TEST_DIR):
 	mkdir -p $@
@@ -163,6 +166,19 @@ $(HOST_TEST_DIR)/gfx_ui_test.exe: tests/gfx_ui_test.c userspace/lib/gfx.c \
 $(HOST_TEST_DIR)/fb_damage_test.exe: tests/fb_damage_test.c | $(HOST_TEST_DIR)
 	$(HOST_CC) $(HOST_TEST_CFLAGS) $< -o $@
 
+$(HOST_TEST_DIR)/holyd_compiler_test.exe: tests/holyd_compiler_test.c \
+		userspace/bin/holyd/compiler.c userspace/bin/holyd/compiler.h \
+		userspace/bin/holyd/eval.c userspace/bin/holyd/eval.h \
+		userspace/bin/holyd/lexer/lexer.c userspace/bin/holyd/lexer/lexer.h \
+		userspace/bin/holyd/parser/parser.c userspace/bin/holyd/parser/parser.h \
+		userspace/bin/holyd/ast/ast.c userspace/bin/holyd/ast/ast.h \
+		| $(HOST_TEST_DIR)
+	$(HOST_CC) $(HOST_TEST_CFLAGS) -I userspace -I userspace/bin/holyd \
+		tests/holyd_compiler_test.c userspace/bin/holyd/compiler.c \
+		userspace/bin/holyd/eval.c userspace/bin/holyd/lexer/lexer.c \
+		userspace/bin/holyd/parser/parser.c userspace/bin/holyd/ast/ast.c \
+		-o $@
+
 .PHONY: test test-host
 test: test-host
 
@@ -182,6 +198,8 @@ test-qemu-heavy: build-x86_64
 		python3 tests/fb_mapping_lifetime_test.py --timeout 90 && \
 		python3 tests/virtio_resize_test.py --boot-timeout 90 && \
 		python3 tests/deskelf_test.py --timeout 90 && \
+		python3 tests/winman_partial_repaint_test.py --timeout 90 && \
+		python3 tests/winman_titlebar_double_click_test.py --timeout 90 && \
 		python3 tests/path_lookup_test.py --timeout 90 && \
 		python3 tests/kernel_panic_test.py --timeout 90"
 

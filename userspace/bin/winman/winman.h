@@ -296,18 +296,13 @@ static int z_order[MAX_Z];
 static int z_count = 0;
 
 struct console {
-  uint32_t *surface;
-  void *raw;
-  char *cells;
+    struct window win;
 
-  int enabled;
-  int x, y;
-  int client_w, client_h;
-  int cols, rows;
-  int cx, cy;
-  int scale;
-
-  char title[48];
+    char *cells;
+    char *saved_cells;
+    int cols, rows;
+    int cx, cy;
+    int scale;
 };
 
 static struct console con;

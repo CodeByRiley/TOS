@@ -24,86 +24,103 @@
 /* ---------------- System-call numbers -----------------------------------
  *
  * Linux x86_64 numbers wherever the call means the same thing; TOS-only
- * calls take numbers Linux has not used. 12 (brk) and 13 (rt_sigaction)
- * are deliberately left free. */
-#define SYS_READ    		   0
-#define SYS_WRITE   		   1
-#define SYS_OPEN    		   2
-#define SYS_CLOSE   		   3
-#define SYS_STAT           4
-#define SYS_FSTAT          5
-#define SYS_LSEEK   		   8
-#define SYS_MMAP    		   9
-#define SYS_MPROTECT       10
-#define SYS_MUNMAP         11
-#define SYS_GETCWD         79
-#define SYS_CHDIR          80
-#define SYS_RMDIR          84
-#define SYS_READDIR        217
-#define SYS_READDIR_PATH   218
+ * calls take numbers Linux has not used. 13 (rt_sigaction) is deliberately
+ * left free. */
+#define SYS_READ    		     	 0
+#define SYS_WRITE   		     	 1
+#define SYS_OPEN    		     	 2
+#define SYS_CLOSE   		     	 3
+#define SYS_STAT             	 4
+#define SYS_FSTAT            	 5
+#define SYS_POLL             	 7
+#define SYS_LSEEK   		     	 8
+#define SYS_MMAP    		     	 9
+#define SYS_MPROTECT         	 10
+#define SYS_MUNMAP           	 11
+#define SYS_BRK              	 12
+#define SYS_IOCTL            	 16
+#define SYS_READV            	 19
+#define SYS_WRITEV           	 20
+#define SYS_NANOSLEEP        	 35
+#define SYS_LINUX_GETPID     	 39
+#define SYS_FCNTL            	 72
+#define SYS_GETCWD           	 79
+#define SYS_CHDIR            	 80
+#define SYS_RMDIR            	 84
+#define SYS_READDIR          	 217
+#define SYS_SET_TID_ADDRESS  	 218
+#define SYS_CLOCK_GETTIME    	 228
+#define SYS_EXIT_GROUP       	 231
+#define SYS_FSTATAT          	 262
 
+#define SYS_YIELD   	  	   	 24
+#define SYS_EXIT    	  	   	 60
+#define SYS_FB_INFO     	   	 100
+#define SYS_FB_MAP      	   	 101
+#define SYS_FB_DAMAGE   	   	 108
+#define SYS_FB_PRESENT       	 109
+#define SYS_FB_REGISTER      	 110
+#define SYS_FB_UNREGISTER    	 111
+#define SYS_KBD_POLL    	   	 102
+#define SYS_GET_TICKS   	   	 103
+#define SYS_EXEC        	   	 104
+#define SYS_MSG_GET     	   	 105
+#define SYS_MSG_PEEK    	   	 106
+#define SYS_MOUSE_POS   	   	 107
+#define SYS_CON_WRITE   	   	 120
+#define SYS_CON_CLEAR   	   	 121
+#define SYS_SLEEP_TICKS 	   	 122
+#define SYS_GET_PID     	   	 123
+#define SYS_IPC_SEND         	 130
+#define SYS_IPC_RECV         	 131
+#define SYS_SHMEM_SHARE      	 132
+#define SYS_SHMEM_UNSHARE    	 133
+#define SYS_WM_REGISTER      	 134
+#define SYS_WM_PID           	 135
+#define SYS_TTY_DRAIN        	 136
 
-#define SYS_YIELD   	  	 24
-#define SYS_EXIT    	  	 60
-#define SYS_FB_INFO     	 100
-#define SYS_FB_MAP      	 101
-#define SYS_FB_DAMAGE   	 108
-#define SYS_FB_PRESENT    109
-#define SYS_FB_REGISTER   110
-#define SYS_FB_UNREGISTER 111
-#define SYS_KBD_POLL    	 102
-#define SYS_GET_TICKS   	 103
-#define SYS_EXEC        	 104
-#define SYS_MSG_GET     	 105
-#define SYS_MSG_PEEK    	 106
-#define SYS_MOUSE_POS   	 107
-#define SYS_CON_WRITE   	 120
-#define SYS_CON_CLEAR   	 121
-#define SYS_SLEEP_TICKS 	 122
-#define SYS_GET_PID     	 123
-#define SYS_IPC_SEND       130
-#define SYS_IPC_RECV       131
-#define SYS_SHMEM_SHARE    132
-#define SYS_SHMEM_UNSHARE  133
-#define SYS_WM_REGISTER    134
-#define SYS_WM_PID         135
-#define SYS_TTY_DRAIN      136
+#define SYS_PROC_LIST        	 140
+#define SYS_MEM_STATS        	 141
+#define SYS_CON_PUSH         	 142
+#define SYS_CON_POP          	 143
+#define SYS_SPAWN            	 144
+#define SYS_KILL             	 145
+#define SYS_CON_ZOOM         	 146
 
-#define SYS_PROC_LIST      140
-#define SYS_MEM_STATS      141
-#define SYS_CON_PUSH       142
-#define SYS_CON_POP        143
-#define SYS_SPAWN          144
-#define SYS_KILL           145
-#define SYS_CON_ZOOM       146
+#define SYS_AUDIO_OPEN       	 147
+#define SYS_AUDIO_WRITE      	 148
+#define SYS_AUDIO_STATUS     	 149
+#define SYS_AUDIO_DRAIN      	 150
+#define SYS_AUDIO_CLOSE      	 151
+#define SYS_AUDIO_SET_VOLUME 	 152
+#define SYS_AUDIO_PAUSE      	 153
+#define SYS_AUDIO_RESUME     	 154
 
-#define SYS_AUDIO_OPEN       147
-#define SYS_AUDIO_WRITE      148
-#define SYS_AUDIO_STATUS     149
-#define SYS_AUDIO_DRAIN      150
-#define SYS_AUDIO_CLOSE      151
-#define SYS_AUDIO_SET_VOLUME 152
-#define SYS_AUDIO_PAUSE      153
-#define SYS_AUDIO_RESUME     154
+#define SYS_ARCH_PRCTL          158
+#define ARCH_SET_FS         0x1002
+#define ARCH_GET_FS         0x1003
 
-#define AUDIO_FORMAT_S16_LE 1
-#define AUDIO_CHANNELS_STEREO 2
+#define AUDIO_FORMAT_S16_LE    1
+#define AUDIO_CHANNELS_STEREO  2
 
-#define AUDIO_ERR_NO_DEVICE (-1)
-#define AUDIO_ERR_BUSY      (-2)
-#define AUDIO_ERR_INVALID   (-3)
-#define AUDIO_ERR_NOT_OWNER (-4)
+#define AUDIO_ERR_NO_DEVICE    (-1)
+#define AUDIO_ERR_BUSY         (-2)
+#define AUDIO_ERR_INVALID      (-3)
+#define AUDIO_ERR_NOT_OWNER    (-4)
 
-#define SYS_THREAD_CREATE  200
-#define SYS_THREAD_EXIT    201
-#define SYS_THREAD_JOIN	   202
-#define SYS_FUTEX_WAIT     203
-#define SYS_FUTEX_WAKE	   204
+#define SYS_THREAD_CREATE  		 200
+#define SYS_THREAD_EXIT    		 201
+#define SYS_THREAD_JOIN	   		 202
+#define SYS_FUTEX_WAIT     		 203
+#define SYS_FUTEX_WAKE	   		 204
 
-#define SYS_MKDIR          83
-#define SYS_UNLINK         87
-#define SYS_SHUTDOWN       888
-#define SYS_REBOOT         887
+#define SYS_MKDIR          		 83
+#define SYS_UNLINK         		 87
+#define SYS_SHUTDOWN       		 888
+#define SYS_REBOOT         		 887
+#define SYS_READDIR_PATH     	 889
+#define SYS_STAT_RAW         	 890
+#define SYS_FSTAT_RAW        	 891
 
 /* ---------------- mmap / mprotect --------------------------------------
  *
@@ -217,9 +234,12 @@ _Static_assert(sizeof(struct audio_status) == 48,
 #define MSG_TIMER       6
 #define MSG_QUIT        7
 
-#define MOUSE_BTN_LEFT   0x01
-#define MOUSE_BTN_RIGHT  0x02
-#define MOUSE_BTN_MIDDLE 0x04
+#define MOUSE_BTN_LEFT    0x01
+#define MOUSE_BTN_RIGHT   0x02
+#define MOUSE_BTN_MIDDLE  0x04
+#define MOUSE_BTN_FORWARD 0x08
+#define MOUSE_BTN_BACK    0x10
+
 
 struct msg {
     uint16_t type;    /* MSG_*                 */

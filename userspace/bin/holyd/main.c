@@ -8,6 +8,7 @@
 #include <include/string.h>
 #include "parser/parser.h"
 #include "eval.h"
+#include "compiler.h"
 
 int check_ext(const char *filename) {
     const char *ext = strrchr(filename, '.');
@@ -55,9 +56,20 @@ int test(void) {
     if (program != NULL) {
         printf("[Test] Parsed successfully! Found %d top-level statements.\n",
                program->stmt_count);
-        // FreeAST(program); // Make sure to implement AST memory cleanup!
+        HDProgram bytecode;
+        HDProgramInit(&bytecode);
+        if (!HDCompileProgram(program, &bytecode)) {
+            printf("[Test] Compile failed.\n");
+            return 1;
+        }
+        printf("[Test] Running compiled bytecode...\n");
+        if (!HDRunProgram(&bytecode)) {
+            printf("[Test] Runtime failed.\n");
+            return 1;
+        }
     } else {
         printf("[Test] Parse error!\n");
+        return 1;
     }
 
     return 0;
@@ -65,7 +77,8 @@ int test(void) {
 
 int main(int argc, char **argv) {
     if (argc < 2) {
-        printf("Usage: holyd <source.hd> [--test]\n");
+        printf("Usage: holyd [--interpret] [--dump-bytecode] <source.hd>\n");
+        printf("       holyd --test\n");
         return 1;
     }
 
@@ -73,15 +86,34 @@ int main(int argc, char **argv) {
         return test();
     }
 
-    // validate Extension
-    if (!check_ext(argv[1])) {
-        printf("Error: File '%s' must have .hd extension\n", argv[1]);
+    int use_interpreter = 0;
+    int dump_bytecode = 0;
+    const char* source_path = NULL;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--interpret") == 0) {
+            use_interpreter = 1;
+        } else if (strcmp(argv[i], "--dump-bytecode") == 0) {
+            dump_bytecode = 1;
+        } else {
+            source_path = argv[i];
+        }
+    }
+
+    if (source_path == NULL) {
+        printf("Usage: holyd [--interpret] [--dump-bytecode] <source.hd>\n");
         return 1;
     }
 
-    char *source = read_file(argv[1]);
+    // validate Extension
+    if (!check_ext(source_path)) {
+        printf("Error: File '%s' must have .hd extension\n", source_path);
+        return 1;
+    }
+
+    char *source = read_file(source_path);
     if (source == NULL) {
-        printf("Error: Could not open or read file '%s'\n", argv[1]);
+        printf("Error: Could not open or read file '%s'\n", source_path);
         return 1;
     }
 
@@ -95,11 +127,25 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    // Create the global environment and run the program!
-    Environment env;
-    EnvInit(&env);
-
-    EvalNode(program, &env);
+    if (use_interpreter) {
+        Environment env;
+        EnvInit(&env);
+        EvalNode(program, &env);
+    } else {
+        HDProgram bytecode;
+        HDProgramInit(&bytecode);
+        if (!HDCompileProgram(program, &bytecode)) {
+            free(source);
+            return 1;
+        }
+        if (dump_bytecode) {
+            HDDumpProgram(&bytecode);
+        }
+        if (!HDRunProgram(&bytecode)) {
+            free(source);
+            return 1;
+        }
+    }
 
     free(source);
     return 0;

@@ -4,8 +4,9 @@
  *   1. process_pml4_create()    — fresh PML4 sharing kernel-low identity
  *   2. elf_load()               — load the ELF into the PML4
  *   3. user_stack_alloc_in()    — populate the user stack pages
- *   4. argv marshal             — copy argv strings + pointer array onto
- *                                  the user stack
+ *   4. argv marshal             — copy argv strings and Linux-style
+ *                                  argc/argv/envp/auxv terminators onto the
+ *                                  user stack
  *   5. task activation          — publish the reserved task as runnable
  *
  * process_exec blocks until the child exits and returns its code.
@@ -310,13 +311,26 @@ static int load_request_image(struct spawn_request *req,
     }
     image->user_rsp &= ~0xFULL;
 
-    uint64_t initial_stack[ARGV_MAX + 2];
+    /* Initial userspace stack:
+     *   argc
+     *   argv[0..argc-1]
+     *   NULL            argv terminator
+     *   NULL            empty envp terminator
+     *   AT_NULL, 0      empty auxiliary vector
+     *
+     * The original TOS crt0 only consumes argc/argv, but musl's crt1 scans
+     * envp and auxv before calling main. Supplying explicit terminators keeps
+     * both startup paths on the same ABI. */
+    uint64_t initial_stack[ARGV_MAX + 5];
     initial_stack[0] = (uint64_t)req->argc;
     for (int i = 0; i < req->argc; i++)
         initial_stack[i + 1] = arg_ptrs[i];
     initial_stack[req->argc + 1] = 0;
+    initial_stack[req->argc + 2] = 0;
+    initial_stack[req->argc + 3] = 0;
+    initial_stack[req->argc + 4] = 0;
 
-    size_t initial_bytes = (size_t)(req->argc + 2) * sizeof(uint64_t);
+    size_t initial_bytes = (size_t)(req->argc + 5) * sizeof(uint64_t);
     if (initial_bytes & 0xF)
         image->user_rsp -= sizeof(uint64_t);
     image->user_rsp -= initial_bytes;

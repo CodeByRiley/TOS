@@ -76,6 +76,22 @@
 #define MOUSE_SET_DEFAULTS 0xF6
 #define MOUSE_ENABLE       0xF4
 #define MOUSE_ACK          0xFA
+#define MOUSE_SMPL_RATE    0xF3 // Set Sample Rate
+#define MOUSE_SET_RES	     0xE8
+
+#define RES_1_COUNT 0x00
+#define RES_2_COUNT 0x01
+#define RES_4_COUNT 0x02
+#define RES_8_COUNT 0x03
+
+#define SAMPLE_10HZ 10
+#define SAMPLE_20HZ 20
+#define SAMPLE_40HZ 40
+#define SAMPLE_60HZ 60
+#define SAMPLE_80HZ 80
+#define SAMPLE_100HZ 100
+#define SAMPLE_200HZ 200
+
 
 /* Mouse packet, byte 0 */
 //
@@ -158,6 +174,18 @@ static int mouse_cmd(uint8_t cmd) {
     if (data_send(cmd) != 0) return -1;
     uint8_t resp;
     if (data_recv(&resp) != 0) return -1;
+    if (resp != MOUSE_ACK) return -1;
+    return 0;
+}
+
+/* Send a command that requires an argument byte (e.g., sample rate, resolution) */
+static int mouse_cmd_arg(uint8_t cmd, uint8_t arg) {
+    if (mouse_cmd(cmd) != 0) return -1;       /* Send command, expect ACK */
+    if (ctrl_send(CTRL_WRITE_AUX) != 0) return -1;
+    if (data_send(arg) != 0) return -1;       /* Send argument */
+
+    uint8_t resp;
+    if (data_recv(&resp) != 0) return -1;     /* Expect second ACK */
     if (resp != MOUSE_ACK) return -1;
     return 0;
 }
@@ -361,10 +389,25 @@ void mouse_init(void) {
         return;
     }
 
+    /* Reset to defaults (stops any prior streaming) */
     if (mouse_cmd(MOUSE_SET_DEFAULTS) != 0) {
         log_write("mouse: set-defaults rejected", KERNEL, LOG_ERROR);
         return;
     }
+
+    /* Set sample rate */
+    if (mouse_cmd_arg(MOUSE_SMPL_RATE, SAMPLE_200HZ) != 0) {
+        log_write("mouse: set sample rate failed", KERNEL, LOG_ERROR);
+        return;
+    }
+
+    /* Set resolution to 8 counts/mm (0x03) */
+    if (mouse_cmd_arg(MOUSE_SET_RES, RES_8_COUNT) != 0) {
+        log_write("mouse: set resolution failed", KERNEL, LOG_ERROR);
+        return;
+    }
+
+    /* Enable streaming last, so config commands aren't mixed with data */
     if (mouse_cmd(MOUSE_ENABLE) != 0) {
         log_write("mouse: enable rejected", KERNEL, LOG_ERROR);
         return;

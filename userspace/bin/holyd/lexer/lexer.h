@@ -15,18 +15,39 @@ typedef enum {
 
     // Holy D Keywords
     TOKEN_U0,           // U0
+    TOKEN_I8,           // I8
+    TOKEN_U8,           // U8
+    TOKEN_I16,          // I16
+    TOKEN_U16,          // U16
+    TOKEN_I32,          // I32
+    TOKEN_U64,          // U64
     TOKEN_I64,          // I64
     TOKEN_U32,          // U32
     TOKEN_F64,          // F64
+    TOKEN_VOID,         // void
+    TOKEN_INT,          // int
+    TOKEN_UINT,         // uint
+    TOKEN_LONG,         // long
+    TOKEN_ULONG,        // ulong
+    TOKEN_DOUBLE,       // double
+    TOKEN_BOOL,         // bool
+    TOKEN_STRING_TYPE,  // string
     TOKEN_AUTO,         // auto
     TOKEN_FOREACH,      // foreach
+    TOKEN_FOR,          // for
     TOKEN_IF,           // if
     TOKEN_ELSE,         // else
     TOKEN_WHILE,        // while
     TOKEN_RETURN,       // return
+    TOKEN_TRUE,         // true
+    TOKEN_FALSE,        // false
+    TOKEN_MODULE,       // module
+    TOKEN_IMPORT,       // import
 
     // Operators
     TOKEN_ASSIGN,       // =
+    TOKEN_PLUSPLUS,     // ++
+    TOKEN_MINUSMINUS,   // --
     TOKEN_PLUS,         // +
     TOKEN_MINUS,        // -
     TOKEN_STAR,         // *
@@ -46,6 +67,7 @@ typedef enum {
     TOKEN_SEMICOLON,    // ;
     TOKEN_COLON,        // :
     TOKEN_COMMA,        // ,
+    TOKEN_DOT,          // .
     TOKEN_LPAREN,       // (
     TOKEN_RPAREN,       // )
     TOKEN_LBRACE,       // {

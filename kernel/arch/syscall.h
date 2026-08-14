@@ -19,7 +19,7 @@
  * a future Linux personality doesn't need a translation table. TOS-only
  * calls take numbers Linux has not used at all.
  *
- * 12 (brk) and 13 (rt_sigaction) are deliberately left free.
+ * 13 (rt_sigaction) is deliberately left free.
  */
 #define SYS_READ    		 0
 #define SYS_WRITE   		 1
@@ -27,17 +27,29 @@
 #define SYS_CLOSE   		 3
 #define SYS_STAT             4
 #define SYS_FSTAT            5
+#define SYS_POLL             7
 #define SYS_LSEEK   		 8
 #define SYS_MMAP    		 9
 #define SYS_MPROTECT        10
 #define SYS_MUNMAP          11
+#define SYS_BRK             12
+#define SYS_IOCTL           16
+#define SYS_READV           19
+#define SYS_WRITEV          20
+#define SYS_NANOSLEEP       35
+#define SYS_LINUX_GETPID    39
+#define SYS_FCNTL           72
 #define SYS_GETCWD          79
 #define SYS_CHDIR           80
 #define SYS_MKDIR   		 83
 #define SYS_RMDIR           84
 #define SYS_UNLINK  		 87
-#define SYS_READDIR        217   /* Linux getdents64 slot                  */
-#define SYS_READDIR_PATH   218   /* TOS extension: enumerate by path       */
+#define SYS_GETTIMEOFDAY    96
+#define SYS_READDIR        217   /* Linux getdents64 slot + legacy TOS ABI */
+#define SYS_SET_TID_ADDRESS 218
+#define SYS_EXIT_GROUP     231
+#define SYS_CLOCK_GETTIME  228
+#define SYS_FSTATAT        262   /* Linux newfstatat                       */
 
 /* mmap / mprotect
  *
@@ -140,6 +152,11 @@ _Static_assert(sizeof(struct stat_user) == 24,
 #define SYS_AUDIO_PAUSE      153
 #define SYS_AUDIO_RESUME     154
 
+/* Linux x86_64 TLS control. musl uses ARCH_SET_FS during startup. */
+#define SYS_ARCH_PRCTL       158
+#define ARCH_SET_FS       0x1002
+#define ARCH_GET_FS       0x1003
+
 #define AUDIO_FORMAT_S16_LE 1
 
 struct audio_status_user {
@@ -170,6 +187,9 @@ _Static_assert(sizeof(struct audio_status_user) == 48,
 /* Power management */
 #define SYS_SHUTDOWN   888
 #define SYS_REBOOT     887
+#define SYS_READDIR_PATH 889
+#define SYS_STAT_RAW     890
+#define SYS_FSTAT_RAW    891
 
 /* Saved register frame produced by SYSCALL entry. Order matches the
  * pushes in syscall.asm — DO NOT reorder without updating both sides.

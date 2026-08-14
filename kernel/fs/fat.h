@@ -86,6 +86,8 @@ void   fat_set_timestamp(struct dir_entry *entry);
  * the VFAT long name when the entry has one, else the 8.3 name. */
 long   fat_read_dir(const char *path, uint32_t *index, char *buf, size_t len);
 long   fat_read_root_dir(uint32_t *index, char *buf, size_t len);
+long   fat_read_dir_one(const char *path, uint32_t *index, char *buf,
+                        size_t len, int *is_dir);
 
 int    fat_read_sector(uint32_t lba, void *buf);
 int    fat_mount_from_ahci(struct AHCI_DEVICE_DATA *ahci_dev, int port);

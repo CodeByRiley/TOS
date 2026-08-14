@@ -5,20 +5,32 @@
 
 void EnvInit(Environment* env) {
     env->head = NULL;
+    env->parent = NULL;
 }
 
-void EnvSet(Environment* env, const char* name, size_t name_len, HDValue value) {
-    // Check if variable already exists
+void EnvInitChild(Environment* env, Environment* parent) {
+    env->head = NULL;
+    env->parent = parent;
+}
+
+static EnvEntry* EnvFindLocal(Environment* env, const char* name, size_t name_len) {
     EnvEntry* entry = env->head;
     while (entry != NULL) {
         if (entry->name && strlen(entry->name) == name_len && strncmp(entry->name, name, name_len) == 0) {
-            entry->value = value;
-            return;
+            return entry;
         }
         entry = entry->next;
     }
+    return NULL;
+}
 
-    // Create new variable
+void EnvDefine(Environment* env, const char* name, size_t name_len, HDValue value) {
+    EnvEntry* entry = EnvFindLocal(env, name, name_len);
+    if (entry != NULL) {
+        entry->value = value;
+        return;
+    }
+
     EnvEntry* new_entry = (EnvEntry*)malloc(sizeof(EnvEntry));
     new_entry->name = (char*)malloc(name_len + 1);
     memcpy(new_entry->name, name, name_len);
@@ -28,13 +40,28 @@ void EnvSet(Environment* env, const char* name, size_t name_len, HDValue value) 
     env->head = new_entry;
 }
 
+void EnvSet(Environment* env, const char* name, size_t name_len, HDValue value) {
+    Environment* current = env;
+    while (current != NULL) {
+        EnvEntry* entry = EnvFindLocal(current, name, name_len);
+        if (entry != NULL) {
+            entry->value = value;
+            return;
+        }
+        current = current->parent;
+    }
+
+    EnvDefine(env, name, name_len, value);
+}
+
 HDValue* EnvGet(Environment* env, const char* name, size_t name_len) {
-    EnvEntry* entry = env->head;
-    while (entry != NULL) {
-        if (entry->name && strlen(entry->name) == name_len && strncmp(entry->name, name, name_len) == 0) {
+    Environment* current = env;
+    while (current != NULL) {
+        EnvEntry* entry = EnvFindLocal(current, name, name_len);
+        if (entry != NULL) {
             return &entry->value;
         }
-        entry = entry->next;
+        current = current->parent;
     }
     return NULL; // Variable not found
 }

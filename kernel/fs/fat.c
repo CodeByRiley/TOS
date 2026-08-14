@@ -1511,6 +1511,59 @@ long fat_read_root_dir(uint32_t *index, char *buffer, size_t length) {
   return fat_read_dir("/", index, buffer, length);
 }
 
+long fat_read_dir_one(const char *path, uint32_t *index, char *buffer,
+                      size_t length, int *is_dir) {
+  if (!index || !buffer || length == 0)
+    return -1;
+
+  struct fat_dir dir;
+  if (resolve_directory(path, &dir) != 0)
+    return -1;
+
+  struct dir_cursor cursor;
+  if (cursor_init(&cursor, dir, *index) != 0)
+    return -1;
+
+  struct lfn_state lfn;
+  lfn_reset(&lfn);
+
+  struct dir_entry *entry;
+  while ((entry = cursor_next(&cursor)) != 0) {
+    if ((uint8_t)entry->name[0] == 0x00)
+      break;
+
+    if (entry_is_lfn(entry)) {
+      lfn_feed(&lfn, entry, cursor.index - 1);
+      continue;
+    }
+    if (!entry_is_usable(entry) || is_dot_entry(entry)) {
+      lfn_reset(&lfn);
+      continue;
+    }
+
+    const char *long_name = lfn_take(&lfn, entry);
+    size_t name_length;
+    if (long_name) {
+      name_length = strlen(long_name);
+      if (name_length + 1 > length)
+        return -1;
+      memcpy(buffer, long_name, name_length);
+    } else {
+      name_length = entry_short_name(entry, buffer);
+      if (name_length + 1 > length)
+        return -1;
+    }
+    buffer[name_length] = 0;
+    if (is_dir)
+      *is_dir = (entry->attr & FAT_ATTR_DIRECTORY) ? 1 : 0;
+    *index = cursor.index;
+    return (long)(name_length + 1);
+  }
+
+  *index = cursor.index;
+  return 0;
+}
+
 /* Load the physical AHCI disk into the FAT driver's RAM array */
 int fat_mount_from_ahci(struct AHCI_DEVICE_DATA *ahci_dev, int port) {
     if (!ahci_dev) return -1;

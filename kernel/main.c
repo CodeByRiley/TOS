@@ -121,30 +121,33 @@ void kernel_main(uint64_t mb2_addr) {
   usb_init();
   ahci_init();
 
-  // log_write("Testing Demand Paging...", KERNEL, LOG_INFO);
+  log_write("Testing Demand Paging...", KERNEL, LOG_INFO);
 
-  //  Allocate a 4KB virtual page using vmalloc
-  //    (vmalloc allocates a VMA range, but we won't map it yet to test the
-  //    fault)
-  // Note: If you actually use vmalloc, it maps it. To test pure demand paging,
-  // we can just unmap it immediately to simulate an unmapped VMA.
-  // uint64_t test_page = vmalloc(4096);
-  // vmm_unmap_in(kernel_pml4, test_page);
+  // Reserve virtual address space and VMA metadata WITHOUT allocating physical
+  // frames
+  uint64_t test_page = vma_alloc(4096);
+  if (!test_page) {
+    log_write("Demand Paging Test: vma_alloc failed!", KERNEL, LOG_ERROR);
+    return;
+  }
 
-  // log_write("Unmapped test page. Preparing to write to it...", KERNEL,
-  //           LOG_INFO);
+  log_write("Allocated unmapped VMA. Preparing to write to it...", KERNEL,
+            LOG_INFO);
 
-  // // Write to it! This will trigger a page fault.
-  // uint32_t *ptr = (uint32_t *)test_page;
-  // *ptr = 0xDEADBEEF;
+  // Trigger #PF! Hardware saves fault address in CR2 register.
+  uint32_t *ptr = (uint32_t *)test_page;
+  *ptr = 0xDEADBEEF;
 
-  // // Read it back to prove the handler mapped it properly
-  // if (*ptr == 0xDEADBEEF) {
-  //   log_write("Demand Paging Success! CPU dynamically mapped the page.", KERNEL,
-  //             LOG_INFO);
-  // } else {
-  //   log_write("Demand Paging FAILED!", KERNEL, LOG_ERROR);
-  // }
+  // Read back to confirm page fault handler mapped physical memory and resumed
+  if (*ptr == 0xDEADBEEF) {
+    log_write("Demand Paging Success! Hardware fault handled dynamically.",
+              KERNEL, LOG_INFO);
+  } else {
+    log_write("Demand Paging FAILED!", KERNEL, LOG_ERROR);
+  }
+
+  // Clean up test allocation
+  vfree(test_page);
 
   /* Pick who drives scanout. The test is whether a native driver has
    * actually taken the display, not whether its hardware merely exists:
@@ -200,20 +203,41 @@ void kernel_main(uint64_t mb2_addr) {
     for (;;)
       __asm__ volatile("hlt");
   }
-  log_write("rootfs: module found", FILESYS, LOG_INFO);
-  if (fat_mount_from_ahci(g_ahci_dev, 0) != 0) {
-    log_write("Failed to mount rootfs!", KERNEL, LOG_ERROR);
-  }
-  if (fat_init(phys_to_virt(m->mod_start), m->mod_end - m->mod_start) != 0) {
-    log_write("rootfs: FAT initialisation failed", FILESYS, LOG_ERROR);
+
+  bool fs_mounted = false;
+
+  // Try mounting physical SATA drive first
+  if (g_ahci_dev && fat_mount_from_ahci(g_ahci_dev, 0) == 0) {
+    log_write("rootfs: mounted from AHCI SATA drive", FILESYS, LOG_INFO);
+    fs_mounted = true;
   } else {
-    nvidia_driver_late_init();
-    ttf_init_font();
-    if (g_sys_font != NULL) {
-      tty_resize();
-      static const char hello[] = "Hello from TTF!\n";
-      tty_write(hello, sizeof(hello) - 1);
+    log_write("rootfs: AHCI unavailable or unformatted, trying ramdisk...",
+              KERNEL, LOG_WARN);
+  }
+
+  // Fall back to Multiboot2 RAM module if AHCI wasn't mounted
+  if (!fs_mounted && m) {
+    if (fat_init(phys_to_virt(m->mod_start), m->mod_end - m->mod_start) == 0) {
+      log_write("rootfs: mounted from Multiboot2 ramdisk module", FILESYS,
+                LOG_INFO);
+      fs_mounted = true;
     }
+  }
+
+  // Halt if no root filesystem could be mounted
+  if (!fs_mounted) {
+    log_write("PANIC: Unable to mount any root filesystem!", KERNEL, LOG_ERROR);
+    for (;;)
+      __asm__ volatile("hlt");
+  }
+
+  // Run post-mount initializations once rootfs is guaranteed to be ready
+  nvidia_driver_late_init();
+  ttf_init_font();
+  if (g_sys_font != NULL) {
+    tty_resize();
+    static const char hello[] = "Hello from TTF!\n";
+    tty_write(hello, sizeof(hello) - 1);
   }
 
   pic_clear_mask(0);

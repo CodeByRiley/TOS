@@ -60,6 +60,49 @@ _Static_assert(SYSRET_STAR_BASE + 16 == (GDT_USER_CODE | GDT_RPL_USER),
 #define MAX_SHMEM_PAGES 4096 /* per-call cap; 16 MiB */
 #define AUDIO_WRITE_MAX (1024 * 1024)
 
+#define O_CREAT     0x40
+#define O_TRUNC     0x200
+#define O_DIRECTORY 0200000
+
+#define AT_FDCWD      (-100)
+#define AT_EMPTY_PATH 0x1000
+
+#define S_IFREG 0100000
+#define S_IFDIR 0040000
+#define S_IRUSR 0400
+#define S_IWUSR 0200
+#define S_IXUSR 0100
+#define S_IRGRP 0040
+#define S_IWGRP 0020
+#define S_IXGRP 0010
+#define S_IROTH 0004
+#define S_IWOTH 0002
+#define S_IXOTH 0001
+
+#define DT_DIR 4
+#define DT_REG 8
+
+#define F_DUPFD  0
+#define F_GETFD  1
+#define F_SETFD  2
+#define F_GETFL  3
+#define F_SETFL  4
+
+#define TIOCGWINSZ 0x5413
+#define TCGETS     0x5401
+#define TCSETS     0x5402
+#define TCSETSW    0x5403
+#define TCSETSF    0x5404
+
+#define FUTEX_WAIT 0
+#define FUTEX_WAKE 1
+#define FUTEX_CMD_MASK 0x7f
+
+#define POLLIN   0x0001
+#define POLLOUT  0x0004
+#define POLLERR  0x0008
+#define POLLNVAL 0x0020
+
 struct fb_info {
   uint64_t width;
   uint64_t height;
@@ -67,11 +110,70 @@ struct fb_info {
   uint64_t bpp;
 };
 
+struct linux_iovec {
+  void *base;
+  uint64_t len;
+};
+
+struct linux_dirent64 {
+  uint64_t d_ino;
+  int64_t d_off;
+  uint16_t d_reclen;
+  uint8_t d_type;
+  char d_name[];
+};
+
+struct linux_kstat {
+  uint64_t st_dev;
+  uint64_t st_ino;
+  uint64_t st_nlink;
+  uint32_t st_mode;
+  uint32_t st_uid;
+  uint32_t st_gid;
+  uint32_t __pad0;
+  uint64_t st_rdev;
+  int64_t st_size;
+  int64_t st_blksize;
+  int64_t st_blocks;
+  int64_t st_atime_sec;
+  int64_t st_atime_nsec;
+  int64_t st_mtime_sec;
+  int64_t st_mtime_nsec;
+  int64_t st_ctime_sec;
+  int64_t st_ctime_nsec;
+  int64_t __unused[3];
+};
+
+struct linux_timespec {
+  int64_t tv_sec;
+  int64_t tv_nsec;
+};
+
+struct linux_timeval {
+  int64_t tv_sec;
+  int64_t tv_usec;
+};
+
+struct linux_winsize {
+  uint16_t ws_row;
+  uint16_t ws_col;
+  uint16_t ws_xpixel;
+  uint16_t ws_ypixel;
+};
+
+struct linux_pollfd {
+  int32_t fd;
+  int16_t events;
+  int16_t revents;
+};
+
 extern void syscall_entry(void);
 extern uint64_t kernel_rsp_top;
 
 static int resolve_path(const char *path, char *out, size_t max);
 static int user_buffer_ok(const void *pointer, uint64_t bytes, int writable);
+static long sys_futex_wait(uint32_t *addr, uint32_t expected);
+static long sys_futex_wake(uint32_t *addr);
 
 static int fd_alloc_for(struct task *t, struct fat_file *f) {
   if (!t || !f)
@@ -79,6 +181,9 @@ static int fd_alloc_for(struct task *t, struct fat_file *f) {
   for (int i = 3; i < TASK_MAX_FDS; i++) {
     if (!t->fds[i]) {
       t->fds[i] = f;
+      t->fd_is_dir[i] = 0;
+      t->fd_dir_index[i] = 0;
+      t->fd_dir_path[i][0] = 0;
       return i;
     }
   }
@@ -213,7 +318,7 @@ static long sys_fb_present(const void *pixels, uint64_t source_pitch,
  * legal user PTE flag set (VMM_USER is always required). */
 static uint64_t prot_to_pte(int prot) {
   if (prot == PROT_NONE)
-    return 0;                       /* see the PROT_NONE note in syscall.h */
+    return VMM_PRESENT | VMM_USER | VMM_NX;
   if (prot & ~(PROT_READ | PROT_WRITE | PROT_EXEC))
     return 0;
   if (!(prot & PROT_READ))
@@ -605,7 +710,7 @@ static long sys_write(long fd, const void *buf, long n) {
   }
 
   struct task *t = task_current();
-  if (!t || fd < 3 || fd >= TASK_MAX_FDS || !t->fds[fd])
+  if (!t || fd < 3 || fd >= TASK_MAX_FDS || !t->fds[fd] || t->fd_is_dir[fd])
     return -1;
 
   return (long)fat_write(t->fds[fd], buf, (size_t)n);
@@ -1005,10 +1110,6 @@ static long sys_reboot(long time) {
   return 0; /* unreachable */
 }
 
-/* O_CREAT = 0x40, O_TRUNC = 0x200, O_WRONLY = 1 (match fcntl.h) */
-#define O_CREAT 0x40
-#define O_TRUNC 0x200
-
 static int path_is_absolute(const char *path) { return path && path[0] == '/'; }
 
 static int path_append_component(char *out, size_t *len, size_t max,
@@ -1101,8 +1202,37 @@ static long sys_open(const char *path, int flags) {
   struct fat_file *f = (struct fat_file *)kmalloc(sizeof(*f));
   if (!f)
     return -1;
+  memset(f, 0, sizeof(*f));
 
   int rc = fat_open(resolved, f);
+  struct fat_stat st;
+  int stat_rc = fat_stat(resolved, &st);
+  if (rc != 0 && stat_rc == 0 && st.is_dir) {
+    if ((flags & (O_CREAT | O_TRUNC)) != 0) {
+      kfree(f);
+      return -1;
+    }
+    int fd = fd_alloc_for(t, f);
+    if (fd < 0) {
+      kfree(f);
+      return -1;
+    }
+    t->fd_is_dir[fd] = 1;
+    t->fd_dir_index[fd] = 0;
+    size_t i = 0;
+    while (i < sizeof(t->fd_dir_path[fd]) - 1 && resolved[i]) {
+      t->fd_dir_path[fd][i] = resolved[i];
+      i++;
+    }
+    t->fd_dir_path[fd][i] = 0;
+    return fd;
+  }
+
+  if (rc == 0 && (flags & O_DIRECTORY)) {
+    kfree(f);
+    return -1;
+  }
+
   if (rc != 0 && (flags & O_CREAT)) {
     rc = fat_create(resolved, f);
   } else if (rc == 0 && (flags & O_TRUNC)) {
@@ -1144,7 +1274,7 @@ static long sys_rmdir(const char *path) {
 
 static long sys_read(int fd, void *buf, size_t n) {
   struct task *t = task_current();
-  if (!t || fd < 3 || fd >= TASK_MAX_FDS || !t->fds[fd])
+  if (!t || fd < 3 || fd >= TASK_MAX_FDS || !t->fds[fd] || t->fd_is_dir[fd])
     return -1;
 
   struct fat_file *file = t->fds[fd];
@@ -1162,7 +1292,27 @@ static void stat_from_fat(const struct fat_stat *fs, struct stat_user *out) {
   out->attr = fs->attr;
 }
 
-static long sys_stat(const char *path, struct stat_user *out) {
+static uint32_t mode_from_fat(const struct fat_stat *fs) {
+  uint32_t perm = (fs->attr & 0x01)
+      ? (S_IRUSR | S_IRGRP | S_IROTH)
+      : (S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
+  if (fs->is_dir)
+    return S_IFDIR | perm | S_IXUSR | S_IXGRP | S_IXOTH;
+  return S_IFREG | perm;
+}
+
+static void linux_stat_from_fat(const struct fat_stat *fs,
+                                struct linux_kstat *out) {
+  memset(out, 0, sizeof(*out));
+  out->st_ino = fs->first_cluster ? fs->first_cluster : 1;
+  out->st_nlink = 1;
+  out->st_mode = mode_from_fat(fs);
+  out->st_size = fs->is_dir ? 0 : fs->size;
+  out->st_blksize = 4096;
+  out->st_blocks = (out->st_size + 511) / 512;
+}
+
+static long sys_stat_raw(const char *path, struct stat_user *out) {
   if (!path || !out)
     return -1;
 
@@ -1178,25 +1328,72 @@ static long sys_stat(const char *path, struct stat_user *out) {
   return 0;
 }
 
+static long sys_stat(const char *path, struct linux_kstat *out) {
+  if (!path || !out)
+    return -1;
+
+  char resolved[TASK_CWD_MAX];
+  if (resolve_path(path, resolved, sizeof(resolved)) != 0)
+    return -1;
+
+  struct fat_stat fs;
+  if (fat_stat(resolved, &fs) != 0)
+    return -1;
+
+  if (!user_buffer_ok(out, sizeof(*out), 1))
+    return -1;
+  linux_stat_from_fat(&fs, out);
+  return 0;
+}
+
 /* fstat works off the open handle rather than re-resolving a path, so it
  * still reports the right size for a file that has been written through
  * this fd — and keeps working if the name is unlinked while open. */
-static long sys_fstat(int fd, struct stat_user *out) {
+static long sys_fstat_raw(int fd, struct stat_user *out) {
   struct task *t = task_current();
   if (!t || !out || fd < 3 || fd >= TASK_MAX_FDS || !t->fds[fd])
     return -1;
 
-  struct fat_file *f = t->fds[fd];
-  out->size = f->size;
-  out->first_cluster = f->first_cluster;
-  out->type = STAT_TYPE_FILE;   /* fat_open refuses directories */
-  out->attr = 0;
+  if (t->fd_is_dir[fd]) {
+    struct fat_stat fs;
+    if (fat_stat(t->fd_dir_path[fd], &fs) != 0)
+      return -1;
+    stat_from_fat(&fs, out);
+  } else {
+    struct fat_file *f = t->fds[fd];
+    out->size = f->size;
+    out->first_cluster = f->first_cluster;
+    out->type = STAT_TYPE_FILE;
+    out->attr = 0;
+  }
+  return 0;
+}
+
+static long sys_fstat(int fd, struct linux_kstat *out) {
+  struct task *t = task_current();
+  if (!t || !out || fd < 3 || fd >= TASK_MAX_FDS || !t->fds[fd])
+    return -1;
+  if (!user_buffer_ok(out, sizeof(*out), 1))
+    return -1;
+
+  struct fat_stat fs;
+  if (t->fd_is_dir[fd]) {
+    if (fat_stat(t->fd_dir_path[fd], &fs) != 0)
+      return -1;
+  } else {
+    struct fat_file *f = t->fds[fd];
+    fs.size = f->size;
+    fs.first_cluster = f->first_cluster;
+    fs.attr = 0;
+    fs.is_dir = 0;
+  }
+  linux_stat_from_fat(&fs, out);
   return 0;
 }
 
 static long sys_lseek(int fd, long off, int whence) {
   struct task *t = task_current();
-  if (!t || fd < 3 || fd >= TASK_MAX_FDS || !t->fds[fd])
+  if (!t || fd < 3 || fd >= TASK_MAX_FDS || !t->fds[fd] || t->fd_is_dir[fd])
     return -1;
   struct fat_file *f = t->fds[fd];
   uint32_t target;
@@ -1218,6 +1415,9 @@ static long sys_close(int fd) {
     return -1;
   kfree(t->fds[fd]);
   t->fds[fd] = 0;
+  t->fd_is_dir[fd] = 0;
+  t->fd_dir_index[fd] = 0;
+  t->fd_dir_path[fd][0] = 0;
   return 0;
 }
 
@@ -1234,6 +1434,297 @@ static long sys_readdir_path(const char *path, uint32_t *index, char *buf,
   if (resolve_path(path, resolved, sizeof(resolved)) != 0)
     return -1;
   return fat_read_dir(resolved, index, buf, n);
+}
+
+static size_t align_up_size(size_t value, size_t alignment) {
+  return (value + alignment - 1) & ~(alignment - 1);
+}
+
+static long sys_getdents64(int fd, void *user_buf, size_t len) {
+  struct task *t = task_current();
+  if (!t || fd < 3 || fd >= TASK_MAX_FDS || !t->fds[fd] || !t->fd_is_dir[fd])
+    return -1;
+  if (!user_buf || len < sizeof(struct linux_dirent64) + 2 ||
+      !user_buffer_ok(user_buf, len, 1))
+    return -1;
+
+  char *out = (char *)user_buf;
+  size_t written = 0;
+  for (;;) {
+    uint32_t before = t->fd_dir_index[fd];
+    char name[FAT_DIRENT_MAX];
+    int is_dir = 0;
+    long rc = fat_read_dir_one(t->fd_dir_path[fd], &t->fd_dir_index[fd],
+                               name, sizeof(name), &is_dir);
+    if (rc == 0)
+      break;
+    if (rc < 0)
+      return written ? (long)written : -1;
+
+    size_t name_len = strlen(name);
+    size_t reclen = align_up_size(offsetof(struct linux_dirent64, d_name) +
+                                  name_len + 1, 8);
+    if (reclen > len - written) {
+      t->fd_dir_index[fd] = before;
+      break;
+    }
+
+    struct linux_dirent64 *de = (struct linux_dirent64 *)(out + written);
+    memset(de, 0, reclen);
+    de->d_ino = t->fd_dir_index[fd] ? t->fd_dir_index[fd] : 1;
+    de->d_off = (int64_t)t->fd_dir_index[fd];
+    de->d_reclen = (uint16_t)reclen;
+    de->d_type = is_dir ? DT_DIR : DT_REG;
+    memcpy(de->d_name, name, name_len + 1);
+    written += reclen;
+  }
+
+  return (long)written;
+}
+
+static long sys_brk(uint64_t addr) {
+  (void)addr;
+  return -1;
+}
+
+static long sys_readv(int fd, const struct linux_iovec *iov, long iovcnt) {
+  if (iovcnt < 0 || iovcnt > 1024)
+    return -1;
+  if (iovcnt == 0)
+    return 0;
+  if (!user_buffer_ok(iov, (uint64_t)iovcnt * sizeof(*iov), 0))
+    return -1;
+
+  long total = 0;
+  for (long i = 0; i < iovcnt; i++) {
+    if (iov[i].len == 0)
+      continue;
+    if (iov[i].len > (uint64_t)INT64_MAX)
+      return total ? total : -1;
+    long rc = sys_read(fd, iov[i].base, (size_t)iov[i].len);
+    if (rc < 0)
+      return total ? total : rc;
+    total += rc;
+    if (rc == 0 || (uint64_t)rc != iov[i].len)
+      break;
+  }
+  return total;
+}
+
+static long sys_writev(int fd, const struct linux_iovec *iov, long iovcnt) {
+  if (iovcnt < 0 || iovcnt > 1024)
+    return -1;
+  if (iovcnt == 0)
+    return 0;
+  if (!user_buffer_ok(iov, (uint64_t)iovcnt * sizeof(*iov), 0))
+    return -1;
+
+  long total = 0;
+  for (long i = 0; i < iovcnt; i++) {
+    if (iov[i].len == 0)
+      continue;
+    if (iov[i].len > (uint64_t)INT64_MAX)
+      return total ? total : -1;
+    long rc = sys_write(fd, iov[i].base, (long)iov[i].len);
+    if (rc < 0)
+      return total ? total : rc;
+    total += rc;
+    if ((uint64_t)rc != iov[i].len)
+      break;
+  }
+  return total;
+}
+
+static int fd_is_known(struct task *t, int fd) {
+  if (!t || fd < 0 || fd >= TASK_MAX_FDS)
+    return 0;
+  return fd < 3 || t->fds[fd] != 0;
+}
+
+static long sys_fcntl(int fd, int cmd, long arg) {
+  struct task *t = task_current();
+  if (!fd_is_known(t, fd))
+    return -1;
+
+  switch (cmd) {
+  case F_GETFD:
+  case F_SETFD:
+  case F_SETFL:
+    return 0;
+  case F_GETFL:
+    return (fd >= 3 && t->fd_is_dir[fd]) ? O_DIRECTORY : 0;
+  case F_DUPFD:
+    (void)arg;
+    return -1;
+  default:
+    return -1;
+  }
+}
+
+static long sys_poll(struct linux_pollfd *fds, long nfds, long timeout_ms) {
+  if (nfds < 0 || nfds > 64)
+    return -1;
+  if (nfds == 0) {
+    if (timeout_ms > 0) {
+      uint64_t freq = pit_get_freq();
+      if (!freq)
+        freq = 100;
+      uint64_t ticks = ((uint64_t)timeout_ms * freq + 999) / 1000;
+      if (ticks)
+        task_sleep_ticks(ticks);
+    }
+    return 0;
+  }
+  if (!user_buffer_ok(fds, (uint64_t)nfds * sizeof(*fds), 1))
+    return -1;
+
+  struct task *t = task_current();
+  long ready = 0;
+  for (long i = 0; i < nfds; i++) {
+    fds[i].revents = 0;
+    if (!fd_is_known(t, fds[i].fd)) {
+      fds[i].revents = POLLNVAL;
+      ready++;
+      continue;
+    }
+    if ((fds[i].events & POLLOUT) && fds[i].fd != 0)
+      fds[i].revents |= POLLOUT;
+    if ((fds[i].events & POLLIN) && fds[i].fd >= 3)
+      fds[i].revents |= POLLIN;
+    if (fds[i].revents)
+      ready++;
+  }
+
+  if (!ready && timeout_ms > 0) {
+    uint64_t freq = pit_get_freq();
+    if (!freq)
+      freq = 100;
+    uint64_t ticks = ((uint64_t)timeout_ms * freq + 999) / 1000;
+    if (ticks)
+      task_sleep_ticks(ticks);
+  }
+  return ready;
+}
+
+static long sys_ioctl(int fd, long request, void *arg) {
+  struct task *t = task_current();
+  if (!fd_is_known(t, fd))
+    return -1;
+
+  if (request == TIOCGWINSZ) {
+    if (fd > 2)
+      return -1;
+    if (!user_buffer_ok(arg, sizeof(struct linux_winsize), 1))
+      return -1;
+    struct linux_winsize *ws = (struct linux_winsize *)arg;
+    ws->ws_row = 25;
+    ws->ws_col = 80;
+    ws->ws_xpixel = (uint16_t)framebuffer_width();
+    ws->ws_ypixel = (uint16_t)framebuffer_height();
+    return 0;
+  }
+
+  if (request == TCGETS) {
+    if (fd > 2)
+      return -1;
+    if (!user_buffer_ok(arg, 64, 1))
+      return -1;
+    memset(arg, 0, 64);
+    return 0;
+  }
+
+  if (request == TCSETS || request == TCSETSW || request == TCSETSF)
+    return fd <= 2 ? 0 : -1;
+
+  return -1;
+}
+
+static void current_timespec(struct linux_timespec *ts) {
+  uint64_t freq = pit_get_freq();
+  uint64_t ticks = pit_ticks();
+  if (!freq)
+    freq = 100;
+  ts->tv_sec = (int64_t)(ticks / freq);
+  ts->tv_nsec = (int64_t)(((ticks % freq) * 1000000000ULL) / freq);
+}
+
+static long sys_clock_gettime(long clock_id, struct linux_timespec *ts) {
+  if (!ts || !user_buffer_ok(ts, sizeof(*ts), 1))
+    return -1;
+  if (clock_id != 0 && clock_id != 1)
+    return -1;
+  current_timespec(ts);
+  return 0;
+}
+
+static long sys_gettimeofday(struct linux_timeval *tv, void *tz) {
+  (void)tz;
+  if (!tv)
+    return 0;
+  if (!user_buffer_ok(tv, sizeof(*tv), 1))
+    return -1;
+  struct linux_timespec ts;
+  current_timespec(&ts);
+  tv->tv_sec = ts.tv_sec;
+  tv->tv_usec = ts.tv_nsec / 1000;
+  return 0;
+}
+
+static long sys_nanosleep(const struct linux_timespec *req,
+                          struct linux_timespec *rem) {
+  if (!req || !user_buffer_ok(req, sizeof(*req), 0))
+    return -1;
+  if (req->tv_sec < 0 || req->tv_nsec < 0 || req->tv_nsec >= 1000000000LL)
+    return -1;
+  if (rem && !user_buffer_ok(rem, sizeof(*rem), 1))
+    return -1;
+
+  uint64_t freq = pit_get_freq();
+  if (!freq)
+    freq = 100;
+  uint64_t ticks = (uint64_t)req->tv_sec * freq;
+  ticks += ((uint64_t)req->tv_nsec * freq + 999999999ULL) / 1000000000ULL;
+  if (ticks == 0 && (req->tv_sec || req->tv_nsec))
+    ticks = 1;
+  if (ticks)
+    task_sleep_ticks(ticks);
+  if (rem) {
+    rem->tv_sec = 0;
+    rem->tv_nsec = 0;
+  }
+  return 0;
+}
+
+static long sys_fstatat(int dirfd, const char *path, struct linux_kstat *out,
+                        int flags) {
+  if (!out)
+    return -1;
+  if ((flags & AT_EMPTY_PATH) && path && !path[0] && dirfd >= 0)
+    return sys_fstat(dirfd, out);
+  if (!path)
+    return -1;
+  if (dirfd != AT_FDCWD && path[0] != '/')
+    return -1;
+  return sys_stat(path, out);
+}
+
+static long sys_set_tid_address(uint64_t clear_tid_addr) {
+  (void)clear_tid_addr;
+  struct task *t = task_current();
+  return t ? t->pid : -1;
+}
+
+static long sys_linux_futex(uint32_t *addr, int op, uint32_t val,
+                            const struct linux_timespec *timeout) {
+  (void)timeout;
+  switch (op & FUTEX_CMD_MASK) {
+  case FUTEX_WAIT:
+    return sys_futex_wait(addr, val);
+  case FUTEX_WAKE:
+    return sys_futex_wake(addr);
+  default:
+    return -1;
+  }
 }
 
 static long sys_mkdir(const char *path) {
@@ -1272,6 +1763,8 @@ static long sys_getcwd(char *buf, size_t size) {
   struct task *t = task_current();
   if (!t || !buf || size == 0)
     return -1;
+  if (!user_buffer_ok(buf, size, 1))
+    return -1;
 
   size_t i = 0;
   while (i + 1 < size && t->cwd[i]) {
@@ -1283,7 +1776,7 @@ static long sys_getcwd(char *buf, size_t size) {
   if (t->cwd[i])
     return -1;
 
-  return 0;
+  return (long)(uintptr_t)buf;
 }
 
 
@@ -1342,6 +1835,22 @@ static long sys_mem_stats(struct mem_stats_user *out) {
   out->used_frames = pmm_used_frames();
   out->frame_size = 4096;
   return 0;
+}
+
+static long sys_arch_prctl(long code, uint64_t addr) {
+  switch (code) {
+  case ARCH_SET_FS:
+    if (addr >= USER_VA_MAX)
+      return -1;
+    return task_set_fs_base(addr);
+  case ARCH_GET_FS:
+    if (!user_buffer_ok((void *)(uintptr_t)addr, sizeof(uint64_t), 1))
+      return -1;
+    *(uint64_t *)(uintptr_t)addr = task_get_fs_base();
+    return 0;
+  default:
+    return -1;
+  }
 }
 
 static long sys_thread_create(uint64_t entry, uint64_t user_stack, uint64_t u_arg) {
@@ -1441,6 +1950,15 @@ long syscall_dispatch(struct syscall_frame *f) {
   case SYS_WRITE:
     ret = sys_write((uintptr_t)a1, (const void *)(uintptr_t)a2, (uintptr_t)a3);
     break;
+  case SYS_READV:
+    ret = sys_readv((int)a1, (const struct linux_iovec *)(uintptr_t)a2, a3);
+    break;
+  case SYS_WRITEV:
+    ret = sys_writev((int)a1, (const struct linux_iovec *)(uintptr_t)a2, a3);
+    break;
+  case SYS_POLL:
+    ret = sys_poll((struct linux_pollfd *)(uintptr_t)a1, a2, a3);
+    break;
   case SYS_READ:
     ret = sys_read((uintptr_t)a1, (void *)(uintptr_t)a2, (uintptr_t)a3);
     break;
@@ -1462,20 +1980,47 @@ long syscall_dispatch(struct syscall_frame *f) {
   case SYS_MUNMAP:
     ret = sys_munmap((uint64_t)a1, a2);
     break;
+  case SYS_BRK:
+    ret = sys_brk((uint64_t)(uintptr_t)a1);
+    break;
   case SYS_STAT:
     ret = sys_stat((const char *)(uintptr_t)a1,
-                   (struct stat_user *)(uintptr_t)a2);
+                   (struct linux_kstat *)(uintptr_t)a2);
     break;
   case SYS_FSTAT:
-    ret = sys_fstat((int)a1, (struct stat_user *)(uintptr_t)a2);
+    ret = sys_fstat((int)a1, (struct linux_kstat *)(uintptr_t)a2);
+    break;
+  case SYS_STAT_RAW:
+    ret = sys_stat_raw((const char *)(uintptr_t)a1,
+                       (struct stat_user *)(uintptr_t)a2);
+    break;
+  case SYS_FSTAT_RAW:
+    ret = sys_fstat_raw((int)a1, (struct stat_user *)(uintptr_t)a2);
+    break;
+  case SYS_FSTATAT:
+    ret = sys_fstatat((int)a1, (const char *)(uintptr_t)a2,
+                      (struct linux_kstat *)(uintptr_t)a3, (int)a4);
     break;
   case SYS_READDIR:
-    ret = sys_readdir((uint32_t *)(uintptr_t)a1, (char *)(uintptr_t)a2, a3);
+    if (a1 >= 0 && a1 < TASK_MAX_FDS) {
+      ret = sys_getdents64((int)a1, (void *)(uintptr_t)a2, (size_t)a3);
+    } else {
+      ret = sys_readdir((uint32_t *)(uintptr_t)a1, (char *)(uintptr_t)a2, a3);
+    }
     break;
   case SYS_READDIR_PATH:
     ret =
         sys_readdir_path((const char *)(uintptr_t)a1, (uint32_t *)(uintptr_t)a2,
                          (char *)(uintptr_t)a3, (size_t)a4);
+    break;
+  case SYS_SET_TID_ADDRESS:
+    if ((uint64_t)a2 >= USER_VA_MIN && (uint64_t)a3 >= USER_VA_MIN && a4 > 0) {
+      ret = sys_readdir_path((const char *)(uintptr_t)a1,
+                             (uint32_t *)(uintptr_t)a2,
+                             (char *)(uintptr_t)a3, (size_t)a4);
+    } else {
+      ret = sys_set_tid_address((uint64_t)(uintptr_t)a1);
+    }
     break;
   case SYS_CHDIR:
     ret = sys_chdir((const char *)(uintptr_t)a1);
@@ -1484,7 +2029,30 @@ long syscall_dispatch(struct syscall_frame *f) {
   case SYS_GETCWD:
     ret = sys_getcwd((char *)(uintptr_t)a1, (size_t)a2);
     break;
+  case SYS_IOCTL:
+    ret = sys_ioctl((int)a1, a2, (void *)(uintptr_t)a3);
+    break;
+  case SYS_FCNTL:
+    ret = sys_fcntl((int)a1, (int)a2, a3);
+    break;
+  case SYS_CLOCK_GETTIME:
+    ret = sys_clock_gettime(a1, (struct linux_timespec *)(uintptr_t)a2);
+    break;
+  case SYS_GETTIMEOFDAY:
+    ret = sys_gettimeofday((struct linux_timeval *)(uintptr_t)a1,
+                           (void *)(uintptr_t)a2);
+    break;
+  case SYS_NANOSLEEP:
+    ret = sys_nanosleep((const struct linux_timespec *)(uintptr_t)a1,
+                        (struct linux_timespec *)(uintptr_t)a2);
+    break;
+  case SYS_LINUX_GETPID:
+    ret = sys_get_pid();
+    break;
   case SYS_EXIT:
+    ret = sys_exit((uintptr_t)a1);
+    break;
+  case SYS_EXIT_GROUP:
     ret = sys_exit((uintptr_t)a1);
     break;
   case SYS_YIELD:
@@ -1529,6 +2097,9 @@ long syscall_dispatch(struct syscall_frame *f) {
     break;
   case SYS_AUDIO_RESUME:
     ret = sys_audio_resume();
+    break;
+  case SYS_ARCH_PRCTL:
+    ret = sys_arch_prctl(a1, (uint64_t)(uintptr_t)a2);
     break;
   case SYS_CON_CLEAR:
     ret = sys_con_clear();
@@ -1631,7 +2202,13 @@ long syscall_dispatch(struct syscall_frame *f) {
     ret = sys_thread_exit();
     break;
   case SYS_THREAD_JOIN:
-    ret = sys_thread_join((uintptr_t)a1);
+    if ((uint64_t)a1 >= USER_VA_MIN) {
+      ret = sys_linux_futex((uint32_t *)(uintptr_t)a1, (int)a2,
+                            (uint32_t)a3,
+                            (const struct linux_timespec *)(uintptr_t)a4);
+    } else {
+      ret = sys_thread_join((uintptr_t)a1);
+    }
     break;
   case SYS_FUTEX_WAIT:
     ret = sys_futex_wait((uint32_t *)(uintptr_t)a1, (uint32_t)a2);
