@@ -15,7 +15,6 @@ mkdir -p "$(dirname "$IMG")"
 # second spelling to keep in sync with the kernel's hardcoded paths.
 payloads=(
 	"rootfs/readme.txt::readme.txt"
-	"rootfs/cursor.bmp::cursor.bmp"
 	"rootfs/holyd/array.hd::holyd/array.hd"
 	"rootfs/holyd/conditionals.hd::holyd/conditionals.hd"
 	"rootfs/holyd/strings.hd::holyd/strings.hd"
@@ -24,21 +23,20 @@ payloads=(
 	"rootfs/holyd/functions.hd::holyd/functions.hd"
 	"rootfs/holyd/no_semis.hd::holyd/no_semis.hd"
 	"rootfs/holyd/holyc_d_style.hd::holyd/holyc_d_style.hd"
+
 	"rootfs/music/beethoven.wav::music/beethoven.wav"
+
 	"rootfs/system/fonts/SansDisplayStatic.ttf::system/fonts/sansdisplaystatic.ttf"
 	"rootfs/system/fonts/SansDisplayVariable.ttf::system/fonts/sansdisplayvariable.ttf"
 	"rootfs/system/wallpaper.bmp::system/wallpaper.bmp"
+	"rootfs/system/icons/icon.bmp::system/icons/icon.bmp"
 	"rootfs/system/icons/DOOM.bmp::system/icons/doom.bmp"
 	"rootfs/system/icons/shelf.bmp::system/icons/shelf.bmp"
-	"userspace/bin/sh/sh.elf::bin/sh.elf"
-	"userspace/bin/ls/ls.elf::bin/ls.elf"
-	"userspace/bin/cat/cat.elf::bin/cat.elf"
-	"userspace/bin/shutdown/shutdown.elf::bin/shutdown.elf"
-	"userspace/bin/reboot/reboot.elf::bin/reboot.elf"
-	"userspace/bin/pkill/pkill.elf::bin/pkill.elf"
+	"rootfs/system/icons/cursor.bmp::system/icons/cursor.bmp"
+
+# User Apps
 	"userspace/bin/hello/hello.elf::usr/bin/hello.elf"
 	"userspace/bin/gfx/gfx.elf::usr/bin/gfx.elf"
-	"userspace/bin/plist/plist.elf::usr/bin/plist.elf"
 	"userspace/bin/fdchild/fdchild.elf::usr/bin/fdchild.elf"
 	"userspace/bin/mtest/mtest.elf::usr/bin/mtest.elf"
 	"userspace/bin/vmtest/vmtest.elf::usr/bin/vmtest.elf"
@@ -46,17 +44,28 @@ payloads=(
 	"userspace/bin/pe_test/pe_test.exe::usr/bin/pe_test.exe"
 	"userspace/bin/hello/hello.exe::usr/bin/hello.exe"
 	"userspace/bin/ls/ls.exe::usr/bin/ls.exe"
-	"userspace/bin/winman/winman.elf::usr/bin/winman.elf"
 	"userspace/bin/btop/btop.elf::usr/bin/btop.elf"
 	"userspace/bin/thread/thread.elf::usr/bin/thread.elf"
 	"userspace/bin/deskelf/deskelf.elf::usr/bin/deskelf.elf"
 	"userspace/bin/stress/stress.elf::usr/bin/stress.elf"
 	"userspace/bin/stress_peer/stress_peer.elf::usr/bin/stress_peer.elf"
 	"userspace/bin/audiotest/audiotest.elf::usr/bin/audiotest.elf"
-	"userspace/bin/holyd/holyd.elf::bin/holyd.elf"
 	"userspace/bin/muse/muse.elf::usr/bin/muse.elf"
 	"userspace/bin/mmaptest/mmaptest.elf::usr/bin/mmaptest.elf"
 	"userspace/bin/faulter/faulter.elf::usr/bin/faulter.elf"
+
+# System Apps
+	"userspace/bin/shutdown/shutdown.elf::system/bin/shutdown.elf"
+	"userspace/bin/reboot/reboot.elf::system/bin/reboot.elf"
+	"userspace/bin/pkill/pkill.elf::system/bin/pkill.elf"
+	"userspace/bin/winman/winman.elf::system/bin/winman.elf"
+	"userspace/bin/plist/plist.elf::system/bin/plist.elf"
+	"userspace/bin/holyd/holyd.elf::system/bin/holyd.elf"
+	"userspace/bin/notepad/notepad.elf::system/bin/notepad.elf"
+	"userspace/bin/sh/sh.elf::system/bin/sh.elf"
+	"userspace/bin/ls/ls.elf::system/bin/ls.elf"
+	"userspace/bin/cat/cat.elf::system/bin/cat.elf"
+	"userspace/bin/tree/tree.elf::system/bin/tree.elf"
 )
 
 # Firmware and DOOM are optional: QEMU and non-NVIDIA systems continue to

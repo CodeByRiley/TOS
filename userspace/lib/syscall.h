@@ -21,6 +21,17 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifdef TOS_USE_MUSL
+/* Built against musl: the POSIX surface comes from the real headers, and
+ * the TOS declarations of those same functions are compiled out below.
+ * Pulling them in here means every lib/ source keeps working unchanged —
+ * bmp.c calling open()/read() gets musl's, which issue the same syscalls. */
+#include <fcntl.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <signal.h>
+#endif
+
 /* ---------------- System-call numbers -----------------------------------
  *
  * Linux x86_64 numbers wherever the call means the same thing; TOS-only
@@ -55,47 +66,46 @@
 
 #define SYS_YIELD   	  	   	 24
 #define SYS_EXIT    	  	   	 60
-#define SYS_FB_INFO     	   	 100
-#define SYS_FB_MAP      	   	 101
-#define SYS_FB_DAMAGE   	   	 108
-#define SYS_FB_PRESENT       	 109
-#define SYS_FB_REGISTER      	 110
-#define SYS_FB_UNREGISTER    	 111
-#define SYS_KBD_POLL    	   	 102
-#define SYS_GET_TICKS   	   	 103
-#define SYS_EXEC        	   	 104
-#define SYS_MSG_GET     	   	 105
-#define SYS_MSG_PEEK    	   	 106
-#define SYS_MOUSE_POS   	   	 107
-#define SYS_CON_WRITE   	   	 120
-#define SYS_CON_CLEAR   	   	 121
-#define SYS_SLEEP_TICKS 	   	 122
-#define SYS_GET_PID     	   	 123
-#define SYS_IPC_SEND         	 130
-#define SYS_IPC_RECV         	 131
-#define SYS_SHMEM_SHARE      	 132
-#define SYS_SHMEM_UNSHARE    	 133
-#define SYS_WM_REGISTER      	 134
-#define SYS_WM_PID           	 135
-#define SYS_TTY_DRAIN        	 136
-
-#define SYS_PROC_LIST        	 140
-#define SYS_MEM_STATS        	 141
-#define SYS_CON_PUSH         	 142
-#define SYS_CON_POP          	 143
-#define SYS_SPAWN            	 144
-#define SYS_KILL             	 145
-#define SYS_CON_ZOOM         	 146
-
-#define SYS_AUDIO_OPEN       	 147
-#define SYS_AUDIO_WRITE      	 148
-#define SYS_AUDIO_STATUS     	 149
-#define SYS_AUDIO_DRAIN      	 150
-#define SYS_AUDIO_CLOSE      	 151
-#define SYS_AUDIO_SET_VOLUME 	 152
-#define SYS_AUDIO_PAUSE      	 153
-#define SYS_AUDIO_RESUME     	 154
-
+#define SYS_FB_INFO     	   	 1000
+#define SYS_FB_MAP      	   	 1001
+#define SYS_FB_DAMAGE   	   	 1002
+#define SYS_FB_PRESENT       	 1003
+#define SYS_FB_REGISTER      	 1004
+#define SYS_FB_UNREGISTER    	 1005
+#define SYS_KBD_POLL    	   	 1006
+#define SYS_GET_TICKS   	   	 1008
+#define SYS_EXEC        	   	 1020
+#define SYS_MSG_GET     	   	 1040
+#define SYS_MSG_PEEK    	   	 1041
+#define SYS_MOUSE_POS   	   	 1007
+#define SYS_CON_WRITE   	   	 1060
+#define SYS_CON_CLEAR   	   	 1061
+#define SYS_SLEEP_TICKS 	   	 1009
+#define SYS_GET_PID     	   	 39
+#define SYS_IPC_SEND         	 1042
+#define SYS_IPC_RECV         	 1043
+#define SYS_SHMEM_SHARE      	 1044
+#define SYS_SHMEM_UNSHARE    	 1045
+#define SYS_WM_REGISTER      	 1065
+#define SYS_WM_PID           	 1066
+#define SYS_TTY_DRAIN        	 1067
+#define SYS_TTY_INJECT         1068
+#define SYS_TTY_READ_INPUT     1069
+#define SYS_PROC_LIST        	 1022
+#define SYS_MEM_STATS        	 1023
+#define SYS_CON_PUSH         	 1062
+#define SYS_CON_POP          	 1063
+#define SYS_SPAWN            	 1021
+#define SYS_KILL             	 62
+#define SYS_CON_ZOOM         	 1064
+#define SYS_AUDIO_OPEN       	 1080
+#define SYS_AUDIO_WRITE      	 1081
+#define SYS_AUDIO_STATUS     	 1082
+#define SYS_AUDIO_DRAIN      	 1083
+#define SYS_AUDIO_CLOSE      	 1084
+#define SYS_AUDIO_SET_VOLUME 	 1085
+#define SYS_AUDIO_PAUSE      	 1086
+#define SYS_AUDIO_RESUME     	 1087
 #define SYS_ARCH_PRCTL          158
 #define ARCH_SET_FS         0x1002
 #define ARCH_GET_FS         0x1003
@@ -108,20 +118,22 @@
 #define AUDIO_ERR_INVALID      (-3)
 #define AUDIO_ERR_NOT_OWNER    (-4)
 
-#define SYS_THREAD_CREATE  		 200
-#define SYS_THREAD_EXIT    		 201
-#define SYS_THREAD_JOIN	   		 202
-#define SYS_FUTEX_WAIT     		 203
-#define SYS_FUTEX_WAKE	   		 204
-
+#define SYS_THREAD_CREATE  		 1100
+#define SYS_THREAD_EXIT    		 1101
+#define SYS_THREAD_JOIN	   		 1102
+#define SYS_FUTEX_WAIT     		 1103
+#define SYS_FUTEX_WAKE	   		 1104
 #define SYS_MKDIR          		 83
 #define SYS_UNLINK         		 87
-#define SYS_SHUTDOWN       		 888
-#define SYS_REBOOT         		 887
-#define SYS_READDIR_PATH     	 889
-#define SYS_STAT_RAW         	 890
-#define SYS_FSTAT_RAW        	 891
-
+#define SYS_SHUTDOWN       		 1120
+#define SYS_REBOOT         		 1121
+#define SYS_READDIR_PATH     	 1122
+#define SYS_STAT_RAW         	 1123
+#define SYS_FSTAT_RAW        	 1124
+/* TOS's index-based directory walk. Split off 217, which is now strictly
+ * Linux getdents64 — the kernel used to pick between the two by guessing
+ * whether the first argument looked like an fd. */
+#define SYS_READDIR_INDEX      1125
 /* ---------------- mmap / mprotect --------------------------------------
  *
  * Linux PROT_ and MAP_ values. Two deliberate deviations from Linux:
@@ -315,20 +327,29 @@ sysarg_t syscall6(sysarg_t n, sysarg_t a, sysarg_t b, sysarg_t c, sysarg_t d,
 
 /* ---------------- Typed libc-style wrappers ----------------------------- */
 /* Standard POSIX-ish file / process surface. */
+/* These fourteen are also defined by musl, with different prototypes
+ * (musl's open() is variadic, its exit() is _Noreturn, and so on). A
+ * translation unit built against musl takes musl's declarations from the
+ * real headers; declaring TOS's here as well is a hard conflict, so they
+ * are compiled out whenever TOS_USE_MUSL is set. Implementations live in
+ * syscall_posix.c, which musl-linked binaries do not link. */
+#ifndef TOS_USE_MUSL
 long write(int fd, const void *buf, size_t n);
 long read(int fd, void *buf, size_t n);
 long open(const char *path, int flags);
 long close(int fd);
 long lseek(int fd, long off, int whence);
 long readdir(unsigned *index, char *buf, size_t n);
+long unlink(const char *path);
+void exit(int code);
+long chdir(const char *path);
+char *getcwd(char *buf, size_t size);
+#endif
+
 long readdir_path(const char *path, unsigned *index, char *buf, size_t n);
 long mkdir_path(const char *path);
 long rmdir_path(const char *path);
-long unlink(const char *path);
-void exit(int code);
 long yield(void);
-long chdir(const char *path);
-char *getcwd(char *buf, size_t size);
 
 /* Raw metadata straight from the kernel. POSIX stat()/fstat() in
  * <sys/stat.h> wrap these. */
@@ -344,9 +365,11 @@ long fstat_raw(int fd, struct stat_user *out);
  * the virtual address space. Physical RAM is allocated one page at a time
  * by the page fault handler when the program actually reads or writes to it.
  */
+#ifndef TOS_USE_MUSL
 void *mmap(void *addr, size_t len, int prot, int flags);
 int   mprotect(void *addr, size_t len, int prot);
 int   munmap(void *addr, size_t len);
+#endif
 
 /* Input + windowing. */
 long msg_get(struct msg *out);
@@ -366,7 +389,9 @@ long  get_ticks(void);
  * child's pid immediately so the caller (e.g., the shell) stays free. */
 long  exec(const char *path, char *const argv[]);
 long  spawn(const char *path, char *const argv[]);
+#ifndef TOS_USE_MUSL
 long  kill(long pid, int signal);
+#endif
 long  sys_shutdown(int time, const char *reason);
 long  sys_reboot(int time);
 
@@ -378,6 +403,15 @@ long  con_pop(void);
 long  con_zoom(long delta);
 long  sleep_ticks(unsigned long n);
 long  get_pid(void);
+void  tty_inject(char c);
+
+/* Drain characters winman injected for the console owner. Non-blocking;
+ * returns the count read, 0 when nothing is queued.
+ *
+ * Console applications must read here rather than poll kbd_poll: the raw
+ * keyboard ring is filled for every keystroke regardless of window focus,
+ * so polling it collects whatever the user types into other windows too. */
+long  tty_read_input(char *buf, unsigned long max);
 
 /* Audio output. audio_write is non-blocking and can return a short count or
  * zero when the ring is full. Input must be frame-aligned S16-LE stereo PCM.

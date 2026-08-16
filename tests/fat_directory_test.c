@@ -27,14 +27,7 @@ struct __attribute__((packed)) test_bpb {
     uint32_t large_total_sectors;
 };
 
-/* fat.c only logs geometry during initialization. */
-void log_write_hex(const char *message, uint64_t value,
-                   uint8_t type, uint8_t level) {
-    (void)message;
-    (void)value;
-    (void)type;
-    (void)level;
-}
+/* log_write_hex and the allocator come from tests/host_kernel_stubs.c. */
 
 static int contains_name(const char *buffer, long length,
                          const char *wanted) {

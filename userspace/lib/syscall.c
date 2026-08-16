@@ -8,64 +8,12 @@
  */
 #include <lib/syscall.h>
 
-/* File / I/O */
-long write(int fd, const void *buf, size_t n) {
-    return syscall3(SYS_WRITE, fd, (sysarg_t)(uintptr_t)buf, (sysarg_t)(uintptr_t)n);
-}
-
-long read(int fd, void *buf, size_t n) {
-    return syscall3(SYS_READ, fd, (sysarg_t)(uintptr_t)buf, (sysarg_t)(uintptr_t)n);
-}
-
-long open(const char *path, int flags) {
-    return syscall2(SYS_OPEN, (sysarg_t)(uintptr_t)path, flags);
-}
-
-long close(int fd) {
-    return syscall1(SYS_CLOSE, fd);
-}
-
-long lseek(int fd, long off, int whence) {
-    return syscall3(SYS_LSEEK, fd, off, whence);
-}
-
-long chdir(const char *path) {
-    return syscall1(SYS_CHDIR, (sysarg_t)(uintptr_t)path);
-}
-
-char *getcwd(char *buf, size_t size) {
-    long rc = syscall2(SYS_GETCWD, (sysarg_t)(uintptr_t)buf, (sysarg_t)size);
-    return rc < 0 ? 0 : buf;
-}
-
 long stat_raw(const char *path, struct stat_user *out) {
     return syscall2(SYS_STAT_RAW, (sysarg_t)(uintptr_t)path, (sysarg_t)(uintptr_t)out);
 }
 
 long fstat_raw(int fd, struct stat_user *out) {
     return syscall2(SYS_FSTAT_RAW, fd, (sysarg_t)(uintptr_t)out);
-}
-
-/* Memory
- *
- * MAP_FAILED rather than 0 on error: 0 is a legal-looking value for code
- * that only checks `!= NULL`, and a fixed mapping at a low address would
- * be indistinguishable from failure. */
-void *mmap(void *addr, size_t len, int prot, int flags) {
-    long rc = syscall4(SYS_MMAP, (sysarg_t)(uintptr_t)addr, (sysarg_t)len, prot, flags);
-    return rc < 0 ? MAP_FAILED : (void *)(uintptr_t)rc;
-}
-
-int mprotect(void *addr, size_t len, int prot) {
-    return (int)syscall3(SYS_MPROTECT, (sysarg_t)(uintptr_t)addr, (sysarg_t)len, prot);
-}
-
-int munmap(void *addr, size_t len) {
-    return (int)syscall2(SYS_MUNMAP, (sysarg_t)(uintptr_t)addr, (sysarg_t)len);
-}
-
-long readdir(unsigned *index, char *buf, size_t n) {
-    return syscall3(SYS_READDIR, (sysarg_t)(uintptr_t)index, (sysarg_t)(uintptr_t)buf, (sysarg_t)n);
 }
 
 long readdir_path(const char *path, unsigned *index, char *buf, size_t n) {
@@ -79,17 +27,6 @@ long mkdir_path(const char *path) {
 
 long rmdir_path(const char *path) {
     return syscall1(SYS_RMDIR, (sysarg_t)(uintptr_t)path);
-}
-
-long unlink(const char *path) {
-    return syscall1(SYS_UNLINK, (sysarg_t)(uintptr_t)path);
-}
-
-/* Process control */
-/* Never returns; the for-loop is dead code that quiets warnings. */
-void exit(int code) {
-    syscall1(SYS_EXIT, code);
-    for (;;);
 }
 
 long yield(void) {
@@ -157,21 +94,12 @@ long spawn(const char *path, char *const argv[]) {
     return syscall2(SYS_SPAWN, (sysarg_t)(uintptr_t)path, (sysarg_t)(uintptr_t)argv);
 }
 
-long kill(long pid, int signal) {
-    return syscall2(SYS_KILL, pid, signal);
-}
-
 long sys_shutdown(int time, const char *reason) {
     return syscall2(SYS_SHUTDOWN, time, (sysarg_t)(uintptr_t)reason);
 }
 
 long sys_reboot(int time) {
     return syscall1(SYS_REBOOT, time);
-}
-
-/* Console (TTY) */
-long con_write(const char *buf, size_t n) {
-    return syscall2(SYS_CON_WRITE, (sysarg_t)(uintptr_t)buf, (sysarg_t)(uintptr_t)n);
 }
 
 long con_clear(void) {
@@ -194,18 +122,17 @@ long sleep_ticks(unsigned long n) {
     return syscall1(SYS_SLEEP_TICKS, (sysarg_t)n);
 }
 
+void tty_inject(char c) {
+    syscall1(SYS_TTY_INJECT, (long)c);
+}
+
+long tty_read_input(char *buf, unsigned long max) {
+    return syscall2(SYS_TTY_READ_INPUT, (sysarg_t)(uintptr_t)buf,
+                    (sysarg_t)max);
+}
+
 long get_pid(void) {
     return syscall0(SYS_GET_PID);
-}
-
-/* PCM audio */
-long audio_open(uint32_t sample_rate, uint32_t channels, uint32_t format) {
-    return syscall3(SYS_AUDIO_OPEN, sample_rate, channels, format);
-}
-
-long audio_write(const void *pcm, size_t bytes) {
-    return syscall2(SYS_AUDIO_WRITE, (sysarg_t)(uintptr_t)pcm,
-                    (sysarg_t)bytes);
 }
 
 long audio_status(struct audio_status *out) {
@@ -214,10 +141,6 @@ long audio_status(struct audio_status *out) {
 
 long audio_drain(void) {
     return syscall0(SYS_AUDIO_DRAIN);
-}
-
-long audio_close(void) {
-    return syscall0(SYS_AUDIO_CLOSE);
 }
 
 long audio_set_volume(int percent) {
@@ -278,10 +201,6 @@ long thread_create(void *(*entry)(void *), void *stack, void *arg) {
                     (sysarg_t)(uintptr_t)arg);
 }
 
-long thread_exit() {
-    return syscall0(SYS_THREAD_EXIT);
-}
-
 long thread_join(long tid) {
     return syscall1(SYS_THREAD_JOIN, tid);
 }
@@ -292,4 +211,23 @@ long futex_wait(uint32_t *addr, uint32_t expected) {
 
 long futex_wake(uint32_t *addr) {
     return syscall1(SYS_FUTEX_WAKE, (sysarg_t)(uintptr_t)addr);
+}
+
+/* Console (TTY) */
+long con_write(const char *buf, size_t n) {
+    return syscall2(SYS_CON_WRITE, (sysarg_t)(uintptr_t)buf, (sysarg_t)(uintptr_t)n);
+}
+/* PCM audio */
+long audio_open(uint32_t sample_rate, uint32_t channels, uint32_t format) {
+    return syscall3(SYS_AUDIO_OPEN, sample_rate, channels, format);
+}
+long audio_write(const void *pcm, size_t bytes) {
+    return syscall2(SYS_AUDIO_WRITE, (sysarg_t)(uintptr_t)pcm,
+                    (sysarg_t)bytes);
+}
+long audio_close(void) {
+    return syscall0(SYS_AUDIO_CLOSE);
+}
+long thread_exit() {
+    return syscall0(SYS_THREAD_EXIT);
 }

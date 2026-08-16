@@ -5,9 +5,21 @@
  * link TTF support without pulling in a host C runtime or the DOOM-only math
  * object.
  */
+#ifdef TOS_USE_MUSL
+#include <stdio.h>
+#else
 #include <include/stdio.h>
+#endif
+#ifdef TOS_USE_MUSL
+#include <stdlib.h>
+#else
 #include <include/stdlib.h>
+#endif
+#ifdef TOS_USE_MUSL
+#include <string.h>
+#else
 #include <include/string.h>
+#endif
 
 static int ttf_stb_ifloor(double x) {
     int i = (int)x;

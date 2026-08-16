@@ -1,5 +1,6 @@
 #include <lib/bmp.h>
 #include <lib/gfx.h>
+#include <lib/keymap.h>
 #include <lib/syscall.h>
 #include <lib/ttf.h>
 #include <lib/wm.h>
@@ -51,7 +52,7 @@ static int wallpaper_loaded = 0;
 static struct program start_menu_programs[] = {
   {"Shelf (Shell)", "/bin/sh.elf"},
   {"Desk Elf", "/usr/bin/deskelf.elf"},
-  {"Text Editor", "/usr/bin/editor.elf"},
+  {"Text Editor", "/usr/bin/notepad.elf"},
   {"About", "/usr/bin/about.elf"}
 };
 
@@ -81,7 +82,14 @@ static void titlebar_btn_rect(int win_x, int win_y, int outer_w,
                               int idx_from_right, int *bx, int *by, int *bw,
                               int *bh);
 
-#define CURSOR_BMP_PATH "/cursor.bmp"
+/* Modal prompt. Defined down with the other IPC handlers but drawn from
+ * compose() and driven from pump_input(), both of which come earlier. */
+static void draw_prompt(void);
+static void prompt_abandon_for_owner(int owner_pid);
+static int prompt_handle_key(int keycode, int shift);
+static int prompt_handle_click(int mx, int my);
+
+#define CURSOR_BMP_PATH "system/icons/cursor.bmp"
 
 #define CURSOR_W 12
 #define CURSOR_H 12
@@ -118,6 +126,33 @@ static const uint8_t fallback_cursor_mask[CURSOR_H][CURSOR_W] = {
 
 #define BORDER_PX 1
 #define TITLEBAR_PX 16
+
+/* Status strip along the bottom of a window frame. Opt-in per window at
+ * create time (WM_CREATE_STATUSBAR): a window that never sets status text
+ * would otherwise pay for a blank strip, and the console does not want one.
+ * The client area is unchanged — the frame grows — so opting in never costs
+ * an app drawing space. */
+#define STATUSBAR_PX 16
+#define STATUSBAR_BG 0x00C0C0C0u
+#define STATUSBAR_FG 0x00000000u
+#define STATUSBAR_PAD_X 4
+
+/* Modal prompt dialog. Winman renders it centred on the desktop and drives
+ * it; the requesting app is blocked in wm_prompt() and sees no input. */
+#define PROMPT_W 320
+#define PROMPT_H 120
+#define PROMPT_PAD 10
+#define PROMPT_BTN_W 76
+#define PROMPT_BTN_H 20
+#define PROMPT_BTN_GAP 8
+#define PROMPT_FIELD_H 20
+#define PROMPT_MAX_TEXT 47
+#define PROMPT_BG 0x00C0C0C0u
+#define PROMPT_TEXT 0x00000000u
+#define PROMPT_FIELD_BG 0x00FFFFFFu
+#define PROMPT_BTN_BG 0x00D4D0C8u
+#define PROMPT_BTN_SEL_BG 0x000000A0u
+#define PROMPT_BTN_SEL_FG 0x00FFFFFFu
 
 /* Taskbar: always-on-top strip pinned to the bottom of the desktop.
  * Buttons list the console + every client window; clicking a button focuses
@@ -156,6 +191,10 @@ static const uint8_t fallback_cursor_mask[CURSOR_H][CURSOR_W] = {
 #define HIT_START_MENU 7
 #define HIT_START_BTN  8
 #define HIT_TASKBAR_BTN 9
+/* Status strip: opaque chrome, so it swallows the click rather than
+ * forwarding it to the client at coordinates outside the client surface. */
+#define HIT_STATUSBAR 10
+#define HIT_PROMPT 11
 /* Titlebar buttons: small square icons right-anchored in the titlebar.
  * Today only the close (X) button exists; min/max can slot in by bumping
  * `idx_from_right` in titlebar_btn_rect. Buttons render as bitmap masks
@@ -167,31 +206,40 @@ static const uint8_t fallback_cursor_mask[CURSOR_H][CURSOR_W] = {
 #define TB_BTN_BG_HOVER 0x00FF6060u
 #define TB_BTN_FG 0x00000000u
 
+/* Taskbar start button artwork. The image is scaled to fit the button, so
+ * the source does not have to be TASKBAR_START_W square — but reject
+ * anything absurd so a mis-sized file can't turn into a huge rescale. */
+#define TB_START_ICON_PATH "/system/icons/icon.bmp"
+#define TB_START_ICON_MAX_DIM 256
+#define TB_START_ICON_PAD 2
+
+
 static const uint8_t fallback_taskbar_start_mask[24][24] = {
     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-    {0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-    {0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-    {0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0},
-    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0},
-    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0},
-    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0},
-    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0},
-    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0},
-    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-    {0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-    {0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-    {0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+    {0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0},
+    {0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0},
+    {0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0},
+    {0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0},
+    {0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0},
     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}};
+    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+    {0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0},
+    {0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0},
+    {0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0},
+    {0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0},
+    {0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0},
+    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+};
 
 /* title-bar button glyphs. 0 = background (titlebar btn bg), 1 = foreground.
  * Drawn through draw_button_mask which fills the rect with `bg` first then
@@ -264,7 +312,31 @@ struct window {
   int saved_x, saved_y;
   int saved_cw, saved_ch;
 
+  /* Height of this window's status strip, 0 when it has none. Kept as a
+   * height rather than a flag so every geometry helper can add it blindly. */
+  int status_h;
+  char status[48];
+
   char title[48];
+};
+
+/* One modal dialog at a time, owned by winman rather than by any window.
+ * `owner_pid` is who gets the reply; `owner_handle` is what it centres on
+ * and what dies with it if the window goes away mid-prompt. */
+struct prompt_state {
+  int active;
+  int kind;
+  int owner_pid;
+  int owner_handle;
+  /* Screen rect, fixed when the dialog opens. Drawing, hit-testing and the
+   * erase-on-dismiss all have to agree on where the dialog is, so this is
+   * stored rather than recomputed — the owner window it is centred on can
+   * be gone by the time the dialog is torn down. */
+  int x, y, w, h;
+  int selected; /* index into the kind's button row */
+  int caret;    /* text length for WM_PROMPT_TEXT   */
+  char message[48];
+  char input[PROMPT_MAX_TEXT + 1];
 };
 
 struct drag_state {

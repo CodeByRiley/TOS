@@ -74,14 +74,30 @@ static int kernel_address(uint64_t address) {
   return address >= start && address < end;
 }
 
+/*
+ * Format an address as either "symbol+0xoff", "kernel+0xoff" (when inside
+ * kernel text but unresolved), or the raw hex address.  Writes into the
+ * caller-provided buffer so there are no allocations on the panic path.
+ */
+static void panic_symstr(char *buf, size_t bufsz, uint64_t address) {
+  uint64_t off = 0;
+  const char *sym = symtab_resolve(address, &off);
+
+  if (sym)
+    snprintf(buf, bufsz, "%s+0x%llx", sym, (unsigned long long)off);
+  else if (kernel_address(address))
+    snprintf(
+        buf, bufsz, "kernel+0x%llx",
+        (unsigned long long)(address - (uint64_t)(uintptr_t)_kernel_start));
+  else
+    snprintf(buf, bufsz, "0x%llx", (unsigned long long)address);
+}
+
 static void panic_address_line(const char *label, uint64_t address) {
-  panic_serialf("%-18s ", label);
-  serial_write_hex(address);
-  if (kernel_address(address)) {
-    serial_write_str("  kernel+");
-    serial_write_hex(address - (uint64_t)(uintptr_t)_kernel_start);
-  }
-  serial_write_str("\n");
+  char symbuf[128];
+  panic_symstr(symbuf, sizeof(symbuf), address);
+  panic_serialf("%-18s %016llx  %s\n", label, (unsigned long long)address,
+                symbuf);
 }
 
 static struct panic_machine_state panic_read_machine(void) {
@@ -135,15 +151,11 @@ static void panic_backtrace(const struct panic_record *record,
     const uint64_t *words = (const uint64_t *)(uintptr_t)frame;
     uint64_t next = words[0];
     uint64_t ret = words[1];
-    panic_serialf("  %02d: ", i);
-    serial_write_hex(frame);
-    serial_write_str(" : ");
-    serial_write_hex(ret);
-    if (kernel_address(ret)) {
-      serial_write_str("  kernel+");
-      serial_write_hex(ret - (uint64_t)(uintptr_t)_kernel_start);
-    }
-    serial_write_str("\n");
+
+    char symbuf[128];
+    panic_symstr(symbuf, sizeof(symbuf), ret);
+    panic_serialf("  %02d: %016llx : %016llx  %s\n", i,
+                  (unsigned long long)frame, (unsigned long long)ret, symbuf);
     emitted++;
 
     if (next <= frame || next + 16 > high || next - frame > 0x10000)
@@ -185,9 +197,13 @@ static void panic_serial_report(const struct panic_record *record,
   struct task *task = panic_task(record->cpu_id);
 
   serial_write_str("\n*** TOS KERNEL PANIC ***\n");
+  char caller_sym[128];
+  panic_symstr(caller_sym, sizeof(caller_sym), record->caller);
+
   panic_serialf("panic(cpu %d caller %p): %s\n", record->cpu_id,
                 (void *)(uintptr_t)record->caller,
                 record->message ? record->message : "unspecified panic");
+  panic_serialf("  caller resolved: %s\n", caller_sym);
 
   if (record->exception && record->frame) {
     panic_serialf("Exception: vector %llu (%s), error=%#llx\n",
@@ -452,8 +468,8 @@ static void diag_drivers(struct gfx_surface *surface, int *y) {
 
   diag_line(surface, y, 8, "Kernel drivers", PANIC_MUTED);
   snprintf(screen_line, sizeof(screen_line),
-           "%-4s  %-4s  %-4s   %-5s    %-8s %s",
-           "IDX", "BUS", "POLL", "BOUND", "ENABLED", "NAME");
+           "%-4s  %-4s  %-4s   %-5s    %-8s %s", "IDX", "BUS", "POLL", "BOUND",
+           "ENABLED", "NAME");
   diag_line(surface, y, 8, screen_line, PANIC_DIM);
   for (int i = 0; i < count && *y + GFX_GLYPH_H < surface->h; i++) {
     snprintf(screen_line, sizeof(screen_line),
@@ -489,9 +505,14 @@ static void diag_stack(struct gfx_surface *surface, int *y,
     const uint64_t *words = (const uint64_t *)(uintptr_t)frame;
     uint64_t next = words[0];
     uint64_t ret = words[1];
-    snprintf(screen_line, sizeof(screen_line), "%016llx  %016llx  %016llx",
-             (unsigned long long)frame, (unsigned long long)next,
-             (unsigned long long)ret);
+    char symbuf[128];
+    panic_symstr(symbuf, sizeof(symbuf), ret);
+    snprintf(screen_line, sizeof(screen_line),
+             "%016llx  %016llx  %016llx  %s",
+             (unsigned long long)frame,
+             (unsigned long long)next,
+             (unsigned long long)ret,
+             symbuf);
     diag_line(surface, y, 8, screen_line,
               kernel_address(ret) ? PANIC_FG : PANIC_MUTED);
     emitted++;

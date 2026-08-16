@@ -13,8 +13,8 @@
 #include <lib/ui.h>
 #include <lib/wm.h>
 #include <include/key_codes.h>
-#include <include/stdio.h>
-#include <include/string.h>
+#include <stdio.h>
+#include <string.h>
 
 #define WINDOW_W 560
 #define WINDOW_H 380

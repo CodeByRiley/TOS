@@ -2,6 +2,7 @@
 /build/
 /dist/
 *.o
+*.d
 *.elf
 
 

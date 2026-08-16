@@ -42,15 +42,21 @@ static void copy_str(char *dst, size_t cap, const char *src) {
  * server's chosen handle + surface mapping into *out. */
 int wm_window_create(int w, int h, const char *title,
                      struct wm_window *out) {
+    return wm_window_create_ex(w, h, title, 0, out);
+}
+
+int wm_window_create_ex(int w, int h, const char *title, uint32_t flags,
+                        struct wm_window *out) {
     if (!out) return -1;
     long wpid = wm_pid();
     if (wpid <= 0) return -1;
 
     struct ipc_msg req;
     memset(&req, 0, sizeof(req));
-    req.type = IPC_WM_CREATE_REQ;
-    req.a    = w;
-    req.b    = h;
+    req.type  = IPC_WM_CREATE_REQ;
+    req.a     = w;
+    req.b     = h;
+    req.flags = flags;
     copy_str(req.str, sizeof(req.str), title);
     if (ipc_send((int)wpid, &req) != 0) return -1;
     printf("wm_window_create: sent create req, waiting for response...\n");
@@ -100,6 +106,55 @@ int wm_window_set_title(int handle, const char *title) {
     req.a    = handle;
     copy_str(req.str, sizeof(req.str), title);
     return (int)ipc_send((int)wpid, &req);
+}
+
+/* Update the status strip. Windows created without WM_CREATE_STATUSBAR
+ * have nowhere to put this, and winman drops it. */
+int wm_window_set_status(int handle, const char *text) {
+    long wpid = wm_pid();
+    if (wpid <= 0) return -1;
+    struct ipc_msg req;
+    memset(&req, 0, sizeof(req));
+    req.type = IPC_WM_SET_STATUS_REQ;
+    req.a    = handle;
+    copy_str(req.str, sizeof(req.str), text);
+    return (int)ipc_send((int)wpid, &req);
+}
+
+/* Blocking modal prompt. The wait is deliberately unbounded compared with
+ * wait_for(): a dialog sits open until a human answers it, so the bounded
+ * handshake spin used for create/destroy would time out mid-question. A
+ * dead winman is detected by re-checking wm_pid() rather than by counting
+ * spins. */
+int wm_prompt(int handle, int kind, const char *message, char *out,
+              size_t cap) {
+    if (out && cap) out[0] = 0;
+
+    long wpid = wm_pid();
+    if (wpid <= 0) return WM_PROMPT_CANCEL;
+
+    struct ipc_msg req;
+    memset(&req, 0, sizeof(req));
+    req.type = IPC_WM_PROMPT_REQ;
+    req.a    = handle;
+    req.b    = kind;
+    copy_str(req.str, sizeof(req.str), message);
+    if (ipc_send((int)wpid, &req) != 0) return WM_PROMPT_CANCEL;
+
+    for (;;) {
+        struct ipc_msg resp;
+        if (ipc_recv(&resp)) {
+            if (resp.type == IPC_WM_PROMPT_RESP) {
+                if (out && cap) copy_str(out, cap, resp.str);
+                return resp.a;
+            }
+            /* Anything else that arrives mid-dialog is dropped: the app is
+             * modal from its own point of view and has no loop running. */
+            continue;
+        }
+        if (wm_pid() <= 0) return WM_PROMPT_CANCEL;
+        sleep_ticks(1);
+    }
 }
 
 /* Translate one queued IPC message into a wm_event. Returns 1 if filled

@@ -42,19 +42,8 @@ struct __attribute__((packed)) test_bpb {
     uint32_t large_total_sectors;
 };
 
-/* fat.c only logs geometry during initialization. */
-void log_write_hex(const char *message, uint64_t value,
-                   uint8_t type, uint8_t level) {
-    (void)message; (void)value; (void)type; (void)level;
-}
-
-void log_write(const char *message, uint8_t type, uint8_t level) {
-    (void)message; (void)type; (void)level;
-}
-
-/* stdio.c allocates one FILE per open. */
-void *kmalloc(size_t n) { return malloc(n); }
-void  kfree(void *p)    { free(p); }
+/* The log and the allocator stdio.c calls come from
+ * tests/host_kernel_stubs.c. */
 
 static int failed = 0;
 

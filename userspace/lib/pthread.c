@@ -1,5 +1,9 @@
 #include <include/sys/pthread.h>
+#ifdef TOS_USE_MUSL
+#include <stdlib.h>
+#else
 #include <include/stdlib.h>
+#endif
 #include <stdint.h>
 
 extern long thread_create(void *(*entry)(void *), void *stack, void *arg);

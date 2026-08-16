@@ -12,9 +12,6 @@
  * written as a plain short entry with the NT case flags so it round-trips
  * without costing a slot.
  */
-#include "drivers/storage/ahci.h"
-#include "memory/heap.h"
-#include "memory/hhdm.h"
 #include <fs/fat.h>
 #include <utilities/log.h>
 #include <utilities/string.h>
@@ -166,7 +163,10 @@ static enum fat_type fat_type;
 /* Exclusive upper bound; valid data clusters are [2, cluster_limit). */
 static uint32_t cluster_limit;
 
-extern struct AHCI_DEVICE_DATA *g_ahci_dev;
+/* Installed by the storage backend once an image is mounted from a real
+ * device. NULL means the RAM array is the only copy that exists, which is
+ * both the pre-mount state and how the host tests run. */
+static fat_sector_writer sector_writer;
 
 /* Byte offsets of the 13 name characters inside an LFN slot. */
 static const uint8_t lfn_offsets[FAT_LFN_CHARS_PER_SLOT] = {
@@ -589,14 +589,12 @@ static struct dir_entry *cursor_next(struct dir_cursor *cursor) {
   return &entries[cursor->slot++];
 }
 
-/* Writes a single 512-byte sector from the RAM array back to the physical disk */
+/* Push one sector of the RAM array at whatever is backing it. A no-op when
+ * no backend is installed — the image is then RAM-only and already current. */
 static void fat_flush_sector(uint32_t lba) {
-    if (!fs_image || !g_ahci_dev) return;
+    if (!fs_image || !sector_writer) return;
 
-    uint64_t virt = (uint64_t)sector(lba);
-    uint64_t phys = virt_to_phys((void*)virt);
-
-    ahci_write_sector(g_ahci_dev, 0, lba, 1, (void*)phys);
+    sector_writer(lba, sector(lba));
 }
 
 static void erase_slots(struct fat_dir dir, uint32_t from, uint32_t to) {
@@ -1564,93 +1562,29 @@ long fat_read_dir_one(const char *path, uint32_t *index, char *buffer,
   return 0;
 }
 
-/* Load the physical AHCI disk into the FAT driver's RAM array */
-int fat_mount_from_ahci(struct AHCI_DEVICE_DATA *ahci_dev, int port) {
-    if (!ahci_dev) return -1;
+void fat_set_sector_writer(fat_sector_writer writer) { sector_writer = writer; }
 
-    // 1. Read the boot sector (LBA 0) to find out how big the disk is
-    uint8_t *bpb_buf = kmalloc(512);
-    if (!bpb_buf) return -1;
-
-    uint64_t bpb_phys = virt_to_phys(bpb_buf);
-    if (ahci_read_sector(ahci_dev, port, 0, 1, (void*)bpb_phys) != 0) {
-        kfree(bpb_buf);
-        return -1;
-    }
-
-    struct bpb *bpb = (struct bpb *)bpb_buf;
-    uint32_t total_sectors = bpb->total_sectors_16 ? bpb->total_sectors_16 : bpb->total_sectors_32;
-    size_t disk_size = total_sectors * bpb->bytes_per_sector;
-
-    // 2. Allocate a RAM buffer big enough to hold the whole disk
-    uint8_t *ram_disk = kmalloc(disk_size);
-    if (!ram_disk) {
-        kfree(bpb_buf);
-        return -1;
-    }
-
-    // 3. Read the whole disk into RAM, 64 sectors (32KB) at a time
-    uint32_t sectors_read = 0;
-    while (sectors_read < total_sectors) {
-        uint32_t chunk = 64;
-        if (sectors_read + chunk > total_sectors) {
-            chunk = total_sectors - sectors_read;
-        }
-
-        uint64_t buf_phys = virt_to_phys(ram_disk + (sectors_read * bpb->bytes_per_sector));
-        if (ahci_read_sector(ahci_dev, port, sectors_read, chunk, (void*)buf_phys) != 0) {
-            kfree(ram_disk);
-            kfree(bpb_buf);
-            return -1;
-        }
-        sectors_read += chunk;
-    }
-
-    // 4. Initialize your FAT driver with the RAM disk!
-    int ret = fat_init(ram_disk, disk_size);
-
-    kfree(bpb_buf);
-    return ret;
-}
-
-void fat_flush(void) {
-    if (!fs_image || !g_ahci_dev) return;
-
-    uint32_t total_sectors = fs_image_size / bytes_per_sec;
-    uint32_t sectors_written = 0;
-
-    while (sectors_written < total_sectors) {
-        uint32_t chunk = 64; // Write 32KB at a time
-        if (sectors_written + chunk > total_sectors) {
-            chunk = total_sectors - sectors_written;
-        }
-
-        uint64_t buf_phys = virt_to_phys(fs_image + (sectors_written * bytes_per_sec));
-
-        if (ahci_write_sector(g_ahci_dev, 0, sectors_written, chunk, (void*)buf_phys) != 0) {
-            log_write("FAT: Flush failed!", KERNEL, LOG_ERROR);
-            return;
-        }
-        sectors_written += chunk;
-    }
-    log_write("FAT: Disk flushed to AHCI.", KERNEL, LOG_INFO);
-}
-
-int fat_read_sector(uint32_t lba, void *buf) {
-    if (!g_ahci_dev) return -1;
-
-    // Allocate a physical buffer for DMA
-    void *dma_buf = kmalloc(512);
-    uint64_t dma_phys = virt_to_phys(dma_buf);
-
-    // Read from AHCI Port 0 (where QEMU attached your disk.img)
-    if (ahci_read_sector(g_ahci_dev, 0, lba, 1, (void*)dma_phys) != 0) {
-        kfree(dma_buf);
-        return -1;
-    }
-
-    // Copy the data from the DMA buffer into the FAT driver's buffer
-    memcpy(buf, dma_buf, 512);
-    kfree(dma_buf);
+size_t fat_volume_size(const void *boot_sector, uint32_t *bytes_per_sector_out) {
+  if (bytes_per_sector_out)
+    *bytes_per_sector_out = 0;
+  if (!boot_sector)
     return 0;
+
+  const struct bpb *b = (const struct bpb *)boot_sector;
+  uint32_t total = b->total_sectors_16 ? b->total_sectors_16
+                                       : b->total_sectors_32;
+  if (!total || !b->bytes_per_sector)
+    return 0;
+
+  if (bytes_per_sector_out)
+    *bytes_per_sector_out = b->bytes_per_sector;
+  return (size_t)total * b->bytes_per_sector;
+}
+
+uint8_t *fat_image_base(size_t *size_out, uint32_t *bytes_per_sector_out) {
+  if (size_out)
+    *size_out = fs_image ? fs_image_size : 0;
+  if (bytes_per_sector_out)
+    *bytes_per_sector_out = fs_image ? bytes_per_sec : 0;
+  return fs_image;
 }

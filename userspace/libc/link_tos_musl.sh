@@ -39,6 +39,11 @@ exec "$cc" \
     -I "$src_dir/arch/generic" \
     -I "$src_dir/include" \
     -isystem "$gcc_include" \
+    -DTOS_USE_MUSL \
+    -I "$script_dir/.." \
+    -I "$script_dir/../lib" \
+    -I "$script_dir/../include" \
+    -I "$script_dir/../../kernel" \
     -Wl,-T,"$ld_script" \
     -Wl,-z,max-page-size=0x1000 \
     -Wl,-z,noexecstack \

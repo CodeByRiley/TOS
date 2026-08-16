@@ -1,6 +1,6 @@
 /* Host-side regression test for userspace/lib/bmp.c.
  *
- * Decodes the generated rootfs/cursor.bmp and checks it comes back as the
+ * Decodes the generated cursor bitmap and checks it comes back as the
  * exact sprite tools/make_cursor.py encoded — same dimensions, same
  * pixels, right way up. A cursor that decodes upside down or with red and
  * blue swapped still renders something, so "it drew" is not evidence; the
@@ -169,12 +169,12 @@ static void write_bmp32_zero_alpha(const char *path) {
 }
 
 int main(int argc, char **argv) {
-    const char *cursor = argc > 1 ? argv[1] : "rootfs/cursor.bmp";
+    const char *cursor = argc > 1 ? argv[1] : "rootfs/system/icons/cursor.bmp";
 
     struct bmp_image img;
     memset(&img, 0, sizeof(img));
 
-    expect(bmp_load(cursor, &img) == 0, "decode rootfs/cursor.bmp");
+    expect(bmp_load(cursor, &img) == 0, "decode the cursor bitmap");
     if (!img.pixels) {
         printf("cannot continue without the cursor image\n");
         return 1;

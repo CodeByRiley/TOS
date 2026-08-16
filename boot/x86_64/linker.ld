@@ -59,6 +59,12 @@ SECTIONS
         . = ALIGN(4096);
     } :data
 
+    .ksymtab : {
+				__ksymtab_start = .;
+				KEEP(*(.ksymtab))
+				__ksymtab_end = .;
+	  }
+
     .bss (NOLOAD) : AT(ADDR(.bss) - KERNEL_VMA) ALIGN(4096)
     {
         *(.bss*)

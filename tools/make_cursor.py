@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Generate rootfs/cursor.bmp — the winman pointer sprite.
+"""Generate rootfs/system/icons/cursor.bmp — the winman pointer sprite.
 
 Emits a 32-bit BITMAPV4HEADER BMP with an explicit alpha mask, which is
 what an image editor produces when it exports RGBA. Run it to regenerate
 the default arrow; to use a hand-drawn cursor instead, just overwrite
-rootfs/cursor.bmp with any 24- or 32-bit uncompressed BMP and rebuild.
+rootfs/system/icons/cursor.bmp with any 24- or 32-bit uncompressed BMP
+and rebuild.
 
     python tools/make_cursor.py
 
@@ -75,7 +76,7 @@ def build() -> bytes:
 
 def main() -> None:
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    out = os.path.join(root, "rootfs", "cursor.bmp")
+    out = os.path.join(root, "rootfs", "system", "icons", "cursor.bmp")
     data = build()
     with open(out, "wb") as fp:
         fp.write(data)

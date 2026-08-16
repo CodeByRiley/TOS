@@ -1,14 +1,16 @@
-/* userspace/bin/cat/cat.c — dump one or more files to stdout. */
-#include <lib/syscall.h>
-#include <stddef.h>
-
-extern void *fopen(const char *, const char *);
-extern size_t fread(void *, size_t, size_t, void *);
-extern int    fclose(void *);
-extern int    printf(const char *, ...);
+/* userspace/bin/cat/cat.c — dump one or more files to stdout.
+ *
+ * First binary built against musl rather than userspace/lib. It uses only
+ * standard headers: no <lib/syscall.h>, no hand-declared externs. The
+ * hand-rolled libc is still what every other binary links, so this one is
+ * the canary for the migration — if musl's startup, stdio, or syscall layer
+ * is wrong on TOS, `cat` is where it shows up first.
+ */
+#include <stdio.h>
+#include <unistd.h>
 
 static int cat_one(const char *path) {
-    void *fp = fopen(path, "rb");
+    FILE *fp = fopen(path, "rb");
     if (!fp) {
         printf("cat: %s: open failed\n", path);
         return 1;
@@ -17,7 +19,8 @@ static int cat_one(const char *path) {
     char buf[256];
     size_t n;
     while ((n = fread(buf, 1, sizeof(buf), fp)) > 0) {
-        write(1, buf, n);
+        if (write(1, buf, n) < 0)
+            break;
     }
     fclose(fp);
     return 0;

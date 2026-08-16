@@ -7,9 +7,9 @@
  * pattern. Name matching is substring, so `pkill sh` also hits `shutdown`
  * — list first with `plist <name>` if that matters.
  */
-#include <include/stdio.h>
-#include <include/stdlib.h>
-#include <include/string.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <lib/syscall.h>
 
 /* Matches sys_proc_list's own cap. */

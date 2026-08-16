@@ -6,6 +6,11 @@
  * written, with 8.3 short names kept as aliases so the volume stays
  * readable by anything that only speaks 8.3.
  *
+ * Nothing here knows what the image was loaded from. Backing it with a real
+ * disk is kernel/fs/fat_ahci.c's job, which plugs into the write-through
+ * hook below; that separation is what lets the host tests link fat.c
+ * against nothing but libc.
+ *
  * Implementation: kernel/fs/fat.c.
  */
 #ifndef FAT_H
@@ -13,7 +18,6 @@
 
 #include <stdint.h>
 #include <stddef.h>
-#include <drivers/storage/ahci.h>
 
 /* Bytes in a raw 8.3 directory entry name field (8 base + 3 extension). */
 #define FAT_NAME_LEN 11
@@ -89,7 +93,25 @@ long   fat_read_root_dir(uint32_t *index, char *buf, size_t len);
 long   fat_read_dir_one(const char *path, uint32_t *index, char *buf,
                         size_t len, int *is_dir);
 
-int    fat_read_sector(uint32_t lba, void *buf);
-int    fat_mount_from_ahci(struct AHCI_DEVICE_DATA *ahci_dev, int port);
-void   fat_flush(void);
+/* Write-through hook. The driver mutates the RAM image and then hands the
+ * touched sector to `writer`, which is what pushes it at whatever the image
+ * came from. `sector_data` points into the image, so the writer must not
+ * hold it past the call. */
+typedef void (*fat_sector_writer)(uint32_t lba, void *sector_data);
+
+/* Install the write-through backend, or NULL to drop back to RAM-only —
+ * which is the state a host test runs in, and the reason fat.c never names
+ * a storage driver itself. */
+void   fat_set_sector_writer(fat_sector_writer writer);
+
+/* The mounted image. Returns NULL when nothing is mounted; either out
+ * parameter may be NULL. Exposed for the storage backend, which writes the
+ * whole image back. */
+uint8_t *fat_image_base(size_t *size_out, uint32_t *bytes_per_sector_out);
+
+/* Byte size of the volume a raw boot sector describes, or 0 if its geometry
+ * is unusable. A backend needs this to know how much to read before there
+ * is an image to mount, and asking here keeps the BPB layout in one file.
+ * `bytes_per_sector_out` may be NULL. */
+size_t fat_volume_size(const void *boot_sector, uint32_t *bytes_per_sector_out);
 #endif

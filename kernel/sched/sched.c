@@ -1041,36 +1041,6 @@ int task_reap_unclaimed(void) {
   return reaped;
 }
 
-/* User-task first-run trampoline. Runs in ring 0 on the new task's kstack
- * after its first context_switch. Builds an iretq frame using the entry
- * RIP/RSP stashed in the task struct and jumps to ring 3.
- *
- * Every constant in here (0x1B, 0x23, 0x202) is a GDT selector or an RFLAGS
- * value with IF=1. If they look like magic numbers it's because they are
- * magic numbers, and the x86 manual is the spell book. */
-// static void user_task_trampoline(void) {
-//   uint64_t entry = current->user_entry;
-//   uint64_t rsp   = current->user_rsp_initial;
-
-//   __asm__ volatile (
-//       "cli                  \n"
-//       "mov $0x1B, %%ax      \n"      /* user data | RPL=3 */
-//       "mov %%ax, %%ds       \n"
-//       "mov %%ax, %%es       \n"
-//       "mov %%ax, %%fs       \n"
-//       "mov %%ax, %%gs       \n"
-//       "pushq $0x1B          \n"      /* SS */
-//       "pushq %0             \n"      /* user RSP */
-//       "pushq $0x202         \n"      /* RFLAGS, IF=1 */
-//       "pushq $0x23          \n"      /* user CS | RPL=3 */
-//       "pushq %1             \n"      /* user RIP */
-//       "iretq                \n"
-//       :: "r"(rsp), "r"(entry)
-//       : "rax", "memory"
-//   );
-//   __builtin_unreachable();
-// }
-//
 static void user_task_trampoline(void) {
   uint64_t entry = current->user_entry;
   uint64_t rsp   = current->user_rsp_initial;

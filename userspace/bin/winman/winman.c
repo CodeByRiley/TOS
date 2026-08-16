@@ -1,4 +1,6 @@
 #include "winman.h"
+#include "key_codes.h"
+#include "syscall.h"
 #include <display/print.h>
 #include <stdbool.h>
 #include <string.h>
@@ -11,6 +13,8 @@ static int cursor_h(void) {
   return cursor_img.pixels ? cursor_img.height : CURSOR_H;
 }
 
+static int alt_pressed = 0;
+
 /* Double-click tracking */
 static int last_icon_clicked = -1;
 static u32 last_icon_click_tick = 0;
@@ -22,6 +26,20 @@ static int last_title_click_y = 0;
 #define DOUBLE_CLICK_TICKS 370u
 #define DOUBLE_CLICK_SLOP 4
 #define CLIENT_DIM_HARD_LIMIT 2048
+
+/* Close escalation. The close button is a request — the owner is expected to
+ * tear its own window down so it can prompt about unsaved work first. An app
+ * that ignores WM_EV_QUIT or has wedged would otherwise be unclosable, so a
+ * second click while the first request is still outstanding destroys the
+ * window here instead of asking again.
+ *
+ * The window is bounded in time as well as cleared on destroy: handles are
+ * slot indices and get reused, so without a deadline a stale pending request
+ * could force-destroy an unrelated window that later inherited the handle.
+ * Ticks come from the PIT at 500 Hz, so this is roughly three seconds. */
+#define CLOSE_ESCALATE_TICKS 1500u
+static int close_pending_handle = -1;
+static u32 close_pending_tick = 0;
 
 static int max_client_w = MIN_CLIENT_W;
 static int max_client_h = MIN_CLIENT_H;
@@ -63,7 +81,8 @@ static void reset_titlebar_click(void) {
 }
 
 /* Consume a second click on the same titlebar when it is close enough in both
- * time and position. Reset after a match so a triple-click only toggles once. */
+ * time and position. Reset after a match so a triple-click only toggles once.
+ */
 static int titlebar_click_is_double(int handle, int x, int y, u32 now) {
   int dx = x - last_title_click_x;
   int dy = y - last_title_click_y;
@@ -197,7 +216,7 @@ static int outer_w(const struct window *w) {
   return w->client_w + 2 * BORDER_PX;
 }
 static int outer_h(const struct window *w) {
-  return w->client_h + TITLEBAR_PX + BORDER_PX;
+  return w->client_h + TITLEBAR_PX + BORDER_PX + w->status_h;
 }
 
 /* Pre-expanded glyph row for the console (CONSOLE_FG/CONSOLE_BG are
@@ -283,6 +302,36 @@ static void mark_dirty(int x, int y, int w, int h) {
     dirty_h = y2 - dirty_y;
   }
   desktop_dirty = 1;
+}
+
+/* Start-button artwork. Same contract as cursor_load: a failed or absurdly
+ * sized load leaves tb_start_icon_loaded at 0 and draw_taskbar falls back to
+ * the built-in mask, so a missing file is cosmetic and never fatal. */
+static struct bmp_image tb_start_icon;
+static int tb_start_icon_loaded = 0;
+static void tb_load_start_icon(void) {
+  if (tb_start_icon_loaded)
+    return;
+
+  if (bmp_load(TB_START_ICON_PATH, &tb_start_icon) != 0) {
+    printf("winman: %s unavailable, using built-in start icon\n",
+           TB_START_ICON_PATH);
+    return;
+  }
+
+  if (tb_start_icon.width <= 0 || tb_start_icon.height <= 0 ||
+      tb_start_icon.width > TB_START_ICON_MAX_DIM ||
+      tb_start_icon.height > TB_START_ICON_MAX_DIM) {
+    printf("winman: %s has invalid start icon dimensions %dx%d, using "
+           "built-in start icon\n",
+           TB_START_ICON_PATH, tb_start_icon.width, tb_start_icon.height);
+    bmp_free(&tb_start_icon);
+    return;
+  }
+
+  tb_start_icon_loaded = 1;
+  printf("winman: start icon %dx%d from %s\n", tb_start_icon.width,
+         tb_start_icon.height, TB_START_ICON_PATH);
 }
 
 static struct ttf_font con_font;
@@ -401,7 +450,22 @@ static void win_set_pos(int handle, int x, int y) {
 }
 
 static int outer_w_dims(int cw) { return cw + 2 * BORDER_PX; }
-static int outer_h_dims(int ch) { return ch + TITLEBAR_PX + BORDER_PX; }
+
+/* Outer height from a client height plus that window's status strip. The
+ * status height is an explicit parameter rather than looked up inside,
+ * because most callers already hold the window and the ones that don't must
+ * be made to say which window they mean — a frame height that silently
+ * omits the strip leaves it unpainted or untestable. */
+static int outer_h_dims(int ch, int status_h) {
+  return ch + TITLEBAR_PX + BORDER_PX + status_h;
+}
+
+/* Status height for a handle, 0 if it has no window or no strip. For the
+ * call sites that only carry a handle. */
+static int status_h_of(int handle) {
+  struct window *w = find_handle(handle);
+  return w ? w->status_h : 0;
+}
 
 /* True iff (mx,my) lies inside titlebar button `idx_from_right` for a window
  * whose outer rect is (win_x, win_y, outer_w, _). Used by hit_test_at to
@@ -529,7 +593,7 @@ static int hit_test_at(int mx, int my, int *out_handle) {
     if (!win_get_rect(h, &x, &y, &cw, &ch))
       continue;
     int ow = outer_w_dims(cw);
-    int oh = outer_h_dims(ch);
+    int oh = outer_h_dims(ch, status_h_of(h));
     if (mx < x || mx >= x + ow || my < y || my >= y + oh)
       continue;
     *out_handle = h;
@@ -545,6 +609,11 @@ static int hit_test_at(int mx, int my, int *out_handle) {
         return HIT_BTN_MIN;
       return HIT_TITLEBAR;
     }
+    /* Below the client area is the status strip, not the client. Returning
+     * HIT_CLIENT here would forward the click at a y past the bottom of the
+     * client's surface. The grip check above already claimed the corner. */
+    if (status_h_of(h) > 0 && my >= y + TITLEBAR_PX + ch)
+      return HIT_STATUSBAR;
     return HIT_CLIENT;
   }
   return HIT_NONE;
@@ -1017,6 +1086,23 @@ static void draw_chrome(const struct window *w, int focused) {
   draw_button_mask(bx, by, fallback_btn_maximise_mask, TB_BTN_FG, TB_BTN_BG);
   titlebar_btn_rect(w->x, w->y, ow, 2, &bx, &by, &bw_, &bh_);
   draw_button_mask(bx, by, fallback_btn_hide_mask, TB_BTN_FG, TB_BTN_BG);
+
+  /* Status strip, below the client area and inside the border. */
+  if (w->status_h > 0) {
+    int sx = w->x + BORDER_PX;
+    int sy = w->y + TITLEBAR_PX + w->client_h;
+    int sw = ow - 2 * BORDER_PX;
+    fb_fill_rect(sx, sy, sw, w->status_h, STATUSBAR_BG);
+    /* 1px top rule so the strip reads as chrome rather than as more client
+     * area, which matters most when the client is also light-coloured. */
+    fb_fill_rect(sx, sy, sw, 1, TITLEBAR_BG);
+
+    int ty = sy + (w->status_h - FONT_GLYPH_H) / 2;
+    int avail = sw - 2 * STATUSBAR_PAD_X;
+    if (avail > 0 && w->status[0])
+      draw_text_fb(sx + STATUSBAR_PAD_X, ty, w->status, avail, STATUSBAR_FG,
+                   STATUSBAR_BG);
+  }
 }
 
 static void blit_surface(const struct window *w) {
@@ -1046,6 +1132,32 @@ static void blit_surface(const struct window *w) {
   }
 }
 
+static void blit_icon(int dst_x, int dst_y, int dst_w, int dst_h, int src_w,
+                      int src_h, uint32_t *pixels);
+
+/* Start button. Uses the on-disk artwork when it loaded, the built-in mask
+ * otherwise. The icon is inset by TB_START_ICON_PAD so it doesn't run into
+ * the taskbar edges, and blit_icon rescales it to whatever that leaves —
+ * the source BMP does not have to match the button size. */
+static void draw_start_button(int y) {
+  if (!tb_start_icon_loaded) {
+    draw_button_mask_large(0, y, fallback_taskbar_start_mask, PRINT_COLOR_GREEN,
+                           TASKBAR_BG);
+    return;
+  }
+
+  /* The icon has transparent pixels, so the button needs its own opaque
+   * ground rather than inheriting whatever was under the taskbar. */
+  fb_fill_rect(0, y, TASKBAR_START_W, TASKBAR_PX, TASKBAR_BG);
+
+  int pad = TB_START_ICON_PAD;
+  if (2 * pad >= TASKBAR_START_W || 2 * pad >= TASKBAR_PX)
+    pad = 0;
+
+  blit_icon(pad, y + pad, TASKBAR_START_W - 2 * pad, TASKBAR_PX - 2 * pad,
+            tb_start_icon.width, tb_start_icon.height, tb_start_icon.pixels);
+}
+
 static void draw_taskbar(void) {
   int y = taskbar_y();
   if (y < 0)
@@ -1054,9 +1166,7 @@ static void draw_taskbar(void) {
   fb_fill_rect(0, y, fb_w, TASKBAR_PX, TASKBAR_BG);
 
   // draw the start button FIRST at x=0 so it doesn't cover taskbar buttons
-  // Using WHITE for fg so the > is visible against the red bg
-  draw_button_mask_large(0, y, fallback_taskbar_start_mask, PRINT_COLOR_GREEN,
-                         TASKBAR_BG);
+  draw_start_button(y);
 
   // draw divider right after the start button
   fb_fill_rect(TASKBAR_START_W + TASKBAR_BTN_GAP, y, 2, TASKBAR_PX,
@@ -1202,7 +1312,7 @@ static void con_redraw(void) {
     }
   }
   mark_dirty(con.win.x, con.win.y, outer_w_dims(con.win.client_w),
-             outer_h_dims(con.win.client_h));
+             outer_h_dims(con.win.client_h, con.win.status_h));
 }
 
 static int con_set_scale(int new_scale) {
@@ -1292,7 +1402,7 @@ static void con_wipe(void) {
     memset(con.cells, 0, (size_t)con.cols * (size_t)con.rows);
   con.cx = con.cy = 0;
   mark_dirty(con.win.x, con.win.y, outer_w_dims(con.win.client_w),
-             outer_h_dims(con.win.client_h));
+             outer_h_dims(con.win.client_h, con.win.status_h));
 }
 
 static void con_save(void) {
@@ -1318,7 +1428,7 @@ static void con_restore(void) {
   con.cy = con_saved_cy;
   con_saved_valid = 0;
   mark_dirty(con.win.x, con.win.y, outer_w_dims(con.win.client_w),
-             outer_h_dims(con.win.client_h));
+             outer_h_dims(con.win.client_h, con.win.status_h));
 }
 
 static void con_putc(char c) {
@@ -1538,7 +1648,7 @@ static void compose_handle(int handle) {
     if (!con.win.in_use)
       return;
     if (!clip_hits(con.win.x, con.win.y, outer_w_dims(con.win.client_w),
-                   outer_h_dims(con.win.client_h)))
+                   outer_h_dims(con.win.client_h, con.win.status_h)))
       return;
     struct window cw = {0};
     cw.x = con.win.x;
@@ -1627,6 +1737,9 @@ static void compose(void) {
   if (clip_hits(0, taskbar_y(), fb_w, TASKBAR_PX))
     draw_taskbar();
   draw_start_menu();
+  /* Last, so the dialog sits above the taskbar and the start menu too —
+   * anything it did not cover would be clickable behind a modal. */
+  draw_prompt();
 }
 
 /* Hand normal backbuffer copies to the kernel so large regions can use its AP
@@ -1912,7 +2025,7 @@ static void compute_ghost(int mx, int my, int *gx, int *gy, int *gw, int *gh) {
     *gx = nx;
     *gy = ny;
     *gw = outer_w_dims(drag.orig_cw);
-    *gh = outer_h_dims(drag.orig_ch);
+    *gh = outer_h_dims(drag.orig_ch, status_h_of(drag.handle));
   } else {
     int ncw = drag.orig_cw + dx;
     int nch = drag.orig_ch + dy;
@@ -1920,7 +2033,7 @@ static void compute_ghost(int mx, int my, int *gx, int *gy, int *gw, int *gh) {
     *gx = drag.orig_x;
     *gy = drag.orig_y;
     *gw = outer_w_dims(ncw);
-    *gh = outer_h_dims(nch);
+    *gh = outer_h_dims(nch, status_h_of(drag.handle));
   }
 }
 
@@ -1944,8 +2057,8 @@ static struct window *find_handle(int handle) {
 }
 
 static int handle_create(int client_pid, int w, int h, const char *title,
-                         uint64_t *out_client_va, uint32_t *out_pitch,
-                         int *out_handle) {
+                         uint32_t flags, uint64_t *out_client_va,
+                         uint32_t *out_pitch, int *out_handle) {
   if (w <= 0 || h <= 0 || w > CLIENT_DIM_HARD_LIMIT ||
       h > CLIENT_DIM_HARD_LIMIT)
     return -1;
@@ -2002,6 +2115,11 @@ static int handle_create(int client_pid, int w, int h, const char *title,
   } else {
     win->title[0] = 0;
   }
+
+  /* Opt-in status strip. Set before the first mark_dirty below so the
+   * initial damage rect covers the taller frame. */
+  win->status_h = (flags & WM_CREATE_STATUSBAR) ? STATUSBAR_PX : 0;
+  win->status[0] = 0;
 
   focused_handle = win->handle;
   z_bring_to_front(win->handle);
@@ -2061,6 +2179,16 @@ static void handle_destroy_internal(int handle, int client_pid_check) {
     free(old_surface_raw);
   memset(w, 0, sizeof(*w));
   z_remove(handle);
+
+  /* Drop any outstanding close request: this slot's handle is free for
+   * reuse, and a stale pending entry would force-destroy whichever window
+   * inherits it on the user's next single close click. */
+  if (close_pending_handle == handle)
+    close_pending_handle = -1;
+
+  /* A dialog owned by this window has nothing left to answer to. */
+  if (old_owner_pid > 0)
+    prompt_abandon_for_owner(old_owner_pid);
 
   if (focused_handle == handle) {
     focused_handle = z_count > 0 ? z_order[0] : 0;
@@ -2214,6 +2342,341 @@ static void handle_set_title(int owner_pid, int handle, const char *title) {
   mark_dirty(w->x, w->y, outer_w(w), outer_h(w));
 }
 
+/* ---------------- Modal prompt ------------------------------------------
+ *
+ * Winman owns the dialog outright: it draws it, it consumes every keystroke
+ * and click while it is up, and it sends the answer back. The requesting app
+ * is parked inside wm_prompt() and never sees the input, which is what makes
+ * the dialog genuinely modal rather than merely painted on top.
+ *
+ * Only one is allowed at a time. A second request while one is open is
+ * refused with WM_PROMPT_CANCEL rather than queued — an app blocked in
+ * wm_prompt() cannot have issued it, so it came from a second app, and
+ * stacking dialogs from unrelated apps has no sane z-order answer. */
+static struct prompt_state prompt;
+
+/* Shift state for the dialog's text field. Tracked here rather than reusing
+ * the client-facing modifier state, because keystrokes that reach a prompt
+ * never reach a client and vice versa. */
+static int shift_held = 0;
+/* Ctrl state, for the console zoom shortcuts. */
+static int ctrl_held = 0;
+
+static const char *prompt_button_label(int kind, int idx) {
+  if (kind == WM_PROMPT_CONFIRM) {
+    static const char *labels[] = {"Yes", "No", "Cancel"};
+    return (idx >= 0 && idx < 3) ? labels[idx] : "";
+  }
+  if (kind == WM_PROMPT_TEXT) {
+    static const char *labels[] = {"OK", "Cancel"};
+    return (idx >= 0 && idx < 2) ? labels[idx] : "";
+  }
+  return idx == 0 ? "OK" : "";
+}
+
+static int prompt_button_count(int kind) {
+  if (kind == WM_PROMPT_CONFIRM)
+    return 3;
+  if (kind == WM_PROMPT_TEXT)
+    return 2;
+  return 1;
+}
+
+/* Result for a given button index, so the click path and the keyboard path
+ * cannot disagree about what "the second button" means. */
+static int prompt_button_result(int kind, int idx) {
+  if (kind == WM_PROMPT_CONFIRM)
+    return idx == 0 ? WM_PROMPT_OK
+                    : (idx == 1 ? WM_PROMPT_NO : WM_PROMPT_CANCEL);
+  if (kind == WM_PROMPT_TEXT)
+    return idx == 0 ? WM_PROMPT_OK : WM_PROMPT_CANCEL;
+  return WM_PROMPT_OK;
+}
+
+/* Work out where the dialog goes and freeze it into prompt_state. Called
+ * once, from handle_prompt_req, before anything draws or damages.
+ *
+ * The result must not be recomputed later: it depends on the owner window's
+ * position and on the framebuffer size, and both can change while the
+ * dialog is up. The destroy path is the concrete case — handle_destroy_internal
+ * wipes the window before abandoning its prompt, so a recomputing version
+ * silently switches to the screen-centred fallback and erases a rectangle
+ * the dialog was never drawn in, stranding it on screen. */
+static void prompt_freeze_rect(void) {
+  prompt.w = PROMPT_W;
+  prompt.h = PROMPT_H;
+
+  int wx = 0, wy = 0, wcw = 0, wch = 0;
+
+  /* If we can find the owner window, center over its outer rect.
+   * Otherwise, fall back to the screen center. */
+  if (prompt.owner_handle > 0 &&
+      win_get_rect(prompt.owner_handle, &wx, &wy, &wcw, &wch)) {
+    int o_w = outer_w_dims(wcw);
+    int o_h = outer_h_dims(wch, status_h_of(prompt.owner_handle));
+
+    prompt.x = wx + (o_w - PROMPT_W) / 2;
+    prompt.y = wy + (o_h - PROMPT_H) / 2;
+  } else {
+    prompt.x = (fb_w - PROMPT_W) / 2;
+    prompt.y = (fb_h - TASKBAR_PX - PROMPT_H) / 2;
+  }
+
+  /* Clamp to screen so the dialog doesn't vanish if the window is tiny
+   * or pushed off-screen. */
+  if (prompt.x < 0)
+    prompt.x = 0;
+  if (prompt.y < 0)
+    prompt.y = 0;
+  if (prompt.x + prompt.w > fb_w)
+    prompt.x = (fb_w > prompt.w) ? (fb_w - prompt.w) : 0;
+  if (prompt.y + prompt.h > fb_h - TASKBAR_PX)
+    prompt.y =
+        ((fb_h - TASKBAR_PX) > prompt.h) ? (fb_h - TASKBAR_PX - prompt.h) : 0;
+}
+
+static void prompt_rect(int *px, int *py, int *pw, int *ph) {
+  *px = prompt.x;
+  *py = prompt.y;
+  *pw = prompt.w;
+  *ph = prompt.h;
+}
+
+static void prompt_btn_rect(int idx, int *bx, int *by, int *bw, int *bh) {
+  int px, py, pw, ph;
+  prompt_rect(&px, &py, &pw, &ph);
+  int n = prompt_button_count(prompt.kind);
+  int row_w = n * PROMPT_BTN_W + (n - 1) * PROMPT_BTN_GAP;
+
+  *bw = PROMPT_BTN_W;
+  *bh = PROMPT_BTN_H;
+  *bx = px + (pw - row_w) / 2 + idx * (PROMPT_BTN_W + PROMPT_BTN_GAP);
+  *by = py + ph - PROMPT_PAD - PROMPT_BTN_H;
+}
+
+static void prompt_send_result(int result) {
+  if (!prompt.active)
+    return;
+
+  struct ipc_msg resp;
+  memset(&resp, 0, sizeof(resp));
+  resp.type = IPC_WM_PROMPT_RESP;
+  resp.a = result;
+  if (prompt.kind == WM_PROMPT_TEXT && result == WM_PROMPT_OK) {
+    size_t i = 0;
+    while (i < sizeof(resp.str) - 1 && prompt.input[i]) {
+      resp.str[i] = prompt.input[i];
+      i++;
+    }
+    resp.str[i] = 0;
+  }
+  ipc_send(prompt.owner_pid, &resp);
+
+  int px, py, pw, ph;
+  prompt_rect(&px, &py, &pw, &ph);
+  prompt.active = 0;
+  /* The dialog covered whatever was beneath it, so damage its whole rect. */
+  mark_dirty(px, py, pw, ph);
+}
+
+static void handle_prompt_req(int owner_pid, int handle, int kind,
+                              const char *message) {
+  if (kind != WM_PROMPT_MESSAGE && kind != WM_PROMPT_CONFIRM &&
+      kind != WM_PROMPT_TEXT)
+    return;
+
+  if (prompt.active) {
+    /* Refuse rather than queue — see the note above. */
+    struct ipc_msg busy;
+    memset(&busy, 0, sizeof(busy));
+    busy.type = IPC_WM_PROMPT_RESP;
+    busy.a = WM_PROMPT_CANCEL;
+    ipc_send(owner_pid, &busy);
+    return;
+  }
+
+  memset(&prompt, 0, sizeof(prompt));
+  prompt.active = 1;
+  prompt.kind = kind;
+  prompt.owner_pid = owner_pid;
+  prompt.owner_handle = handle;
+  prompt.selected = 0;
+  if (message) {
+    size_t i = 0;
+    while (i < sizeof(prompt.message) - 1 && message[i]) {
+      prompt.message[i] = message[i];
+      i++;
+    }
+    prompt.message[i] = 0;
+  }
+
+  /* Fix the position now, while the owner window is still around to be
+   * centred on. Everything afterwards reads the stored rect. */
+  prompt_freeze_rect();
+
+  int px, py, pw, ph;
+  prompt_rect(&px, &py, &pw, &ph);
+  mark_dirty(px, py, pw, ph);
+  printf("winman: prompt kind=%d owner=%d handle=%d at %d,%d\n", kind,
+         owner_pid, handle, px, py);
+}
+
+/* An owner that dies or loses its window mid-dialog leaves nothing to answer
+ * to, so drop the dialog rather than leave it stranded on screen. */
+static void prompt_abandon_for_owner(int owner_pid) {
+  if (!prompt.active || prompt.owner_pid != owner_pid)
+    return;
+
+  int px, py, pw, ph;
+  prompt_rect(&px, &py, &pw, &ph);
+  prompt.active = 0;
+  mark_dirty(px, py, pw, ph);
+}
+
+static void draw_prompt(void) {
+  if (!prompt.active)
+    return;
+
+  int px, py, pw, ph;
+  prompt_rect(&px, &py, &pw, &ph);
+  if (!clip_hits(px, py, pw, ph))
+    return;
+
+  fb_fill_rect(px, py, pw, ph, PROMPT_BG);
+  /* Frame: light top/left, dark bottom/right — the same raised look the
+   * taskbar buttons use. */
+  fb_fill_rect(px, py, pw, 1, CHROME_TEXT);
+  fb_fill_rect(px, py, 1, ph, CHROME_TEXT);
+  fb_fill_rect(px, py + ph - 1, pw, 1, TITLEBAR_BG);
+  fb_fill_rect(px + pw - 1, py, 1, ph, TITLEBAR_BG);
+
+  draw_text_fb(px + PROMPT_PAD, py + PROMPT_PAD, prompt.message,
+               pw - 2 * PROMPT_PAD, PROMPT_TEXT, PROMPT_BG);
+
+  if (prompt.kind == WM_PROMPT_TEXT) {
+    int fx = px + PROMPT_PAD;
+    int fy = py + PROMPT_PAD + FONT_GLYPH_H + PROMPT_PAD;
+    int fw = pw - 2 * PROMPT_PAD;
+    fb_fill_rect(fx, fy, fw, PROMPT_FIELD_H, PROMPT_FIELD_BG);
+    fb_fill_rect(fx, fy, fw, 1, TITLEBAR_BG);
+    fb_fill_rect(fx, fy, 1, PROMPT_FIELD_H, TITLEBAR_BG);
+
+    int ty = fy + (PROMPT_FIELD_H - FONT_GLYPH_H) / 2;
+    draw_text_fb(fx + 3, ty, prompt.input, fw - 6, PROMPT_TEXT,
+                 PROMPT_FIELD_BG);
+    /* Caret sits after the last glyph; the field scrolls nowhere, so a
+     * string longer than the field just runs under the right edge. */
+    int caret_x = fx + 3 + prompt.caret * FONT_GLYPH_W;
+    if (caret_x < fx + fw - 2)
+      fb_fill_rect(caret_x, ty, 1, FONT_GLYPH_H, PROMPT_TEXT);
+  }
+
+  int n = prompt_button_count(prompt.kind);
+  for (int i = 0; i < n; i++) {
+    int bx, by, bw, bh;
+    prompt_btn_rect(i, &bx, &by, &bw, &bh);
+    int sel = (i == prompt.selected);
+    uint32_t bg = sel ? PROMPT_BTN_SEL_BG : PROMPT_BTN_BG;
+    uint32_t fg = sel ? PROMPT_BTN_SEL_FG : PROMPT_TEXT;
+    fb_fill_rect(bx, by, bw, bh, bg);
+    fb_fill_rect(bx, by, bw, 1, CHROME_TEXT);
+    fb_fill_rect(bx, by + bh - 1, bw, 1, TITLEBAR_BG);
+
+    const char *label = prompt_button_label(prompt.kind, i);
+    int label_w = (int)strlen(label) * FONT_GLYPH_W;
+    draw_text_fb(bx + (bw - label_w) / 2, by + (bh - FONT_GLYPH_H) / 2, label,
+                 bw, fg, bg);
+  }
+}
+
+/* Returns 1 when the dialog consumed the event. Every key and every click
+ * is consumed while a prompt is up — that is what modal means. */
+static int prompt_handle_key(int keycode, int shift) {
+  if (!prompt.active)
+    return 0;
+
+  int n = prompt_button_count(prompt.kind);
+
+  if (keycode == KEY_ESC) {
+    prompt_send_result(WM_PROMPT_CANCEL);
+    return 1;
+  }
+  if (keycode == KEY_ENTER || keycode == KEY_KPENTER) {
+    prompt_send_result(prompt_button_result(prompt.kind, prompt.selected));
+    return 1;
+  }
+  if (keycode == KEY_TAB || keycode == KEY_RIGHT) {
+    prompt.selected = (prompt.selected + 1) % n;
+    goto redraw;
+  }
+  if (keycode == KEY_LEFT) {
+    prompt.selected = (prompt.selected + n - 1) % n;
+    goto redraw;
+  }
+
+  if (prompt.kind == WM_PROMPT_TEXT) {
+    if (keycode == KEY_BACKSPACE) {
+      if (prompt.caret > 0)
+        prompt.input[--prompt.caret] = 0;
+      goto redraw;
+    }
+    char c = keymap_to_ascii(keycode, shift);
+    if (c >= 32 && c <= 126 && prompt.caret < PROMPT_MAX_TEXT) {
+      prompt.input[prompt.caret++] = c;
+      prompt.input[prompt.caret] = 0;
+      goto redraw;
+    }
+  }
+  /* Swallow anything else: a stray key must not reach the app behind. */
+  return 1;
+
+redraw: {
+  int px, py, pw, ph;
+  prompt_rect(&px, &py, &pw, &ph);
+  mark_dirty(px, py, pw, ph);
+}
+  return 1;
+}
+
+static int prompt_handle_click(int mx, int my) {
+  if (!prompt.active)
+    return 0;
+
+  int n = prompt_button_count(prompt.kind);
+  for (int i = 0; i < n; i++) {
+    int bx, by, bw, bh;
+    prompt_btn_rect(i, &bx, &by, &bw, &bh);
+    if (mx >= bx && mx < bx + bw && my >= by && my < by + bh) {
+      prompt_send_result(prompt_button_result(prompt.kind, i));
+      return 1;
+    }
+  }
+  /* Clicks elsewhere are eaten too, so the window underneath cannot be
+   * focused, dragged, or closed while the dialog is waiting. */
+  return 1;
+}
+
+static void handle_set_status(int owner_pid, int handle, const char *text) {
+  struct window *w = find_handle(handle);
+  if (!w || w->owner_pid != owner_pid || !text)
+    return;
+  /* Dropped for a window with no strip: there is nowhere to draw it, and
+   * silently growing the frame would move the client area out from under a
+   * client that never asked for one. */
+  if (w->status_h <= 0)
+    return;
+
+  size_t i = 0;
+  while (i < sizeof(w->status) - 1 && text[i]) {
+    w->status[i] = text[i];
+    i++;
+  }
+  w->status[i] = 0;
+  /* Only the strip changed, so damage just it rather than the whole frame. */
+  mark_dirty(w->x + BORDER_PX, w->y + TITLEBAR_PX + w->client_h,
+             outer_w(w) - 2 * BORDER_PX, w->status_h);
+}
+
 static void send_create_resp(int target_pid, int handle, uint64_t va,
                              uint32_t pitch, int w, int h) {
   struct ipc_msg resp;
@@ -2236,7 +2699,8 @@ static void pump_ipc(void) {
       uint64_t va = 0;
       uint32_t pitch = 0;
       int handle = 0;
-      int rc = handle_create(from, m.a, m.b, m.str, &va, &pitch, &handle);
+      int rc =
+          handle_create(from, m.a, m.b, m.str, m.flags, &va, &pitch, &handle);
       if (rc == 0) {
         send_create_resp(from, handle, va, pitch, m.a, m.b);
       } else {
@@ -2256,11 +2720,18 @@ static void pump_ipc(void) {
     case IPC_WM_SET_TITLE_REQ:
       handle_set_title(from, m.a, m.str);
       break;
+    case IPC_WM_SET_STATUS_REQ:
+      handle_set_status(from, m.a, m.str);
+      break;
+    case IPC_WM_PROMPT_REQ:
+      handle_prompt_req(from, m.a, m.b, m.str);
+      break;
     case IPC_PEER_EXITED: {
       // The dead PID might be in from_pid or m.a depending on your kernel
       int dead_pid = (int)m.from_pid;
       if (dead_pid <= 0)
         dead_pid = (int)m.a;
+      prompt_abandon_for_owner(dead_pid);
       destroy_windows_for_owner(dead_pid, "peer-exited");
       break;
     }
@@ -2310,10 +2781,27 @@ static void forward_input(int target_pid, int win_handle, const struct msg *m) {
   ipc_send(target_pid, &out);
 }
 
-static void request_window_close(int handle) {
+static void request_window_close(int handle, u32 now) {
   struct window *w = find_handle(handle);
   if (!w || w->owner_pid <= 0)
     return;
+
+  /* Second click on a window whose close request is still outstanding: the
+   * owner had its chance to exit cleanly and did not take it, so take the
+   * window away. Passing 0 for the pid check makes this unconditional —
+   * the owner is not the one asking. */
+  if (close_pending_handle == handle &&
+      now - close_pending_tick < CLOSE_ESCALATE_TICKS) {
+    printf("winman: close button -> force handle=%d owner=%d\n", handle,
+           w->owner_pid);
+    close_pending_handle = -1;
+    handle_destroy_internal(handle, 0);
+    return;
+  }
+
+  printf("winman: close button -> request handle=%d\n", handle);
+  close_pending_handle = handle;
+  close_pending_tick = now;
 
   struct ipc_msg out;
   memset(&out, 0, sizeof(out));
@@ -2327,6 +2815,35 @@ static void pump_input(void) {
 
   while (msg_get(&m)) {
     int forward = 1;
+
+    /*
+     * Modal prompt. Takes precedence over everything below — including an
+     * in-flight drag — so no window can be moved, focused, or closed while
+     * a dialog is waiting for an answer, and no keystroke leaks to the app
+     * behind it. Mouse motion still falls through so the cursor keeps
+     * tracking.
+     */
+    if (prompt.active) {
+      if (m.type == MSG_KEY_DOWN) {
+        int shift = (m.param == KEY_LEFTSHIFT || m.param == KEY_RIGHTSHIFT);
+        if (shift)
+          shift_held = 1;
+        prompt_handle_key(m.param, shift_held);
+        continue;
+      }
+      if (m.type == MSG_KEY_UP) {
+        if (m.param == KEY_LEFTSHIFT || m.param == KEY_RIGHTSHIFT)
+          shift_held = 0;
+        continue;
+      }
+      if (m.type == MSG_MOUSE_DOWN) {
+        prompt_handle_click(m.x, m.y);
+        continue;
+      }
+      if (m.type == MSG_MOUSE_UP)
+        continue;
+      /* MSG_MOUSE_MOVE falls through to the cursor tracking below. */
+    }
 
     /*
      * Active move/resize operation.
@@ -2345,7 +2862,8 @@ static void pump_input(void) {
 
         int old_x, old_y, old_cw, old_ch;
         if (win_get_rect(drag.handle, &old_x, &old_y, &old_cw, &old_ch)) {
-          mark_dirty(old_x, old_y, outer_w_dims(old_cw), outer_h_dims(old_ch));
+          mark_dirty(old_x, old_y, outer_w_dims(old_cw),
+                     outer_h_dims(old_ch, status_h_of(drag.handle)));
         }
 
         if (drag.kind == HIT_TITLEBAR) {
@@ -2366,7 +2884,8 @@ static void pump_input(void) {
 
         int new_x, new_y, new_cw, new_ch;
         if (win_get_rect(drag.handle, &new_x, &new_y, &new_cw, &new_ch)) {
-          mark_dirty(new_x, new_y, outer_w_dims(new_cw), outer_h_dims(new_ch));
+          mark_dirty(new_x, new_y, outer_w_dims(new_cw),
+                     outer_h_dims(new_ch, status_h_of(drag.handle)));
         }
 
         forward = 0;
@@ -2382,10 +2901,17 @@ static void pump_input(void) {
       int hit_handle = 0;
       int kind = hit_test_at(m.x, m.y, &hit_handle);
       int titlebar_double_click = 0;
+      if (start_menu_open && kind != HIT_START_MENU && kind != HIT_START_BTN) {
+        start_menu_open = 0;
+        start_menu_hover = -1;
+        int menu_h = START_MENU_COUNT * START_MENU_ITEM_H + START_MENU_PAD * 2;
+        mark_dirty(0, taskbar_y() - menu_h, START_MENU_W, menu_h);
+        continue;
+      }
 
       if (kind == HIT_TITLEBAR) {
-        titlebar_double_click = titlebar_click_is_double(
-            hit_handle, m.x, m.y, (u32)m.when);
+        titlebar_double_click =
+            titlebar_click_is_double(hit_handle, m.x, m.y, (u32)m.when);
       } else {
         reset_titlebar_click();
       }
@@ -2395,8 +2921,7 @@ static void pump_input(void) {
        */
       if (kind == HIT_BTN_CLOSE) {
         // if (hit_handle != HANDLE_CONSOLE) {
-        printf("winman: close button -> request handle=%d\n", hit_handle);
-        request_window_close(hit_handle);
+        request_window_close(hit_handle, (u32)m.when);
         //}
 
         continue;
@@ -2484,14 +3009,16 @@ static void pump_input(void) {
         int x, y, cw, ch;
 
         if (win_get_rect(prev_focus, &x, &y, &cw, &ch)) {
-          mark_dirty(x, y, outer_w_dims(cw), outer_h_dims(ch));
+          mark_dirty(x, y, outer_w_dims(cw),
+                     outer_h_dims(ch, status_h_of(prev_focus)));
         }
 
         /*
          * Repaint the newly selected taskbar window.
          */
         if (win_get_rect(hit_handle, &x, &y, &cw, &ch)) {
-          mark_dirty(x, y, outer_w_dims(cw), outer_h_dims(ch));
+          mark_dirty(x, y, outer_w_dims(cw),
+                     outer_h_dims(ch, status_h_of(hit_handle)));
         }
 
         mark_dirty(0, taskbar_y(), fb_w, TASKBAR_PX);
@@ -2548,14 +3075,15 @@ static void pump_input(void) {
           focused_handle = hit_handle;
           z_bring_to_front(hit_handle);
 
-          mark_dirty(x, y, outer_w_dims(cw), outer_h_dims(ch));
+          mark_dirty(x, y, outer_w_dims(cw),
+                     outer_h_dims(ch, status_h_of(hit_handle)));
 
           if (prev_focus != hit_handle) {
             int prev_x, prev_y, prev_cw, prev_ch;
             if (win_get_rect(prev_focus, &prev_x, &prev_y, &prev_cw,
                              &prev_ch)) {
               mark_dirty(prev_x, prev_y, outer_w_dims(prev_cw),
-                         outer_h_dims(prev_ch));
+                         outer_h_dims(prev_ch, status_h_of(prev_focus)));
             }
           }
 
@@ -2583,6 +3111,28 @@ static void pump_input(void) {
       }
 
       /*
+       * Click on the status strip. Chrome, so it focuses the window like
+       * any other frame click but is never forwarded to the client.
+       */
+      else if (kind == HIT_STATUSBAR) {
+        if (focused_handle != hit_handle) {
+          int prev_focus = focused_handle;
+          focused_handle = hit_handle;
+          z_bring_to_front(hit_handle);
+
+          int x, y, cw, ch;
+          if (win_get_rect(hit_handle, &x, &y, &cw, &ch))
+            mark_dirty(x, y, outer_w_dims(cw),
+                       outer_h_dims(ch, status_h_of(hit_handle)));
+          if (win_get_rect(prev_focus, &x, &y, &cw, &ch))
+            mark_dirty(x, y, outer_w_dims(cw),
+                       outer_h_dims(ch, status_h_of(prev_focus)));
+          mark_dirty(0, taskbar_y(), fb_w, TASKBAR_PX);
+        }
+        forward = 0;
+      }
+
+      /*
        * Click inside a window's client area.
        */
       else if (kind == HIT_CLIENT) {
@@ -2594,12 +3144,14 @@ static void pump_input(void) {
         int x, y, cw, ch;
 
         if (win_get_rect(hit_handle, &x, &y, &cw, &ch)) {
-          mark_dirty(x, y, outer_w_dims(cw), outer_h_dims(ch));
+          mark_dirty(x, y, outer_w_dims(cw),
+                     outer_h_dims(ch, status_h_of(hit_handle)));
         }
 
         if (prev_focus != hit_handle &&
             win_get_rect(prev_focus, &x, &y, &cw, &ch)) {
-          mark_dirty(x, y, outer_w_dims(cw), outer_h_dims(ch));
+          mark_dirty(x, y, outer_w_dims(cw),
+                     outer_h_dims(ch, status_h_of(prev_focus)));
         }
 
         mark_dirty(0, taskbar_y(), fb_w, TASKBAR_PX);
@@ -2679,12 +3231,46 @@ static void pump_input(void) {
         int x, y, cw, ch;
 
         if (win_get_rect(prev_focus, &x, &y, &cw, &ch)) {
-          mark_dirty(x, y, outer_w_dims(cw), outer_h_dims(ch));
+          mark_dirty(x, y, outer_w_dims(cw),
+                     outer_h_dims(ch, status_h_of(prev_focus)));
         }
 
         mark_dirty(0, taskbar_y(), fb_w, TASKBAR_PX);
 
         forward = 0;
+      }
+    } else if (m.type == MSG_KEY_DOWN) {
+      // Track Alt key state
+      if (m.param == KEY_LEFTALT || m.param == KEY_RIGHTALT) {
+        alt_pressed = 1;
+      }
+
+      // Alt+F4 closes the focused window
+      if (m.param == KEY_F4 && alt_pressed && focused_handle > 0 &&
+          focused_handle != HANDLE_CONSOLE) {
+
+        request_window_close(focused_handle, (u32)m.when);
+        forward = 0; // Consume the event
+        continue;
+      }
+
+      // Escape closes the start menu
+      if (m.param == KEY_ESC && start_menu_open) {
+        start_menu_open = 0;
+        start_menu_hover = -1;
+        int menu_h = START_MENU_COUNT * START_MENU_ITEM_H + START_MENU_PAD * 2;
+        mark_dirty(0, taskbar_y() - menu_h, START_MENU_W, menu_h);
+        forward = 0; // Consume the event
+        continue;
+      }
+    }
+
+    /*
+     * Track key releases to update modifier state.
+     */
+    else if (m.type == MSG_KEY_UP) {
+      if (m.param == KEY_LEFTALT || m.param == KEY_RIGHTALT) {
+        alt_pressed = 0;
       }
     }
 
@@ -2698,8 +3284,42 @@ static void pump_input(void) {
      * Console input is handled by the window manager rather than
      * forwarded to a client process.
      */
-    if (focused_handle == HANDLE_CONSOLE)
+    if (focused_handle == HANDLE_CONSOLE) {
+      if (m.type == MSG_KEY_DOWN) {
+        if (m.param == KEY_LEFTSHIFT || m.param == KEY_RIGHTSHIFT) {
+          shift_held = 1;
+        }
+        if (m.param == KEY_LEFTCTRL || m.param == KEY_RIGHTCTRL) {
+          ctrl_held = 1;
+        }
+
+        /* Console zoom lives here rather than in the shell. The shell now
+         * receives ASCII from the TTY ring and never sees a raw keycode, so
+         * it cannot spot Ctrl+-/Ctrl+= any more — and winman owns the
+         * console's scale anyway. */
+        if (ctrl_held && m.param == KEY_MINUS) {
+          con_set_scale(con.scale - 1);
+          continue;
+        }
+        if (ctrl_held && m.param == KEY_EQUAL) {
+          con_set_scale(con.scale + 1);
+          continue;
+        }
+
+        char c = keymap_to_ascii(m.param, shift_held);
+        if (c != 0) {
+          tty_inject(c); // Push to the kernel's TTY input buffer!
+        }
+      } else if (m.type == MSG_KEY_UP) {
+        if (m.param == KEY_LEFTSHIFT || m.param == KEY_RIGHTSHIFT) {
+          shift_held = 0;
+        }
+        if (m.param == KEY_LEFTCTRL || m.param == KEY_RIGHTCTRL) {
+          ctrl_held = 0;
+        }
+      }
       continue;
+    }
 
     /*
      * Forward unhandled input to the focused client window.
@@ -2748,6 +3368,7 @@ int main(int argc, char **argv) {
   printf("winman: back buffer @%p bytes=%d\n", (void *)fb, (int)fb_capacity);
 
   cursor_load();
+  tb_load_start_icon();
   desktop_load();
 
   memset(windows, 0, sizeof(windows));

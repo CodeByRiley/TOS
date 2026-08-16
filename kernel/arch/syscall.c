@@ -27,6 +27,7 @@
 #include <display/tty.h>
 #include <drivers/sound/sb16.h>
 #include <fs/fat.h>
+#include <fs/fat_ahci.h>
 #include <input/keyboard.h>
 #include <input/mouse.h>
 #include <loader/process.h>
@@ -1042,6 +1043,19 @@ static long sys_tty_drain(char *out, long max) {
   return (long)tty_drain(out, (size_t)max);
 }
 
+/* Drain the keystrokes winman has injected for whoever owns the console.
+ * Non-blocking: returns 0 when nothing is queued.
+ *
+ * This is the counterpart to SYS_TTY_INJECT, and the reason the console
+ * shell must not poll the raw keyboard ring — that ring receives every key
+ * regardless of which window has focus, so a shell reading it also collects
+ * everything typed into other applications. */
+static long sys_tty_read_input(char *out, long max) {
+  if (!out || max <= 0)
+    return 0;
+  return (long)tty_read_input(out, (size_t)max);
+}
+
 /* Block-wait `seconds` using PIT ticks (10ms each at 100Hz). */
 static void delay_seconds(long seconds) {
   if (seconds <= 0)
@@ -1274,6 +1288,15 @@ static long sys_rmdir(const char *path) {
 
 static long sys_read(int fd, void *buf, size_t n) {
   struct task *t = task_current();
+
+  /* Handle standard input (fd 0) */
+  if (fd == 0) {
+    if (!t || !buf || n <= 0 || !user_buffer_ok(buf, n, 1))
+      return -1;
+    return sys_tty_read_input((char *)buf, (long)n);
+  }
+
+  /* Handle normal files (fd >= 3) */
   if (!t || fd < 3 || fd >= TASK_MAX_FDS || !t->fds[fd] || t->fd_is_dir[fd])
     return -1;
 
@@ -1284,6 +1307,19 @@ static long sys_read(int fd, void *buf, size_t n) {
     return -1;
   return (long)fat_read(file, buf, n);
 }
+
+// static long sys_read(int fd, void *buf, size_t n) {
+//   struct task *t = task_current();
+//   if (!t || fd < 3 || fd >= TASK_MAX_FDS || !t->fds[fd] || t->fd_is_dir[fd])
+//     return -1;
+
+//   struct fat_file *file = t->fds[fd];
+//   size_t available = file->pos < file->size ? file->size - file->pos : 0;
+//   size_t transfer = n < available ? n : available;
+//   if (!user_buffer_ok(buf, transfer, 1))
+//     return -1;
+//   return (long)fat_read(file, buf, n);
+// }
 
 static void stat_from_fat(const struct fat_stat *fs, struct stat_user *out) {
   out->size = fs->size;
@@ -2001,12 +2037,16 @@ long syscall_dispatch(struct syscall_frame *f) {
     ret = sys_fstatat((int)a1, (const char *)(uintptr_t)a2,
                       (struct linux_kstat *)(uintptr_t)a3, (int)a4);
     break;
+  /* 217 is getdents64 and nothing else. It used to also carry TOS's
+   * index-based walk, disambiguated by testing whether the first argument
+   * looked like an fd — which is a guess about a pointer value, and exactly
+   * the kind of overload that makes a libc built for Linux misbehave. The
+   * TOS form now has its own number. */
   case SYS_READDIR:
-    if (a1 >= 0 && a1 < TASK_MAX_FDS) {
-      ret = sys_getdents64((int)a1, (void *)(uintptr_t)a2, (size_t)a3);
-    } else {
-      ret = sys_readdir((uint32_t *)(uintptr_t)a1, (char *)(uintptr_t)a2, a3);
-    }
+    ret = sys_getdents64((int)a1, (void *)(uintptr_t)a2, (size_t)a3);
+    break;
+  case SYS_READDIR_INDEX:
+    ret = sys_readdir((uint32_t *)(uintptr_t)a1, (char *)(uintptr_t)a2, a3);
     break;
   case SYS_READDIR_PATH:
     ret =
@@ -2107,9 +2147,8 @@ long syscall_dispatch(struct syscall_frame *f) {
   case SYS_SLEEP_TICKS:
     ret = sys_sleep_ticks((uintptr_t)a1);
     break;
-  case SYS_GET_PID:
-    ret = sys_get_pid();
-    break;
+    /* SYS_GET_PID is an alias for SYS_LINUX_GETPID (39) and dispatches
+     * through that case; a second label would be a duplicate. */
   case SYS_IPC_SEND:
     ret = sys_ipc_send((uintptr_t)a1, (const struct ipc_msg *)(uintptr_t)a2);
     break;
@@ -2131,6 +2170,12 @@ long syscall_dispatch(struct syscall_frame *f) {
     break;
   case SYS_TTY_DRAIN:
     ret = sys_tty_drain((char *)(uintptr_t)a1, (uintptr_t)a2);
+    break;
+  case SYS_TTY_INJECT:
+    tty_inject_input((char)a1); // Push the ASCII char into the TTY ring
+    return 0;
+  case SYS_TTY_READ_INPUT:
+    ret = sys_tty_read_input((char *)(uintptr_t)a1, (uintptr_t)a2);
     break;
   case SYS_FB_INFO:
     ret = sys_fb_info((struct fb_info *)(uintptr_t)a1);

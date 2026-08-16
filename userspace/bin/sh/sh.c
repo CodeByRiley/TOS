@@ -7,8 +7,12 @@
  * spawn() so windowed apps don't pin the prompt.
  *
  * Input model:
- *   - Raw KEY_* events from kbd_poll, folded to ASCII via keymap.c.
- *   - Shift/Ctrl tracked locally.
+ *   - ASCII drained from the TTY input ring, which winman fills only while
+ *     the console window has focus. Not kbd_poll: that ring receives every
+ *     keystroke regardless of focus, so a shell reading it also collects
+ *     whatever is typed into other windows.
+ *   - Modifiers and console zoom are winman's business, since the keymap is
+ *     applied before the characters reach us.
  *   - TAB completes command names from PATH or files from the current dir.
  */
 // #region INCLUDES
@@ -54,10 +58,8 @@ static int sh_printf(const char *fmt, ...) {
 #define EXEC_PATH_MAX 256
 #define EXEC_DIR_MAX  256
 
-#define DEFAULT_EXEC_PATH "/bin:/usr/bin:/usr/local/bin"
+#define DEFAULT_EXEC_PATH "/bin:/usr/bin:/usr/local/bin:/system/bin"
 
-static int shift_held = 0;
-static int ctrl_held  = 0;
 static char exec_path[EXEC_PATH_MAX] = DEFAULT_EXEC_PATH;
 
 /* Read one colon-delimited PATH component. Empty components mean the current
@@ -113,36 +115,34 @@ static int apply_path_assignment(const char *word) {
 // #endregion GLOBALS
 
 // #region KEYBOARD INPUT
-/* Block until a printable / control character is pressed. Tracks Shift +
- * Ctrl modifier state inline; returns ASCII for any printable key. */
+/* Block until a character arrives for the console.
+ *
+ * Reads the TTY input ring, which winman fills only while the console has
+ * focus. Polling kbd_poll instead would be reading the raw keyboard ring —
+ * that is filled for every keystroke no matter which window is focused, so
+ * the shell would silently collect everything typed into other windows and
+ * find it queued at the prompt the moment they closed.
+ *
+ * Characters arrive already folded to ASCII (winman applies the keymap), so
+ * there is no modifier state to track here. Ctrl+-/Ctrl+= console zoom is
+ * handled by winman for the same reason: raw keycodes never reach us. */
 static char read_char(void) {
-    int      pressed;
-    uint16_t k;
+    static char buf[32];
+    static int  have = 0;
+    static int  next = 0;
+
     while (1) {
-        if (!kbd_poll(&pressed, &k)) { sleep_ticks(1); continue; }
+        if (next < have)
+            return buf[next++];
 
-        if (k == KEY_LEFTSHIFT || k == KEY_RIGHTSHIFT) {
-            shift_held = pressed;
+        long n = tty_read_input(buf, sizeof(buf));
+        if (n > 0) {
+            have = (int)n;
+            next = 0;
             continue;
         }
-        if (k == KEY_LEFTCTRL || k == KEY_RIGHTCTRL) {
-            ctrl_held = pressed;
-            continue;
-        }
-        if (!pressed) continue;       /* only act on press */
-
-        if (ctrl_held && k == KEY_MINUS) {
-            console_zoom_out();
-            continue;
-        }
-
-        if (ctrl_held && k == KEY_EQUAL) {
-            console_zoom_in();
-            continue;
-        }
-
-        char c = keymap_to_ascii(k, shift_held);
-        if (c) return c;
+        have = next = 0;
+        sleep_ticks(1);
     }
 }
 
@@ -703,7 +703,7 @@ static int exec_argv(int argc, char **argv, int bg) {
     }
     long code = exec(fixed, child_argv);
     //console_clear();
-    printf("[%s exited %d]\n", fixed, (int)code);
+    //printf("[%s exited %d]\n", fixed, (int)code);
     return 0;
 }
 

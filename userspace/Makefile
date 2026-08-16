@@ -4,7 +4,8 @@ USER_ELF_LD  := x86_64-elf-ld
 USER_PE_CC   := x86_64-w64-mingw32-gcc
 USER_AS      := nasm
 USER_CFLAGS  := -ffreestanding -nostdlib -fno-pie -mno-red-zone -static \
-                  -I . -I lib -I include -I ../kernel -O2 -Wall -Wextra -std=gnu23
+                  -I . -I lib -I include -I ../kernel -O2 -Wall -Wextra -std=gnu23 \
+                  -MMD -MP
 USER_LDFLAGS := -nostdlib -static -T lib/user.ld
 BUILD_DOOM ?= 0
 SHOW_DOOM_INFO ?= 0
@@ -25,6 +26,7 @@ PE_CFLAGS := -ffreestanding -nostdlib -fno-pie -mno-red-zone -static \
 # mingw counterparts of crt0.s and syscall.s; everything else is the same
 # source the ELF build uses.
 PE_LIB_OBJS := lib/crt0_pe.pe.o lib/syscall_pe.pe.o lib/syscall.pe.o \
+               lib/syscall_posix.pe.o \
                lib/printf.pe.o lib/string.pe.o lib/string_extra.pe.o \
                lib/malloc.pe.o lib/pthread.pe.o
 
@@ -48,7 +50,7 @@ PE_VARIANT_EXES := $(foreach b,$(PE_VARIANTS),bin/$(b)/$(b).exe)
 # built despite referencing strstr.
 # stat.o is in the base set, not the DOOM-only extras: stat/fstat are real
 # syscalls now, so every binary should be able to call them.
-LIB_OBJS := lib/crt0.o lib/syscall_asm.o lib/syscall.o lib/wm.o \
+LIB_OBJS := lib/crt0.o lib/syscall_asm.o lib/syscall.o lib/syscall_posix.o lib/wm.o \
             lib/printf.o lib/malloc.o lib/stdio.o lib/string.o lib/keymap.o lib/console.o \
             lib/stdlib_extra.o lib/string_extra.o lib/stat.o lib/bmp.o lib/gfx.o lib/ui.o lib/pthread.o
 
@@ -59,12 +61,58 @@ LIB_C_OBJS := $(filter-out lib/crt0.o lib/syscall_asm.o, $(LIB_OBJS)) $(TTF_OBJS
 
 # One binary per directory under bin/, named after the directory.
 # Doom is special (multi-source) and gets its own rules.
-SIMPLE_BINS := hello cat gfx ls sh shutdown reboot mtest btop pkill \
-							plist fdchild vmtest uidemo thread deskelf stress \
-						 	stress_peer audiotest muse mmaptest faulter
+# Binaries linked against musl instead of the hand-rolled lib/. Migration is
+# per-binary on purpose: converting everything at once would blend "musl is
+# wrong on TOS" and "this app used a TOS-ism" into one undebuggable failure.
+# A musl binary uses standard headers only and links crt1/libc.a rather than
+# crt0.o + LIB_OBJS, so it must not appear in SIMPLE_BINS as well.
+MUSL_DIR      := libc/build-musl-tos
+MUSL_SRC_DIR  := libc/musl-1.2.6
+MUSL_LINK     := libc/link_tos_musl.sh
+MUSL_LIBC     := $(MUSL_DIR)/lib/libc.a
+MUSL_BINS     := cat plist hello ls pkill gfx btop uidemo deskelf notepad tree
+MUSL_BIN_ELFS := $(foreach b,$(MUSL_BINS),bin/$(b)/$(b).elf)
+
+# libtos.a — the parts of lib/ that musl does not provide: winman IPC, the
+# framebuffer, the console, audio, TOS-only syscalls, and the drawing and
+# font helpers. Everything here is TOS-specific and collides with nothing in
+# libc.a; the POSIX wrappers that did collide live in syscall_posix.c, which
+# a musl binary never links.
+#
+# Built from the same sources as the legacy objects but against musl's
+# headers, so a .tos.o is not interchangeable with a .o — same pattern as
+# the .pe.o variants above.
+LIBTOS_SRCS := lib/syscall.c lib/wm.c lib/gfx.c lib/ui.c lib/ttf.c \
+               lib/bmp.c lib/keymap.c lib/console.c
+LIBTOS_COBJS := $(LIBTOS_SRCS:.c=.tos.o)
+# syscall_asm.o is assembly and identical either way — reuse it rather than
+# assembling a second copy.
+LIBTOS_OBJS  := $(LIBTOS_COBJS) lib/syscall_asm.o
+LIBTOS      := lib/libtos.a
+
+# musl's headers must come before TOS's so <stdio.h> and friends resolve to
+# musl. -nostdinc drops the host's entirely; the compiler's own include dir
+# is added back for stddef.h / stdarg.h.
+MUSL_INC    := -nostdinc \
+               -I $(MUSL_DIR)/obj/include \
+               -I $(MUSL_SRC_DIR)/arch/x86_64 \
+               -I $(MUSL_SRC_DIR)/arch/generic \
+               -I $(MUSL_SRC_DIR)/include \
+               -isystem $(shell $(USER_ELF_CC) -print-file-name=include)
+MUSL_CFLAGS := -ffreestanding -nostdlib -fno-pie -mno-red-zone -static \
+               -O2 -Wall -Wextra -std=gnu11 \
+               $(MUSL_INC) -I . -I lib -I include -I ../kernel \
+               -DTOS_USE_MUSL
+
+SIMPLE_BINS := sh shutdown reboot mtest fdchild vmtest thread stress stress_peer audiotest muse mmaptest faulter
 
 SIMPLE_BIN_OBJS := $(foreach b,$(SIMPLE_BINS),bin/$(b)/$(b).o)
 SIMPLE_BIN_ELFS := $(foreach b,$(SIMPLE_BINS),bin/$(b)/$(b).elf)
+
+# Simple binaries that render text through lib/ttf.o. They link the base set
+# plus the rasteriser; see the link rules below.
+TTF_BINS :=
+TTF_BIN_ELFS := $(foreach b,$(TTF_BINS),bin/$(b)/$(b).elf)
 WINMAN_OBJ := bin/winman/winman.o
 WINMAN_ELF := bin/winman/winman.elf
 
@@ -126,7 +174,7 @@ endif
 %.o: %.c
 	$(USER_ELF_CC) $(DOOM_CFLAGS) -c $< -o $@
 
-USERSPACE_TARGETS := $(SIMPLE_BIN_ELFS) $(WINMAN_ELF) $(PE_BIN_EXES) $(PE_VARIANT_EXES) bin/holyd/holyd.elf
+USERSPACE_TARGETS := $(SIMPLE_BIN_ELFS) $(MUSL_BIN_ELFS) $(WINMAN_ELF) $(PE_BIN_EXES) $(PE_VARIANT_EXES) bin/holyd/holyd.elf
 ifeq ($(BUILD_DOOM),1)
 USERSPACE_TARGETS += bin/doom/doom.elf
 endif
@@ -154,12 +202,40 @@ $(LIB_C_OBJS): %.o: %.c
 $(SIMPLE_BIN_OBJS) $(WINMAN_OBJ): %.o: %.c
 	$(USER_ELF_CC) $(USER_CFLAGS) -c $< -o $@
 
+# Header dependencies generated by -MMD. Without these a change to a header
+# — winman.h being the one that bites, since winman.c is almost all of it —
+# leaves a stale .o in place and the disk image ships last build's binary.
+# Leading '-' so a clean tree with no .d files yet is not an error.
+USER_DEP_FILES := $(patsubst %.o,%.d,$(LIB_C_OBJS) $(SIMPLE_BIN_OBJS) $(WINMAN_OBJ))
+-include $(USER_DEP_FILES)
+
 # Static pattern for the link step. bin/foo/foo.elf <- bin/foo/foo.o + lib.
-$(SIMPLE_BIN_ELFS): bin/%.elf: bin/%.o $(LIB_OBJS)
+$(filter-out $(TTF_BIN_ELFS),$(SIMPLE_BIN_ELFS)): bin/%.elf: bin/%.o $(LIB_OBJS)
+	$(USER_ELF_LD) $(USER_LDFLAGS) $^ -o $@
+
+# Same link, plus the font rasteriser. ld pulls in whole objects rather than
+# archive members, so ttf.o stays off the default line — it is 70 KiB that
+# every tool not drawing glyphs would otherwise carry.
+$(TTF_BIN_ELFS): bin/%.elf: bin/%.o $(LIB_OBJS) $(TTF_OBJS)
 	$(USER_ELF_LD) $(USER_LDFLAGS) $^ -o $@
 
 $(WINMAN_ELF): $(WINMAN_OBJ) $(LIB_OBJS) $(TTF_OBJS)
 	$(USER_ELF_LD) $(USER_LDFLAGS) $^ -o $@
+
+# --- musl-linked binaries ------------------------------------------------
+
+# link_tos_musl.sh owns the include paths and the crt1/crti/libc.a/crtn
+# ordering, and builds musl on demand if the archive is missing. Going
+# through it keeps one copy of those flags rather than a second set here
+# that could drift.
+$(LIBTOS_COBJS): %.tos.o: %.c
+	$(USER_ELF_CC) $(MUSL_CFLAGS) -c $< -o $@
+
+$(LIBTOS): $(LIBTOS_OBJS)
+	rm -f $@ && x86_64-elf-ar rcs $@ $^
+
+$(MUSL_BIN_ELFS): bin/%.elf: bin/%.c $(MUSL_LIBC) $(LIBTOS)
+	bash $(MUSL_LINK) $@ $< $(LIBTOS)
 
 # --- holyd rules ---------------------------------------------------------
 
@@ -204,4 +280,5 @@ $(PE_VARIANT_EXES): bin/%.exe: bin/%.pe.o $(PE_LIB_OBJS)
 	$(USER_PE_CC) $(PE_LDFLAGS) $^ -o $@
 
 clean:
-	rm -f lib/*.o bin/*/*.o bin/*/*/*.o bin/*/*.elf bin/*/*.exe
+	rm -f lib/*.o lib/*.d bin/*/*.o bin/*/*.d bin/*/*/*.o bin/*/*/*.d \
+		bin/*/*.elf bin/*/*.exe

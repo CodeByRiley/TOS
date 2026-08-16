@@ -34,8 +34,10 @@ BUILD_DOOM ?= 0
 
 nvidia_firmware_files := $(wildcard rootfs/firmware/*.bin)
 holyd_sample_files := $(wildcard rootfs/holyd/*.hd)
-rootfs_payload_files := rootfs/readme.txt rootfs/cursor.bmp \
+icon_files := $(wildcard rootfs/system/icons/*.bmp)
+rootfs_payload_files := rootfs/readme.txt \
                         rootfs/music/beethoven.wav \
+                        $(icon_files) \
                         $(holyd_sample_files) \
                         $(nvidia_firmware_files)
 
@@ -74,13 +76,41 @@ endif
 $(disk_img): userspace tools/create_disk.sh $(rootfs_payload_files)
 	wsl bash -c "cd \$$(wslpath '$(CURDIR)') && bash tools/create_disk.sh"
 
+# --- Kernel Symbol Table (Two-pass link) -----------------------------
+# To resolve symbols in panic backtraces, we need a symbol table. But the
+# symbol table must be generated from the final kernel layout, creating a
+# chicken-and-egg problem. We solve this by linking twice:
+# * Link all standard objects into a temporary ELF (kernel_nosyms.elf).
+# * Extract the .text symbols from that ELF into build/generated/symtab.c.
+# * Compile the generated symbol table.
+# * Link everything (including the symtab) into the final kernel.bin.
+kernel_nosyms_elf := build/kernel_nosyms.elf
+symtab_gen_src := build/generated/symtab.c
+symtab_gen_obj := build/generated/symtab.o
+
+$(kernel_nosyms_elf): $(kernel_object_files) $(linker_script)
+	mkdir -p $(dir $@)
+	x86_64-elf-ld -z max-page-size=0x1000 -o $@ -T $(linker_script) \
+	    $(kernel_object_files)
+
+$(symtab_gen_src): $(kernel_nosyms_elf) tools/gen_symtab.py
+	mkdir -p $(dir $@)
+	tools/gen_symtab.py $(kernel_nosyms_elf) $@
+
+$(symtab_gen_obj): $(symtab_gen_src)
+	mkdir -p $(dir $@)
+	x86_64-elf-gcc -c $(kernel_c_flags) $< -o $@
+
 # Link only — no disk image, no ISO. Useful for a quick compile check.
 .PHONY: kernel
 kernel: $(kernel_bin)
 
-$(kernel_bin): $(kernel_object_files) $(linker_script)
-	mkdir -p $(dir $@) && \
-	x86_64-elf-ld -z max-page-size=0x1000 -o $@ -T $(linker_script) $(kernel_object_files)
+# Note: kernel/utilities/symtab.c (the resolver) is automatically picked up
+# by the rwildcard rule and compiled into kernel_object_files.
+$(kernel_bin): $(kernel_object_files) $(symtab_gen_obj) $(linker_script)
+	mkdir -p $(dir $@)
+	x86_64-elf-ld -z max-page-size=0x1000 -o $@ -T $(linker_script) \
+	    $(kernel_object_files) $(symtab_gen_obj)
 
 .PHONY: build-x86_64
 build-x86_64: $(kernel_bin) $(disk_img)
@@ -111,6 +141,12 @@ build-x86_64: $(kernel_bin) $(disk_img)
 HOST_CC ?= gcc
 HOST_TEST_CFLAGS := -std=c11 -O2 -Wall -Wextra
 HOST_TEST_DIR := build/tests
+
+# Host stand-ins for the kernel allocator and log. Linked by the tests that
+# compile kernel sources; a test wanting to assert on either defines its own
+# and leaves this out.
+HOST_KERNEL_STUBS := tests/host_kernel_stubs.c
+
 HOST_TEST_BINS := \
 	$(HOST_TEST_DIR)/pmm_test.exe \
 	$(HOST_TEST_DIR)/vmm_test.exe \
@@ -143,15 +179,17 @@ $(HOST_TEST_DIR)/process_pml4_test.exe: tests/process_pml4_test.c \
 		tests/process_pml4_test.c kernel/loader/process.c -o $@
 
 $(HOST_TEST_DIR)/fat_directory_test.exe: tests/fat_directory_test.c \
-		kernel/fs/fat.c kernel/fs/fat.h | $(HOST_TEST_DIR)
+		$(HOST_KERNEL_STUBS) kernel/fs/fat.c kernel/fs/fat.h \
+		| $(HOST_TEST_DIR)
 	$(HOST_CC) $(HOST_TEST_CFLAGS) -I kernel \
-		tests/fat_directory_test.c kernel/fs/fat.c -o $@
+		tests/fat_directory_test.c kernel/fs/fat.c $(HOST_KERNEL_STUBS) -o $@
 
 $(HOST_TEST_DIR)/stdio_mode_test.exe: tests/stdio_mode_test.c \
-		kernel/fs/stdio.c kernel/fs/fat.c kernel/fs/stdio.h kernel/fs/fat.h \
+		$(HOST_KERNEL_STUBS) kernel/fs/stdio.c kernel/fs/fat.c \
+		kernel/fs/stdio.h kernel/fs/fat.h \
 		| $(HOST_TEST_DIR)
 	$(HOST_CC) $(HOST_TEST_CFLAGS) -I kernel tests/stdio_mode_test.c \
-		kernel/fs/stdio.c kernel/fs/fat.c -o $@
+		kernel/fs/stdio.c kernel/fs/fat.c $(HOST_KERNEL_STUBS) -o $@
 
 $(HOST_TEST_DIR)/bmp_decode_test.exe: tests/bmp_decode_test.c \
 		userspace/lib/bmp.c userspace/lib/bmp.h | $(HOST_TEST_DIR)

@@ -45,7 +45,8 @@
 #define SYS_RMDIR           84
 #define SYS_UNLINK  		 87
 #define SYS_GETTIMEOFDAY    96
-#define SYS_READDIR        217   /* Linux getdents64 slot + legacy TOS ABI */
+#define SYS_READDIR        217   /* Linux getdents64 — that ABI only */
+#define SYS_READDIR_INDEX  1125  /* TOS index-based directory walk */
 #define SYS_SET_TID_ADDRESS 218
 #define SYS_EXIT_GROUP     231
 #define SYS_CLOCK_GETTIME  228
@@ -94,64 +95,59 @@ _Static_assert(sizeof(struct stat_user) == 24,
 #define SYS_EXIT    60
 
 /* Display + input */
-#define SYS_FB_INFO    100
-#define SYS_FB_MAP     101
-#define SYS_FB_DAMAGE  108
-#define SYS_FB_PRESENT 109
-#define SYS_FB_REGISTER   110
-#define SYS_FB_UNREGISTER 111
-#define SYS_KBD_POLL   102
-#define SYS_GET_TICKS  103
-#define SYS_EXEC       104
-#define SYS_MSG_GET    105
-#define SYS_MSG_PEEK   106
-#define SYS_MOUSE_POS  107
-
+#define SYS_FB_INFO    1000
+#define SYS_FB_MAP     1001
+#define SYS_FB_DAMAGE  1002
+#define SYS_FB_PRESENT 1003
+#define SYS_FB_REGISTER   1004
+#define SYS_FB_UNREGISTER 1005
+#define SYS_KBD_POLL   1006
+#define SYS_GET_TICKS  1008
+#define SYS_EXEC       1020
+#define SYS_MSG_GET    1040
+#define SYS_MSG_PEEK   1041
+#define SYS_MOUSE_POS  1007
 /* Console (TTY) */
-#define SYS_CON_WRITE      120
-#define SYS_CON_CLEAR      121
-#define SYS_SLEEP_TICKS    122
-#define SYS_GET_PID        123
-
+#define SYS_CON_WRITE      1060
+#define SYS_CON_CLEAR      1061
+#define SYS_SLEEP_TICKS    1009
+#define SYS_GET_PID        39
 /* IPC / shmem / WM registry */
 /* Used by userspace winman to compose windows owned by other processes.
  * The kernel mediates cross-PML4 page mapping; the WM protocol itself
  * lives entirely in userspace. */
-#define SYS_IPC_SEND       130
-#define SYS_IPC_RECV       131
-#define SYS_SHMEM_SHARE    132
-#define SYS_SHMEM_UNSHARE  133
-#define SYS_WM_REGISTER    134
-#define SYS_WM_PID         135
-#define SYS_TTY_DRAIN      136
-
+#define SYS_IPC_SEND       1042
+#define SYS_IPC_RECV       1043
+#define SYS_SHMEM_SHARE    1044
+#define SYS_SHMEM_UNSHARE  1045
+#define SYS_WM_REGISTER    1065
+#define SYS_WM_PID         1066
+#define SYS_TTY_DRAIN      1067
+#define SYS_TTY_INJECT     1068
+#define SYS_TTY_READ_INPUT 1069
 /* Diagnostics */
 /* Consumed by userspace btop. */
-#define SYS_PROC_LIST      140
-#define SYS_MEM_STATS      141
-
+#define SYS_PROC_LIST      1022
+#define SYS_MEM_STATS      1023
 /* Console alt-screen (single-level stack) */
 /* Snapshot grid + cursor on push; restore on pop. Used by fullscreen
  * console apps so the shell's previous output reappears on exit. */
-#define SYS_CON_PUSH       142
-#define SYS_CON_POP        143
-
+#define SYS_CON_PUSH       1062
+#define SYS_CON_POP        1063
 /* Process management */
 /* Fire-and-forget: returns child pid, never waits. */
-#define SYS_SPAWN          144
-#define SYS_KILL           145
-#define SYS_CON_ZOOM       146
-
+#define SYS_SPAWN          1021
+#define SYS_KILL           62
+#define SYS_CON_ZOOM       1064
 /* PCM audio. The initial backend accepts signed 16-bit LE stereo. */
-#define SYS_AUDIO_OPEN       147
-#define SYS_AUDIO_WRITE      148
-#define SYS_AUDIO_STATUS     149
-#define SYS_AUDIO_DRAIN      150
-#define SYS_AUDIO_CLOSE      151
-#define SYS_AUDIO_SET_VOLUME 152
-#define SYS_AUDIO_PAUSE      153
-#define SYS_AUDIO_RESUME     154
-
+#define SYS_AUDIO_OPEN       1080
+#define SYS_AUDIO_WRITE      1081
+#define SYS_AUDIO_STATUS     1082
+#define SYS_AUDIO_DRAIN      1083
+#define SYS_AUDIO_CLOSE      1084
+#define SYS_AUDIO_SET_VOLUME 1085
+#define SYS_AUDIO_PAUSE      1086
+#define SYS_AUDIO_RESUME     1087
 /* Linux x86_64 TLS control. musl uses ARCH_SET_FS during startup. */
 #define SYS_ARCH_PRCTL       158
 #define ARCH_SET_FS       0x1002
@@ -178,19 +174,17 @@ _Static_assert(sizeof(struct audio_status_user) == 48,
                "audio status ABI must match userspace");
 
 /* Thread management. */
-#define SYS_THREAD_CREATE  200
-#define SYS_THREAD_EXIT    201
-#define SYS_THREAD_JOIN	   202
-#define SYS_FUTEX_WAIT     203
-#define SYS_FUTEX_WAKE	   204
-
+#define SYS_THREAD_CREATE  1100
+#define SYS_THREAD_EXIT    1101
+#define SYS_THREAD_JOIN	   1102
+#define SYS_FUTEX_WAIT     1103
+#define SYS_FUTEX_WAKE	   1104
 /* Power management */
-#define SYS_SHUTDOWN   888
-#define SYS_REBOOT     887
-#define SYS_READDIR_PATH 889
-#define SYS_STAT_RAW     890
-#define SYS_FSTAT_RAW    891
-
+#define SYS_SHUTDOWN   1120
+#define SYS_REBOOT     1121
+#define SYS_READDIR_PATH 1122
+#define SYS_STAT_RAW     1123
+#define SYS_FSTAT_RAW    1124
 /* Saved register frame produced by SYSCALL entry. Order matches the
  * pushes in syscall.asm — DO NOT reorder without updating both sides.
  * The C dispatcher reads syscall number from rax and args from rdi/rsi/

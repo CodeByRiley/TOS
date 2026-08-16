@@ -12,7 +12,11 @@
  *   - Not thread-safe (no userspace threads yet).
  */
 #include <lib/syscall.h>
+#ifdef TOS_USE_MUSL
+#include <string.h>
+#else
 #include <include/string.h>
+#endif
 #include <stdint.h>
 
 #define PAGE_SIZE       4096ULL

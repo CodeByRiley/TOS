@@ -13,7 +13,11 @@
 #ifndef USER_WM_H
 #define USER_WM_H
 
+#ifdef TOS_USE_MUSL
+#include <stdio.h>
+#else
 #include <include/stdio.h>
+#endif
 #include <lib/syscall.h>
 #include <stdint.h>
 
@@ -25,8 +29,31 @@
 #define IPC_WM_DESTROY_REQ      0x102
 #define IPC_WM_INVALIDATE_REQ   0x103
 #define IPC_WM_SET_TITLE_REQ    0x104
+#define IPC_WM_SET_STATUS_REQ   0x105
+#define IPC_WM_PROMPT_REQ       0x106
+#define IPC_WM_PROMPT_RESP      0x107
 #define IPC_WM_INPUT            0x110
 #define IPC_WM_RESIZE_NOTIFY    0x111
+
+/* Creation flags, passed in ipc_msg.flags on IPC_WM_CREATE_REQ. */
+/* Give the window a status strip along the bottom of its frame. The client
+ * area is unaffected — the frame grows to make room — so a window that asks
+ * for one does not silently lose drawing space. */
+#define WM_CREATE_STATUSBAR     0x1u
+
+/* Prompt kinds for wm_prompt(). */
+enum {
+    WM_PROMPT_MESSAGE = 0, /* one OK button                        */
+    WM_PROMPT_CONFIRM = 1, /* Yes / No / Cancel                    */
+    WM_PROMPT_TEXT    = 2, /* single-line entry, Enter/Escape      */
+};
+
+/* Prompt results, returned in ipc_msg.a on IPC_WM_PROMPT_RESP. */
+enum {
+    WM_PROMPT_CANCEL = 0, /* Escape, Cancel, or the request failed */
+    WM_PROMPT_OK     = 1, /* OK / Yes / Enter                      */
+    WM_PROMPT_NO     = 2, /* No — confirm dialogs only             */
+};
 
 /* ---------------- Window handle ---------------------------------------- */
 /* Returned by wm_window_create. `surface_va` is the page-aligned base of
@@ -73,6 +100,28 @@ struct wm_event {
 /* Create a `w` x `h` BGRA window. Blocks until winman replies. On success
  * `out` is filled in and the surface is mapped RW at out->surface_va. */
 int  wm_window_create(int w, int h, const char *title, struct wm_window *out);
+
+/* As wm_window_create, plus WM_CREATE_* flags. The plain form is this with
+ * flags == 0. */
+int  wm_window_create_ex(int w, int h, const char *title, uint32_t flags,
+                         struct wm_window *out);
+
+/* Set the status-strip text. No-op on a window created without
+ * WM_CREATE_STATUSBAR. Truncated to 47 bytes like the title. */
+int  wm_window_set_status(int handle, const char *text);
+
+/* Put up a modal dialog owned by `handle` and block until the user answers.
+ *
+ * `kind` is WM_PROMPT_*. For WM_PROMPT_TEXT the reply is copied into `out`
+ * (NUL-terminated, truncated to `cap`); pass NULL/0 for the other kinds.
+ * Returns WM_PROMPT_OK, WM_PROMPT_NO, or WM_PROMPT_CANCEL — a dead winman
+ * or a failed request reads as WM_PROMPT_CANCEL, so callers only have to
+ * handle "the user did not say yes".
+ *
+ * Winman draws and drives the dialog; the calling app neither renders it
+ * nor sees the keystrokes that go into it. */
+int  wm_prompt(int handle, int kind, const char *message, char *out,
+               size_t cap);
 
 /* Tear down a window. After this call surface_va becomes invalid. */
 int  wm_window_destroy(int handle);

@@ -34,6 +34,28 @@
 #define TTF_CELL_W   9
 #define TTF_CELL_H   18
 
+#define TTY_INPUT_SIZE 256
+static char tty_input_buf[TTY_INPUT_SIZE];
+static volatile int tty_input_head = 0;
+static volatile int tty_input_tail = 0;
+
+void tty_inject_input(char c) {
+    int next = (tty_input_head + 1) % TTY_INPUT_SIZE;
+    if (next != tty_input_tail) {
+        tty_input_buf[tty_input_head] = c;
+        tty_input_head = next;
+    }
+}
+
+size_t tty_read_input(char *buf, size_t max) {
+    size_t count = 0;
+    while (count < max && tty_input_tail != tty_input_head) {
+        buf[count++] = tty_input_buf[tty_input_tail];
+        tty_input_tail = (tty_input_tail + 1) % TTY_INPUT_SIZE;
+    }
+    return count;
+}
+
 /* Font-derived cell metrics, filled on first TTF draw. The font is
  * proportional but the grid is fixed, so each glyph is centred in its cell;
  * TTF_CELL_W/H are only the fallback if the metrics look nonsensical. */

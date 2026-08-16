@@ -10,6 +10,7 @@
 #ifndef PANIC_H
 #define PANIC_H
 
+#include <utilities/symtab.h>
 #include <devices/io.h>
 
 struct interrupt_frame;

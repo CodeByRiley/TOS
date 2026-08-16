@@ -32,6 +32,13 @@ void tty_putc(char c);
 void tty_write(const char *buf, size_t n);
 void tty_clear(void);
 
+/* Input injection from userspace */
+void tty_inject_input(char c);
+
+/* Read characters injected into the TTY. Used by the read() syscall for stdin.
+ * Returns number of chars actually copied into buf. */
+size_t tty_read_input(char *buf, size_t max);
+
 /* Disable framebuffer drawing while winman owns the screen. Text still
  * buffers into the grid so the kernel log doesn't blackhole. */
 void tty_set_active(int on);
