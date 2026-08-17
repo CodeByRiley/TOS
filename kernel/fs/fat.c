@@ -597,6 +597,35 @@ static void fat_flush_sector(uint32_t lba) {
     sector_writer(lba, sector(lba));
 }
 
+/* Push every sector overlapping [start, start + len) back to the backing
+ * store. Callers pass a pointer into fs_image and a byte count.
+ *
+ * Deriving the sector span here rather than at each call site is deliberate:
+ * fat_set used to compute its own LBA from the start of the FAT copy instead
+ * of the sector holding the modified entry, so on any volume whose FAT spans
+ * more than one sector it wrote the wrong sector to disk. One implementation
+ * of this arithmetic is one place for that to be wrong. */
+static void fat_flush_bytes(const void *start, size_t len) {
+  if (!fs_image || !sector_writer || !start || len == 0 || !bytes_per_sec)
+    return;
+
+  uint64_t base = (uint64_t)(uintptr_t)fs_image;
+  uint64_t at = (uint64_t)(uintptr_t)start;
+  if (at < base)
+    return;
+
+  uint64_t off = at - base;
+  if (off >= fs_image_size)
+    return;
+  if (len > fs_image_size - off)
+    len = (size_t)(fs_image_size - off);
+
+  uint32_t first = (uint32_t)(off / bytes_per_sec);
+  uint32_t last = (uint32_t)((off + len - 1) / bytes_per_sec);
+  for (uint32_t lba = first; lba <= last; lba++)
+    fat_flush_sector(lba);
+}
+
 static void erase_slots(struct fat_dir dir, uint32_t from, uint32_t to) {
   struct dir_cursor cursor;
   if (cursor_init(&cursor, dir, from) != 0)
@@ -605,13 +634,7 @@ static void erase_slots(struct fat_dir dir, uint32_t from, uint32_t to) {
   struct dir_entry *entry;
   while (cursor.index <= to && (entry = cursor_next(&cursor)) != 0) {
     entry->name[0] = (char)0xE5; // Mark as deleted
-
-    // Calculate the LBA of the sector containing this entry and flush it!
-    // entry is a pointer inside fs_image.
-    // (entry - fs_image) gives the byte offset. Divide by bytes_per_sec to get LBA.
-    uint64_t byte_offset = (uint64_t)entry - (uint64_t)fs_image;
-    uint32_t lba = byte_offset / bytes_per_sec;
-    fat_flush_sector(lba);
+    fat_flush_bytes(entry, sizeof(*entry));
   }
 }
 
@@ -621,14 +644,17 @@ static int entry_is_lfn(const struct dir_entry *entry) {
 
 /* Mirror writes to every FAT copy. */
 static void fat_set(uint32_t cluster, uint32_t value) {
+  /* Width of one table entry, which is also the stride fat_put indexes by. */
+  size_t entry_width = (fat_type == FAT_TYPE_32) ? 4u : 2u;
+
   for (uint8_t f = 0; f < num_fats; f++) {
     uint8_t *table = sector(fat_start_sec + f * sectors_per_fat);
     fat_put(table, cluster, value);
 
-    // Flush the specific FAT sector that was modified
-    uint64_t byte_offset = (uint64_t)table - (uint64_t)fs_image;
-    uint32_t lba = byte_offset / bytes_per_sec;
-    fat_flush_sector(lba);
+    /* Flush the sector holding this cluster's entry, not the first sector of
+     * the table — those are the same thing only for cluster numbers inside
+     * the first sector. */
+    fat_flush_bytes(table + (size_t)cluster * entry_width, entry_width);
   }
   fsinfo_invalidate();
   // Also flush the FSInfo sector if it exists!
@@ -1200,6 +1226,14 @@ static int create_entry(struct fat_dir parent, const char *leaf, uint8_t attr,
   entry->nt_case = nt_case;
   entry_set_cluster(entry, cluster);
   entry->size = 0;
+  fat_set_timestamp(entry);
+
+  /* Push the whole slot run, LFN fragments included. They are contiguous and
+   * usually share a sector, so fat_flush_bytes collapses to one write; a run
+   * straddling a sector boundary gets both. Flushing only the short entry
+   * would leave a name on disk whose fragments were never written. */
+  fat_flush_bytes(slots[0],
+                  (size_t)(lfn_slots + 1) * sizeof(struct dir_entry));
 
   *out = entry;
   return 0;
@@ -1222,6 +1256,8 @@ int fat_truncate(struct fat_file *file) {
   file->pos = 0;
   entry_set_cluster(file->dir_ent, 0);
   file->dir_ent->size = 0;
+  fat_set_timestamp(file->dir_ent);
+  fat_flush_bytes(file->dir_ent, sizeof(*file->dir_ent));
   return 0;
 }
 
@@ -1287,6 +1323,10 @@ size_t fat_write(struct fat_file *file, const void *buffer, size_t length) {
     uint32_t available = bytes - offset;
     size_t chunk = length < available ? length : available;
     memcpy(data + offset, in, chunk);
+    /* File data is the bulk of what a write changes and was never pushed
+     * through: only the FAT and deleted directory entries were, so a saved
+     * file survived only if something later called fat_flush(). */
+    fat_flush_bytes(data + offset, chunk);
 
     in += chunk;
     file->pos += (uint32_t)chunk;
@@ -1312,6 +1352,12 @@ size_t fat_write(struct fat_file *file, const void *buffer, size_t length) {
     file->size = file->pos;
     file->dir_ent->size = file->size;
   }
+  /* The entry carries the size and, when this write allocated the first
+   * cluster, the start cluster too. Flushed unconditionally: cheap, one
+   * sector, and both fields change on the common path. */
+  fat_set_timestamp(file->dir_ent);
+  fat_flush_bytes(file->dir_ent, sizeof(*file->dir_ent));
+
   /* Preserve the seek invariant for another overwrite call: positions
    * inside the file point at the cluster containing the next byte. */
   if (file->pos > 0 && file->pos < file->size && file->pos % bytes == 0) {
@@ -1359,6 +1405,10 @@ static void set_dot_entry(struct dir_entry *entry, int parent,
     entry->name[1] = '.';
   entry->attr = FAT_ATTR_DIRECTORY;
   entry_set_cluster(entry, cluster);
+  /* Stamp these too — a freshly created directory whose own '.' and '..'
+   * read 1980-00-00 looks like a damaged entry next to the dated one the
+   * parent holds. */
+  fat_set_timestamp(entry);
 }
 
 int fat_mkdir(const char *path) {
@@ -1373,6 +1423,15 @@ int fat_mkdir(const char *path) {
   if (!cluster)
     return -1;
   struct dir_entry *children = (struct dir_entry *)cluster_data(cluster);
+  if (!children) {
+    free_chain(cluster);
+    return -1;
+  }
+
+  /* alloc_cluster hands back whatever the chain had; the rest of this cluster
+   * has to read as free slots or a scan of the new directory would walk into
+   * stale entries. */
+  memset(children, 0, cluster_bytes());
   set_dot_entry(&children[0], 0, cluster);
   /* ".." of a directory whose parent is the root is stored as cluster 0,
    * on FAT32 too -- the root cluster number is deliberately not used. */
@@ -1383,6 +1442,10 @@ int fat_mkdir(const char *path) {
     free_chain(cluster);
     return -1;
   }
+
+  /* Only after create_entry succeeds — flushing first would put a directory
+   * on disk that nothing references if the entry allocation then failed. */
+  fat_flush_bytes(children, cluster_bytes());
   return 0;
 }
 
