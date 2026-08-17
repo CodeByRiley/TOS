@@ -75,6 +75,15 @@ void      framebuffer_present(void);
 void      framebuffer_mark_damage(uint32_t x, uint32_t y,
                                    uint32_t w, uint32_t h);
 
+/* Force the damage and scanout locks unlocked so the panic renderer can
+ * draw. A fault can land anywhere — including inside framebuffer_present
+ * with scanout_lock already held on this very CPU — and the panic screen
+ * then deadlocks against the code it interrupted. Stealing the locks is
+ * safe only because the caller is on its way to panic_halt(): no other
+ * thread will ever observe the framebuffer again. Never call this from
+ * anywhere but the panic path. */
+void      framebuffer_panic_takeover(void);
+
 /* Copy dirty rectangles from a validated userspace backbuffer. Large copies
  * are split into scanline lanes and dispatched to the AP work queue; CPU 0
  * processes one lane and supplies the single-core fallback. This call is

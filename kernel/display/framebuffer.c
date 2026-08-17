@@ -583,6 +583,14 @@ int framebuffer_init(uint64_t mb2_addr) {
   return 0;
 }
 
+void framebuffer_panic_takeover(void) {
+  /* The interrupted context may hold either of these, and it is never going
+   * to run again to release them. Reinitialise rather than unlock so the
+   * state is well-defined regardless of who held what. */
+  spinlock_init(&damage_lock);
+  spinlock_init(&scanout_lock);
+}
+
 struct gfx_surface framebuffer_get_gfx_surface(void) {
   struct gfx_surface s;
   s.px = framebuffer_buffer();

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import socket
 import subprocess
@@ -101,6 +102,57 @@ def read_ppm(path: Path) -> tuple[int, int, bytes]:
     return width, height, pixels
 
 
+FRAME_RE = re.compile(r"^\s*\d+:\s*([0-9a-fA-F]+)\s*:\s*([0-9a-fA-F]+)\s+(\S+)")
+KTEXT_RE = re.compile(r"Kernel text:\s*0x([0-9a-fA-F]+)\s*-\s*0x([0-9a-fA-F]+)")
+SYMBOL_RE = re.compile(r"^[A-Za-z_][A-Za-z_0-9.$]*\+0x[0-9a-fA-F]+$")
+
+# panic_symstr() prints "kernel+0xNNN" when symtab_resolve() returns NULL but
+# the address is inside the kernel text. That is the shape of a *failed*
+# lookup, and it satisfies SYMBOL_RE, so it has to be rejected by name — an
+# empty symbol table otherwise produces a backtrace this check calls resolved.
+UNRESOLVED_NAMES = {"kernel"}
+
+
+def backtrace_symbols(log: str) -> tuple[int, list[str]]:
+    """Check the backtrace resolved to names rather than bare addresses.
+
+    Returns (resolved_count, complaints). The header alone proves nothing —
+    a dropped .ksymtab section, a table the second link pass failed to
+    override, or offsets computed against the wrong base all still print a
+    well-formed backtrace, just one made entirely of hex. So every return
+    address that lands inside the kernel text has to carry a symbol.
+    """
+    ktext = KTEXT_RE.search(log)
+    if not ktext:
+        return 0, ["no 'Kernel text:' bounds line to range-check against"]
+    lo, hi = int(ktext.group(1), 16), int(ktext.group(2), 16)
+
+    lines = log.splitlines()
+    try:
+        start = next(i for i, l in enumerate(lines)
+                     if "Backtrace (frame : return address):" in l)
+    except StopIteration:
+        return 0, ["no backtrace section"]
+
+    resolved, complaints = 0, []
+    for line in lines[start + 1:]:
+        m = FRAME_RE.match(line)
+        if not m:
+            break  # first non-frame line ends the section
+        ret, tail = int(m.group(2), 16), m.group(3)
+        named = (SYMBOL_RE.match(tail)
+                 and tail.split("+", 1)[0] not in UNRESOLVED_NAMES)
+        if named:
+            resolved += 1
+        elif lo <= ret < hi:
+            # In-kernel address that symtab_resolve could not name.
+            complaints.append(f"unresolved kernel frame 0x{ret:x} -> {tail!r}")
+
+    if resolved == 0:
+        complaints.append("backtrace resolved no symbols at all")
+    return resolved, complaints
+
+
 def panic_pixels_present(path: Path) -> bool:
     width, height, pixels = read_ppm(path)
     if width < 320 or height < 240:
@@ -179,6 +231,17 @@ def main() -> int:
             "Backtrace (frame : return address):",
         ]
         log = log_path.read_text(encoding="utf-8", errors="replace")
+
+        resolved, complaints = backtrace_symbols(log)
+        if complaints:
+            print(log)
+            for complaint in complaints:
+                print(f"backtrace: {complaint}", file=sys.stderr)
+            print("kernel symbol table did not resolve the backtrace",
+                  file=sys.stderr)
+            return 1
+        print(f"backtrace resolved {resolved} symbol(s)")
+
         missing = [marker for marker in required if marker not in log]
         if missing:
             print(log)
