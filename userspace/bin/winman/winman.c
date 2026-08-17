@@ -4,6 +4,7 @@
 #include <display/print.h>
 #include <stdbool.h>
 #include <string.h>
+#include <time.h>
 
 static int cursor_w(void) {
   return cursor_img.pixels ? cursor_img.width : CURSOR_W;
@@ -134,53 +135,169 @@ static void desktop_load(void) {
            wallpaper_img.height);
   }
 
-  desktop_icons[0].x = 20;
-  desktop_icons[0].y = 20;
-  desktop_icons[0].program.name = "DOOM";
-  desktop_icons[0].program.path = "/usr/bin/doom.elf";
+  /* Curated, unlike the start menu: each entry needs artwork at
+   * /system/icons/<name>.bmp, so there is nothing to discover by scanning.
+   * `name` is both the label and the artwork's basename; `path` must match
+   * the destination in tools/create_disk.sh. */
+  static const struct program desktop_candidates[] = {
+      {"DOOM", "usr/bin/doom.elf"},
+      {"shelf", "system/bin/sh.elf"},
+  };
+  const int candidate_count =
+      (int)(sizeof(desktop_candidates) / sizeof(desktop_candidates[0]));
 
-  desktop_icons[1].x = 20;
-  desktop_icons[1].y = 100;
-  desktop_icons[1].program.name = "shelf";
-  desktop_icons[1].program.path = "/bin/sh.elf";
+  desktop_icon_count = 0;
+  for (int c = 0; c < candidate_count && desktop_icon_count < MAX_ICONS; c++) {
+    /* Skip anything not actually on the volume. DOOM ships only when it was
+     * built, so a hardcoded icon for it would otherwise sit on the desktop
+     * doing nothing but fail to spawn when clicked. */
+    struct stat_user st;
+    if (stat_raw(desktop_candidates[c].path, &st) != 0) {
+      printf("winman: desktop icon %s skipped, %s not present\n",
+             desktop_candidates[c].name, desktop_candidates[c].path);
+      continue;
+    }
 
-  desktop_icon_count = 2;
+    struct desktop_icon *icon = &desktop_icons[desktop_icon_count++];
+    icon->program = desktop_candidates[c];
+    icon->x = 20;
+    icon->y = 20 + (desktop_icon_count - 1) * 80;
+    icon->w = 32;
+    icon->h = 32;
+  }
 
   /* Load Icon Images */
   for (int i = 0; i < desktop_icon_count; i++) {
     char path[64];
-    // Create strings like "/system/icons/DOOM.bmp"
-    // If you don't have snprintf, just hardcode the strings!
-    int n = 0;
-    const char *prefix = "/system/icons/";
-    while (prefix[n] && n < 40) {
-      path[n] = prefix[n];
-      n++;
-    }
-    int m = 0;
-    while (desktop_icons[i].program.name[m] && n < 60) {
-      path[n] = desktop_icons[i].program.name[m];
-      n++;
-      m++;
-    }
-    path[n++] = '.';
-    path[n++] = 'b';
-    path[n++] = 'm';
-    path[n++] = 'p';
-    path[n++] = 0;
+    snprintf(path, sizeof(path), "/system/icons/%s.bmp",
+             desktop_icons[i].program.name);
 
     if (bmp_load(path, &desktop_icons[i].icon) == 0) {
       desktop_icons[i].loaded = 1;
-      desktop_icons[i].w = 32; // desktop_icons[i].icon.width;
-      desktop_icons[i].h = 32; // desktop_icons[i].icon.height;
     } else {
       printf("winman: icon %s not found, using fallback\n",
              desktop_icons[i].program.name);
       desktop_icons[i].loaded = 0;
-      desktop_icons[i].w = 32;
-      desktop_icons[i].h = 32;
     }
   }
+}
+
+/* Bounded strcpy into a fixed field; truncates rather than overflowing. */
+static void copy_field(char *dst, size_t cap, const char *src) {
+  size_t i = 0;
+  if (cap == 0)
+    return;
+  while (src && src[i] && i + 1 < cap) {
+    dst[i] = src[i];
+    i++;
+  }
+  dst[i] = 0;
+}
+
+static int ascii_lower(int c) {
+  return (c >= 'A' && c <= 'Z') ? c + 32 : c;
+}
+
+/* Case-insensitive compare — the volume is FAT, so DOOM.ELF and doom.elf are
+ * the same file and must not both end up in the menu. */
+static int same_name_ci(const char *a, const char *b) {
+  while (*a && *b) {
+    if (ascii_lower(*a) != ascii_lower(*b))
+      return 0;
+    a++;
+    b++;
+  }
+  return *a == 0 && *b == 0;
+}
+
+static int start_menu_has_path(const char *path) {
+  for (int i = 0; i < start_menu_count; i++) {
+    if (same_name_ci(start_menu_programs[i].path, path))
+      return 1;
+  }
+  return 0;
+}
+
+static void start_menu_add(const char *name, const char *path) {
+  if (start_menu_count >= START_MENU_MAX || start_menu_has_path(path))
+    return;
+  struct start_entry *e = &start_menu_programs[start_menu_count++];
+  copy_field(e->name, sizeof(e->name), name);
+  copy_field(e->path, sizeof(e->path), path);
+}
+
+/* How many items fit between the top of the screen and the taskbar. The menu
+ * is drawn upward from the taskbar, so without this an over-full directory
+ * would place menu_y above 0 and the entries would be clipped off-screen
+ * with no way to reach them. */
+static int start_menu_capacity(void) {
+  int usable = fb_h - TASKBAR_PX - START_MENU_PAD * 2;
+  int fits = usable > 0 ? usable / START_MENU_ITEM_H : 0;
+  if (fits > START_MENU_MAX)
+    fits = START_MENU_MAX;
+  if (fits < START_MENU_DEFAULT_COUNT)
+    fits = START_MENU_DEFAULT_COUNT; /* pinned entries always get a slot */
+  return fits;
+}
+
+/* Append every *.elf in `dir` that is not already listed. */
+static void start_menu_scan_dir(const char *dir, int capacity) {
+  char buf[512];
+  unsigned index = 0;
+  long n;
+
+  while (start_menu_count < capacity &&
+         (n = readdir_path(dir, &index, buf, sizeof(buf))) > 0) {
+    /* Packed NUL-terminated names; directories come back with a trailing
+     * '/' and are skipped. */
+    for (long i = 0; i < n && start_menu_count < capacity; i++) {
+      if (buf[i] == 0)
+        continue;
+      const char *entry = &buf[i];
+      size_t len = strlen(entry);
+      i += (long)len;
+
+      if (len == 0 || entry[len - 1] == '/')
+        continue;
+
+      /* Only the ELF executables — the .exe PE variants are the same
+       * programs under another name and would double up the menu. */
+      if (len < 5 || !same_name_ci(entry + len - 4, ".elf"))
+        continue;
+
+      char path[START_MENU_PATH_MAX];
+      copy_field(path, sizeof(path), dir);
+      size_t at = strlen(path);
+      copy_field(path + at, sizeof(path) - at, "/");
+      at = strlen(path);
+      copy_field(path + at, sizeof(path) - at, entry);
+
+      /* Label is the filename without the extension. */
+      char label[START_MENU_NAME_MAX];
+      copy_field(label, sizeof(label), entry);
+      size_t label_len = strlen(label);
+      if (label_len > 4)
+        label[label_len - 4] = 0;
+
+      start_menu_add(label, path);
+    }
+  }
+}
+
+/* Pinned entries first, then each executable directory in order. A missing
+ * directory just yields nothing — readdir_path returns <= 0 and the scan
+ * moves on, so /usr/local/bin being empty or absent is not an error. */
+static void build_start_menu_entries(void) {
+  start_menu_count = 0;
+  for (int i = 0; i < START_MENU_DEFAULT_COUNT; i++)
+    start_menu_add(start_menu_defaults[i].name, start_menu_defaults[i].path);
+
+  int capacity = start_menu_capacity();
+  for (int d = 0; d < START_MENU_SCAN_DIR_COUNT; d++)
+    start_menu_scan_dir(start_menu_scan_dirs[d], capacity);
+
+  printf("winman: start menu %d entries (%d pinned)\n", start_menu_count,
+         START_MENU_DEFAULT_COUNT);
 }
 
 static void z_remove(int handle) {
@@ -519,6 +636,12 @@ static int build_taskbar_entries(struct tb_entry *out, int max) {
 
 static int taskbar_y(void) { return fb_h - TASKBAR_PX; }
 
+/* Rightmost x a taskbar button may occupy. Without this the button strip
+ * grows under the clock and paints over it. */
+static int taskbar_btn_limit(void) {
+  return fb_w - CLOCK_W - CLOCK_PAD_R - TASKBAR_BTN_GAP;
+}
+
 /* Returns 1 + writes *out_handle when the click landed on a taskbar button,
  * 0 otherwise (including clicks on the taskbar strip background). Caller
  * should still treat strip clicks as "ate the input" — the strip is opaque
@@ -536,7 +659,7 @@ static int hit_taskbar(int mx, int my, int *out_handle) {
   int bh = TASKBAR_PX;
 
   for (int i = 0; i < n; i++) {
-    if (bx + TASKBAR_BTN_W > fb_w)
+    if (bx + TASKBAR_BTN_W > taskbar_btn_limit())
       break;
     if (mx >= bx && mx < bx + TASKBAR_BTN_W && my >= by && my < by + bh) {
       *out_handle = ents[i].handle;
@@ -550,7 +673,7 @@ static int hit_taskbar(int mx, int my, int *out_handle) {
 static int in_start_menu(int menu_x, int menu_y, int mx, int my) {
   if (!start_menu_open)
     return 0;
-  int menu_h = START_MENU_COUNT * START_MENU_ITEM_H + START_MENU_PAD * 2;
+  int menu_h = start_menu_count * START_MENU_ITEM_H + START_MENU_PAD * 2;
   return mx >= menu_x && mx < menu_x + START_MENU_W && my >= menu_y &&
          my < menu_y + menu_h;
 }
@@ -562,7 +685,7 @@ static int hit_test_at(int mx, int my, int *out_handle) {
   /* GLOBAL UI CHECKS FIRST */
   if (start_menu_open) {
     int menu_x = 0;
-    int menu_h = START_MENU_COUNT * START_MENU_ITEM_H + START_MENU_PAD * 2;
+    int menu_h = start_menu_count * START_MENU_ITEM_H + START_MENU_PAD * 2;
     int menu_y = taskbar_y() - menu_h;
     if (in_start_menu(menu_x, menu_y, mx, my)) {
       return HIT_START_MENU;
@@ -1158,6 +1281,78 @@ static void draw_start_button(int y) {
             tb_start_icon.width, tb_start_icon.height, tb_start_icon.pixels);
 }
 
+
+/* Rendered clock text, refreshed by clock_tick(). Kept as formatted strings
+ * rather than re-derived at draw time so a repaint triggered by something
+ * else cannot show a different minute than the one that was damaged. */
+static char clock_time_text[16];
+static char clock_date_text[16];
+
+static void clock_format(void) {
+  struct calendar_time now;
+  time_to_calendar(time(0), &now);
+
+  /* 12-hour with AM/PM, matching the taskbar it is modelled on. Hour 0 is
+   * 12 AM and hour 12 is 12 PM — the modulo alone gets both wrong. */
+  int hour12 = now.hour % 12;
+  if (hour12 == 0)
+    hour12 = 12;
+
+  snprintf(clock_time_text, sizeof(clock_time_text), "%d:%02d %s", hour12,
+           now.minute, now.hour < 12 ? "AM" : "PM");
+  snprintf(clock_date_text, sizeof(clock_date_text), "%02d/%02d/%04d", now.day,
+           now.month, now.year);
+}
+
+static int clock_rect(int *cx, int *cy, int *cw, int *ch) {
+  *cw = CLOCK_W;
+  *ch = TASKBAR_PX;
+  *cx = fb_w - CLOCK_W - CLOCK_PAD_R;
+  *cy = taskbar_y();
+  return *cx > TASKBAR_START_W && *cy >= 0;
+}
+
+/* Reformat and damage the clock when the displayed text actually changes.
+ * Returns 1 if a repaint was requested. */
+static int clock_tick(void) {
+  char prev_time[sizeof(clock_time_text)];
+  char prev_date[sizeof(clock_date_text)];
+  memcpy(prev_time, clock_time_text, sizeof(prev_time));
+  memcpy(prev_date, clock_date_text, sizeof(prev_date));
+
+  clock_format();
+
+  if (strcmp(prev_time, clock_time_text) == 0 &&
+      strcmp(prev_date, clock_date_text) == 0)
+    return 0;
+
+  int cx, cy, cw, ch;
+  if (!clock_rect(&cx, &cy, &cw, &ch))
+    return 0;
+  mark_dirty(cx, cy, cw, ch);
+  return 1;
+}
+
+static void draw_clock(void) {
+  int cx, cy, cw, ch;
+  if (!clock_rect(&cx, &cy, &cw, &ch))
+    return;
+
+  fb_fill_rect(cx, cy, cw, ch, TASKBAR_BG);
+
+  /* Two rows centred as a block in the strip. */
+  int block_h = FONT_GLYPH_H * 2 + CLOCK_LINE_GAP;
+  int top = cy + (ch - block_h) / 2;
+
+  int time_w = (int)strlen(clock_time_text) * FONT_GLYPH_W;
+  int date_w = (int)strlen(clock_date_text) * FONT_GLYPH_W;
+
+  draw_text_fb(cx + (cw - time_w) / 2, top, clock_time_text, cw, CLOCK_FG,
+               TASKBAR_BG);
+  draw_text_fb(cx + (cw - date_w) / 2, top + FONT_GLYPH_H + CLOCK_LINE_GAP,
+               clock_date_text, cw, CLOCK_FG, TASKBAR_BG);
+}
+
 static void draw_taskbar(void) {
   int y = taskbar_y();
   if (y < 0)
@@ -1181,7 +1376,7 @@ static void draw_taskbar(void) {
   int bh = TASKBAR_PX;
 
   for (int i = 0; i < n; i++) {
-    if (bx + TASKBAR_BTN_W > fb_w)
+    if (bx + TASKBAR_BTN_W > taskbar_btn_limit())
       break;
     int focused = ents[i].handle == focused_handle;
     uint32_t bg = focused ? TASKBAR_BTN_BG_FOCUS : TASKBAR_BTN_BG;
@@ -1193,13 +1388,16 @@ static void draw_taskbar(void) {
     draw_text_fb(tx, ty, ents[i].title, TASKBAR_BTN_W - 8, fg, bg);
     bx += TASKBAR_BTN_W + TASKBAR_BTN_GAP;
   }
+
+  draw_clock();
 }
+
 
 static void draw_start_menu(void) {
   if (!start_menu_open)
     return;
 
-  int menu_h = START_MENU_COUNT * START_MENU_ITEM_H + START_MENU_PAD * 2;
+  int menu_h = start_menu_count * START_MENU_ITEM_H + START_MENU_PAD * 2;
   int mx = 0;
   int my = taskbar_y() - menu_h;
 
@@ -1215,7 +1413,7 @@ static void draw_start_menu(void) {
                PRINT_COLOR_BLACK); // Right
 
   // Draw the programs
-  for (int i = 0; i < START_MENU_COUNT; i++) {
+  for (int i = 0; i < start_menu_count; i++) {
     int item_y = my + START_MENU_PAD + (i * START_MENU_ITEM_H);
     int item_x = mx + START_MENU_PAD;
     int item_w = START_MENU_W - (START_MENU_PAD * 2);
@@ -2904,7 +3102,7 @@ static void pump_input(void) {
       if (start_menu_open && kind != HIT_START_MENU && kind != HIT_START_BTN) {
         start_menu_open = 0;
         start_menu_hover = -1;
-        int menu_h = START_MENU_COUNT * START_MENU_ITEM_H + START_MENU_PAD * 2;
+        int menu_h = start_menu_count * START_MENU_ITEM_H + START_MENU_PAD * 2;
         mark_dirty(0, taskbar_y() - menu_h, START_MENU_W, menu_h);
         continue;
       }
@@ -2949,10 +3147,24 @@ static void pump_input(void) {
        * Start button.
        */
       if (kind == HIT_START_BTN) {
+        /* Damage the rect the menu currently occupies before rebuilding: if
+         * the rescan changes the entry count the old, taller rect still has
+         * to be repainted or its bottom rows are left on screen. */
+        int old_menu_h =
+            start_menu_count * START_MENU_ITEM_H + START_MENU_PAD * 2;
+        mark_dirty(0, taskbar_y() - old_menu_h, START_MENU_W,
+                   old_menu_h + TASKBAR_PX);
+
         start_menu_open = !start_menu_open;
         start_menu_hover = -1;
 
-        int menu_h = START_MENU_COUNT * START_MENU_ITEM_H + START_MENU_PAD * 2;
+        /* Rescan on open rather than per-frame: the directories can gain a
+         * binary while winman runs, but a scan per repaint would hit the
+         * filesystem on every hover change. */
+        if (start_menu_open)
+          build_start_menu_entries();
+
+        int menu_h = start_menu_count * START_MENU_ITEM_H + START_MENU_PAD * 2;
 
         mark_dirty(0, taskbar_y() - menu_h, START_MENU_W, menu_h + TASKBAR_PX);
 
@@ -3030,15 +3242,15 @@ static void pump_input(void) {
        * Start menu item.
        */
       if (kind == HIT_START_MENU) {
-        int menu_h = START_MENU_COUNT * START_MENU_ITEM_H + START_MENU_PAD * 2;
+        int menu_h = start_menu_count * START_MENU_ITEM_H + START_MENU_PAD * 2;
 
         int menu_y = taskbar_y() - menu_h;
         int relative_y = m.y - menu_y - START_MENU_PAD;
 
         int clicked_item = relative_y / START_MENU_ITEM_H;
 
-        if (clicked_item >= 0 && clicked_item < START_MENU_COUNT) {
-          struct program *prog = &start_menu_programs[clicked_item];
+        if (clicked_item >= 0 && clicked_item < start_menu_count) {
+          struct start_entry *prog = &start_menu_programs[clicked_item];
 
           char *argv[] = {(char *)prog->path, 0};
 
@@ -3258,7 +3470,7 @@ static void pump_input(void) {
       if (m.param == KEY_ESC && start_menu_open) {
         start_menu_open = 0;
         start_menu_hover = -1;
-        int menu_h = START_MENU_COUNT * START_MENU_ITEM_H + START_MENU_PAD * 2;
+        int menu_h = start_menu_count * START_MENU_ITEM_H + START_MENU_PAD * 2;
         mark_dirty(0, taskbar_y() - menu_h, START_MENU_W, menu_h);
         forward = 0; // Consume the event
         continue;
@@ -3370,6 +3582,11 @@ int main(int argc, char **argv) {
   cursor_load();
   tb_load_start_icon();
   desktop_load();
+  /* After fb_h is known — the menu's capacity depends on the screen height. */
+  build_start_menu_entries();
+  /* Populate before the first compose so the taskbar paints a real time
+   * instead of a blank strip that fills in a second later. */
+  clock_format();
 
   memset(windows, 0, sizeof(windows));
   focused_handle = 0;
@@ -3470,6 +3687,12 @@ int main(int argc, char **argv) {
      * common case stays cheap. */
     if ((tick & 63) == 0)
       reap_dead_windows();
+
+    /* Clock. Polls the RTC on an interval rather than every frame, and only
+     * damages the strip when the rendered text differs — an idle desktop
+     * stays idle for the 59 seconds when nothing has changed. */
+    if ((uint32_t)tick % CLOCK_POLL_TICKS == 0)
+      clock_tick();
 
     int32_t mx, my;
     uint8_t btns;

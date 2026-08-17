@@ -6,6 +6,7 @@
 #include <lib/wm.h>
 #include <display/fonts/font8x8.h>
 #include <include/sys/types.h>
+#include <include/time.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -49,14 +50,45 @@ static int wallpaper_loaded = 0;
 #define START_MENU_ITEM_H 24
 #define START_MENU_PAD 4
 
-static struct program start_menu_programs[] = {
-  {"Shelf (Shell)", "/bin/sh.elf"},
-  {"Desk Elf", "/usr/bin/deskelf.elf"},
-  {"Text Editor", "/usr/bin/notepad.elf"},
-  {"About", "/usr/bin/about.elf"}
+/* Pinned entries, always first and always in this order. Their labels are
+ * nicer than a filename and their presence does not depend on what happens
+ * to be packaged, so a missing binary shows up as a failed spawn rather
+ * than a silently absent menu item. */
+static const struct program start_menu_defaults[] = {
+  {"Shelf (Shell)", "system/bin/sh.elf"},
+  {"Desk Elf", "system/bin/deskelf.elf"},
+  {"Text Editor", "system/bin/notepad.elf"},
+  {"About", "system/bin/about.elf"}
 };
 
-#define START_MENU_COUNT (int)(sizeof(start_menu_programs) / sizeof(struct program))
+#define START_MENU_DEFAULT_COUNT                                               \
+  (int)(sizeof(start_menu_defaults) / sizeof(start_menu_defaults[0]))
+
+/* Everything else is discovered by scanning the executable directories at
+ * startup, so the menu tracks whatever is actually on the volume instead of
+ * a hardcoded list that goes stale the moment binaries move. Names and paths
+ * are copied into the entry because the directory buffer they came from is
+ * reused by the next read. */
+static const char *const start_menu_scan_dirs[] = {
+  "system/bin",
+  "usr/bin",
+  "usr/local/bin",
+};
+
+#define START_MENU_SCAN_DIR_COUNT                                              \
+  (int)(sizeof(start_menu_scan_dirs) / sizeof(start_menu_scan_dirs[0]))
+
+#define START_MENU_MAX 16
+#define START_MENU_NAME_MAX 32
+#define START_MENU_PATH_MAX 80
+
+struct start_entry {
+  char name[START_MENU_NAME_MAX];
+  char path[START_MENU_PATH_MAX];
+};
+
+static struct start_entry start_menu_programs[START_MENU_MAX];
+static int start_menu_count = 0;
 static int start_menu_open = 0;
 static int start_menu_hover = -1; // Index of hovered item, -1 if none
 
@@ -168,6 +200,19 @@ static const uint8_t fallback_cursor_mask[CURSOR_H][CURSOR_W] = {
 #define TASKBAR_PAD_Y 2
 #define TASKBAR_START_W                                                        \
   24 // size of the taskbar start button, should be similar to old NT / Windows
+
+/* Clock, right-aligned in the taskbar: time above date, the way Windows has
+ * always done it. Width is set by the date, the longer of the two lines:
+ * "17/08/2026" is 10 glyphs at FONT_GLYPH_W (8) = 80px, plus a little
+ * breathing room. Too narrow and draw_text_fb silently clips the year. */
+#define CLOCK_W 88
+#define CLOCK_PAD_R 6
+#define CLOCK_LINE_GAP 2
+#define CLOCK_FG 0x00FFFFFFu
+/* Poll interval. The taskbar only shows minutes, so once a second is already
+ * far more often than the display can change — it just keeps the rollover
+ * from lagging by up to a minute. */
+#define CLOCK_POLL_TICKS 100u
 
 /* Drag affordances. RESIZE_GRIP = size of the bottom-right square that acts
  * as the resize handle. MIN_CLIENT_* = floor below which we refuse to shrink
