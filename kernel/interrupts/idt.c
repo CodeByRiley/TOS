@@ -500,20 +500,30 @@ void isr_handler(struct interrupt_frame *r) {
       page_fault_report(r, cr2);
     }
 
-    // If we get here, it's a fatal fault.
-    // Check if the fault happened in User Mode (Ring 3)
-    if ((r->cs & 3) == 3) {
+    /* Fatal fault. Who dies depends on whose fault it was, which is not the
+     * same question as which ring we were in.
+     *
+     * A page fault or #GP from ring 3 is the program's own doing, so kill
+     * the task and keep the system up. But some vectors are not the running
+     * task's fault at all — they merely interrupted it:
+     *
+     *   NMI (2)           asynchronous, externally delivered
+     *   double fault (8)  the fault handler itself failed; state is gone
+     *   machine check (18) hardware reported a problem
+     *
+     * Killing the current task for one of those loses the report and blames
+     * an innocent process. Route them to the panic path whatever the CPL. */
+    int blame_task = (r->cs & 3) == 3 && r->int_num != 2 && r->int_num != 8 &&
+                     r->int_num != 18;
+
+    if (blame_task) {
       // User program misbehaved (e.g., null pointer). Kill it!
       log_write("USER SEGFAULT: killing task", KERNEL, LOG_ERROR);
       task_exit(-11); // -11 is conventionally SIGSEGV
-      //panic_from_exception(name, r, cr2, r->int_num == 14);
     } else {
-      // Kernel misbehaved. The system is compromised. Panic!
+      // Kernel fault, or a machine-level event that interrupted userspace.
       panic_from_exception(name, r, cr2, r->int_num == 14);
     }
-    // If we get here, it's a fatal fault.
-    // Later, you can replace this panic with a task_kill() to kill the process!
-    // panic_from_exception(name, r, cr2, r->int_num == 14);
   } else if (r->int_num < 48) {
     uint8_t irq = r->int_num - 32;
     if (irq_handlers[irq])

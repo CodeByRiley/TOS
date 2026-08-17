@@ -28,6 +28,7 @@ compile_commands.json
 .vscode/
 .idea/
 .claude/
+__pycache__/
 *.user
 *.suo
 
