@@ -22,6 +22,7 @@
 #include <arch/gdt.h>
 #include <devices/io.h>
 #include <devices/pit.h>
+#include <devices/rtc.h>
 #include <devices/serial.h>
 #include <display/framebuffer.h>
 #include <display/tty.h>
@@ -1675,7 +1676,8 @@ static long sys_ioctl(int fd, long request, void *arg) {
   return -1;
 }
 
-static void current_timespec(struct linux_timespec *ts) {
+/* Uptime. This is what CLOCK_MONOTONIC means and all it should ever mean. */
+static void monotonic_timespec(struct linux_timespec *ts) {
   uint64_t freq = pit_get_freq();
   uint64_t ticks = pit_ticks();
   if (!freq)
@@ -1684,12 +1686,42 @@ static void current_timespec(struct linux_timespec *ts) {
   ts->tv_nsec = (int64_t)(((ticks % freq) * 1000000000ULL) / freq);
 }
 
+/* Wall clock, from the CMOS. Sub-second precision comes from the PIT: the
+ * RTC only resolves to a second, and a clock that reported .000000000 every
+ * time would break anything measuring short intervals with it.
+ *
+ * Falls back to uptime when the RTC is unreadable, which is the old
+ * behaviour — wrong, but wrong in a way callers already tolerate, and better
+ * than reporting 1970 with a straight face. */
+static void realtime_timespec(struct linux_timespec *ts) {
+  uint64_t epoch = rtc_unix_epoch();
+  if (!epoch) {
+    monotonic_timespec(ts);
+    return;
+  }
+
+  uint64_t freq = pit_get_freq();
+  if (!freq)
+    freq = 100;
+  ts->tv_sec = (int64_t)epoch;
+  ts->tv_nsec = (int64_t)(((pit_ticks() % freq) * 1000000000ULL) / freq);
+}
+
+#define CLOCK_ID_REALTIME 0
+#define CLOCK_ID_MONOTONIC 1
+
 static long sys_clock_gettime(long clock_id, struct linux_timespec *ts) {
   if (!ts || !user_buffer_ok(ts, sizeof(*ts), 1))
     return -1;
-  if (clock_id != 0 && clock_id != 1)
+  if (clock_id != CLOCK_ID_REALTIME && clock_id != CLOCK_ID_MONOTONIC)
     return -1;
-  current_timespec(ts);
+
+  /* These were the same clock until now, which meant CLOCK_REALTIME reported
+   * seconds since boot and every program believed it was 1970. */
+  if (clock_id == CLOCK_ID_MONOTONIC)
+    monotonic_timespec(ts);
+  else
+    realtime_timespec(ts);
   return 0;
 }
 
@@ -1699,8 +1731,9 @@ static long sys_gettimeofday(struct linux_timeval *tv, void *tz) {
     return 0;
   if (!user_buffer_ok(tv, sizeof(*tv), 1))
     return -1;
+  /* gettimeofday is wall clock by definition, never uptime. */
   struct linux_timespec ts;
-  current_timespec(&ts);
+  realtime_timespec(&ts);
   tv->tv_sec = ts.tv_sec;
   tv->tv_usec = ts.tv_nsec / 1000;
   return 0;

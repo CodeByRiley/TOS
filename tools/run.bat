@@ -15,5 +15,6 @@ qemu-system-x86_64 ^
     -device sb16,audiodev=snd0 ^
     -netdev user,id=n0,dhcpstart=10.0.2.30,hostfwd=tcp::2222-:22 ^
     -device e1000,netdev=n0 ^
-    -object filter-dump,id=f0,netdev=n0,file=net.pcap
+    -object filter-dump,id=f0,netdev=n0,file=net.pcap ^
+    -rtc base=localtime
 popd

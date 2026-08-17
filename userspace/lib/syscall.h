@@ -403,6 +403,11 @@ long  con_pop(void);
 long  con_zoom(long delta);
 long  sleep_ticks(unsigned long n);
 long  get_pid(void);
+
+/* Raw clock read. clock_id is CLOCK_REALTIME (0) or CLOCK_MONOTONIC (1);
+ * `ts` points at a struct timespec. Prefer clock_gettime() from
+ * <include/time.h>, which types the argument properly. */
+long  sys_clock_gettime(int clock_id, void *ts);
 void  tty_inject(char c);
 
 /* Drain characters winman injected for the console owner. Non-blocking;

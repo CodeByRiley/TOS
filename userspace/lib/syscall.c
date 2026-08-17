@@ -135,6 +135,14 @@ long get_pid(void) {
     return syscall0(SYS_GET_PID);
 }
 
+/* Raw SYS_CLOCK_GETTIME. include/time.h's clock_gettime() wraps this; the
+ * struct is the kernel's linux_timespec, declared void * here so syscall.h
+ * does not have to know about <time.h>. */
+long sys_clock_gettime(int clock_id, void *ts) {
+    return syscall2(SYS_CLOCK_GETTIME, (sysarg_t)clock_id,
+                    (sysarg_t)(uintptr_t)ts);
+}
+
 long audio_status(struct audio_status *out) {
     return syscall1(SYS_AUDIO_STATUS, (sysarg_t)(uintptr_t)out);
 }

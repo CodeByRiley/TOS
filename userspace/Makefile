@@ -50,9 +50,12 @@ PE_VARIANT_EXES := $(foreach b,$(PE_VARIANTS),bin/$(b)/$(b).exe)
 # built despite referencing strstr.
 # stat.o is in the base set, not the DOOM-only extras: stat/fstat are real
 # syscalls now, so every binary should be able to call them.
+# time_stub carries time()/clock_gettime()/time_to_calendar(). It used to be
+# DOOM-only, which meant any other binary calling time() failed to link.
 LIB_OBJS := lib/crt0.o lib/syscall_asm.o lib/syscall.o lib/syscall_posix.o lib/wm.o \
             lib/printf.o lib/malloc.o lib/stdio.o lib/string.o lib/keymap.o lib/console.o \
-            lib/stdlib_extra.o lib/string_extra.o lib/stat.o lib/bmp.o lib/gfx.o lib/ui.o lib/pthread.o
+            lib/stdlib_extra.o lib/string_extra.o lib/stat.o lib/bmp.o lib/gfx.o lib/ui.o \
+            lib/pthread.o lib/time_stub.o
 
 TTF_OBJS := lib/ttf.o
 
@@ -150,7 +153,7 @@ DOOM_PLATFORM_OBJS := $(DOOM_PLATFORM_SRC:.c=.o)
 
 DOOM_EXTRA_OBJS := lib/string_extra.o lib/stdio_extra.o \
                    lib/math_stub.o lib/setjmp_stub.o lib/errno.o \
-                   lib/time_stub.o lib/unistd_stub.o
+                   lib/unistd_stub.o
 
 DOOM_CFLAGS  := -ffreestanding -nostdlib -fno-pie -mno-red-zone -static \
                   -I . -I include -I lib \

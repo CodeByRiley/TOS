@@ -12,6 +12,7 @@
  * written as a plain short entry with the NT case flags so it round-trips
  * without costing a slot.
  */
+#include <devices/rtc.h>
 #include <fs/fat.h>
 #include <utilities/log.h>
 #include <utilities/string.h>
@@ -1504,8 +1505,45 @@ int fat_rmdir(const char *path) {
   return 0;
 }
 
-void fat_set_timestamp(struct dir_entry *entry) {
+/* FAT packs a date into 16 bits as year-since-1980:7 | month:4 | day:5, and a
+ * time as hour:5 | minute:6 | (second/2):5 — two-second resolution is the
+ * format's, not ours. */
+static uint16_t fat_encode_date(const struct rtc_time *t) {
+  uint16_t year = (uint16_t)(t->year - 1980);
+  return (uint16_t)((year << 9) | ((uint16_t)t->month << 5) | t->day);
+}
 
+static uint16_t fat_encode_time(const struct rtc_time *t) {
+  return (uint16_t)(((uint16_t)t->hour << 11) | ((uint16_t)t->minute << 5) |
+                    (t->second / 2));
+}
+
+void fat_set_timestamp(struct dir_entry *entry) {
+  if (!entry)
+    return;
+
+  struct rtc_time now;
+  rtc_read(&now);
+  /* Leave the fields untouched when the clock is unreadable: a zeroed date is
+   * what the entry already carries, and writing an out-of-range one would
+   * make host tools report the volume as damaged rather than undated. */
+  if (!now.valid)
+    return;
+
+  uint16_t date = fat_encode_date(&now);
+  uint16_t time = fat_encode_time(&now);
+
+  entry->write_date = date;
+  entry->write_time = time;
+  entry->access_date = date;
+
+  /* First stamp doubles as the creation stamp. Callers hit this on create and
+   * again on every write, and only the creation path finds it unset. */
+  if (entry->create_date == 0 && entry->create_time == 0) {
+    entry->create_date = date;
+    entry->create_time = time;
+    entry->create_time_tenth = 0;
+  }
 }
 
 long fat_read_dir(const char *path, uint32_t *index, char *buffer,
