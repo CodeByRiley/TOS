@@ -6,15 +6,18 @@ U8 main() {
     return -1;
   }
 
-  UdpBind(sock, 5000);
+  UdpBind(sock, 6000);
 
-  // Dest IP: 10.0.2.2 (QEMU host)
   I64[] ip = [10, 0, 2, 2];
 
-  UdpSend(sock, "Hello from HolyD!", ip, 5000);
+  UdpSend(sock, "Hello from HolyD!", ip, 6000);
+  PrintLn("Sent packet, waiting for reply...");
 
-  // Wait for a reply
-  string reply = UdpReceive(sock);
+  auto reply = "";
+  while (reply.length == 0) {
+    reply = UdpReceive(sock);
+  }
+
   Print("Got reply: ");
   PrintLn(reply);
 

@@ -25,7 +25,7 @@ payloads=(
 	"rootfs/holyd/no_semis.hd::holyd/tests/no_semis.hd"
 	"rootfs/holyd/holyc_d_style.hd::holyd/tests/holyc_d_style.hd"
 	"rootfs/holyd/net.hd::holyd/tests/net.hd"
-
+	"rootfs/holyd/window.hd::holyd/tests/window.hd"
 
 	"rootfs/system/fonts/SansDisplayStatic.ttf::system/fonts/sansdisplaystatic.ttf"
 	"rootfs/system/fonts/SansDisplayVariable.ttf::system/fonts/sansdisplayvariable.ttf"
