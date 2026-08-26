@@ -236,6 +236,7 @@ test-qemu-heavy: build-x86_64
 		python3 tests/fb_mapping_lifetime_test.py --timeout 90 && \
 		python3 tests/virtio_resize_test.py --boot-timeout 90 && \
 		python3 tests/deskelf_test.py --timeout 90 && \
+		python3 tests/netmon_test.py --timeout 120 && \
 		python3 tests/winman_partial_repaint_test.py --timeout 90 && \
 		python3 tests/winman_titlebar_double_click_test.py --timeout 90 && \
 		python3 tests/path_lookup_test.py --timeout 90 && \

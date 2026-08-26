@@ -185,6 +185,10 @@ _Static_assert(sizeof(struct audio_status_user) == 48,
 #define SYS_READDIR_PATH 1122
 #define SYS_STAT_RAW     1123
 #define SYS_FSTAT_RAW    1124
+/* Network observation. Counters and the frame-capture ring in
+ * kernel/net/netmon.h; no protocol state is reachable through these. */
+#define SYS_NET_STATS    1140
+#define SYS_NET_CAPTURE  1141
 /* Saved register frame produced by SYSCALL entry. Order matches the
  * pushes in syscall.asm — DO NOT reorder without updating both sides.
  * The C dispatcher reads syscall number from rax and args from rdi/rsi/

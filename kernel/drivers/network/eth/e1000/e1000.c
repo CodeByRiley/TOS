@@ -5,6 +5,7 @@
 #include <memory/hhdm.h>
 #include <memory/pmm.h>
 #include <memory/vmm.h>
+#include <net/netmon.h>
 #include <pci/pci.h>
 #include <utilities/log.h>
 #include <utilities/string.h>
@@ -279,6 +280,7 @@ static int e1000_send_frame(struct e1000_dev *nic, const void *frame,
 
   nic->tx_current = (idx + 1) % E1000_NUM_TX_DESC;
   E1000_WRITE(nic, REG_TXDESCTAIL, nic->tx_current);
+  netmon_record(NETMON_DIR_TX, frame, len);
   return 0;
 }
 
@@ -476,6 +478,8 @@ static int e1000_init_hardware(struct e1000_dev *nic) {
   e1000_setup_tx_registers(nic);
   e1000_setup_rx_registers(nic);
 
+  netmon_bind(nic->mac_addr, e1000_ipv4_addr);
+
   log_write("e1000: RX/TX ready at 10.0.2.30", KERNEL, LOG_INFO);
 
   //e1000_send_test_ping(nic);
@@ -483,10 +487,19 @@ static int e1000_init_hardware(struct e1000_dev *nic) {
   return 0;
 }
 
+/* STATUS bit 1 is Link Up; bits 7:6 encode 10 / 100 / 1000 Mb/s. */
+static void e1000_report_link(struct e1000_dev *nic) {
+  uint32_t status = E1000_READ(nic, REG_STATUS);
+  static const uint32_t speeds[4] = {10, 100, 1000, 1000};
+  netmon_set_link((status & 0x2u) != 0, speeds[(status >> 6) & 0x3u]);
+}
+
 static void e1000_poll_rx(struct device *dev) {
   struct e1000_dev *nic = (struct e1000_dev *)dev->driver_data;
   if (!nic)
     return;
+
+  e1000_report_link(nic);
 
   for (int budget = 0; budget < E1000_NUM_RX_DESC; budget++) {
     struct e1000_rx_desc *desc = &nic->rx_ring_virt[nic->rx_current];
@@ -500,15 +513,27 @@ static void e1000_poll_rx(struct device *dev) {
 
     log_write_fmt(KERNEL, LOG_INFO, "[e1000] Received packet! Length: %d bytes\n", packet_len);
 
+    netmon_record(NETMON_DIR_RX, nic->rx_buffers[nic->rx_current],
+                  packet_len);
+
     // Pass the packet to the network stack (ARP/ICMP)
     if (packet_len <= E1000_FRAME_MAX) {
       e1000_handle_frame(nic, (const uint8_t *)nic->rx_buffers[nic->rx_current], packet_len);
     }
 
-    // Give the buffer back to the hardware
+    // Give the buffer back to the hardware.
+    //
+    // RDT names the descriptor the NIC must NOT write, so the hardware
+    // owns [RDH, RDT) and software owns the rest. Releasing a descriptor
+    // therefore means pointing RDT *at* the one just consumed, leaving it
+    // one behind rx_current. Writing rx_current itself -- which is what
+    // this did -- collapses RDH and RDT onto the same index after the
+    // very first frame, so the NIC decides it has nowhere to put anything
+    // and silently drops every packet from then on.
     desc->status = 0; // Clear DD bit
+    uint32_t consumed = nic->rx_current;
     nic->rx_current = (nic->rx_current + 1) % E1000_NUM_RX_DESC;
-    E1000_WRITE(nic, REG_RXDESCTAIL, nic->rx_current); // Tell hardware we are done
+    E1000_WRITE(nic, REG_RXDESCTAIL, consumed);
   }
 }
 

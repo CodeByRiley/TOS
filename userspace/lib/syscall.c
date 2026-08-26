@@ -201,6 +201,15 @@ long mem_stats(struct mem_stats *out) {
     return syscall1(SYS_MEM_STATS, (sysarg_t)(uintptr_t)out);
 }
 
+long net_stats(struct net_stats *out) {
+    return syscall1(SYS_NET_STATS, (sysarg_t)(uintptr_t)out);
+}
+
+long net_capture(uint64_t *cursor, struct net_frame *out, long max) {
+    return syscall3(SYS_NET_CAPTURE, (sysarg_t)(uintptr_t)cursor,
+                    (sysarg_t)(uintptr_t)out, (sysarg_t)max);
+}
+
 /* Threading */
 long thread_create(void *(*entry)(void *), void *stack, void *arg) {
     return syscall3(SYS_THREAD_CREATE,

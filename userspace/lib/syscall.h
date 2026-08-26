@@ -131,6 +131,8 @@
 #define SYS_READDIR_PATH     	 1122
 #define SYS_STAT_RAW         	 1123
 #define SYS_FSTAT_RAW        	 1124
+#define SYS_NET_STATS          1140
+#define SYS_NET_CAPTURE        1141
 /* TOS's index-based directory walk. Split off 217, which is now strictly
  * Linux getdents64 — the kernel used to pick between the two by guessing
  * whether the first argument looked like an fd. */
@@ -222,6 +224,51 @@ struct mem_stats {
 
 _Static_assert(sizeof(struct mem_stats) == 24,
                "mem_stats must match kernel mem_stats_user size");
+
+/* ---------------- Network observation (SYS_NET_*) -----------------------
+ *
+ * Mirrors of kernel/net/netmon.h. These describe the NIC and what has
+ * crossed it; there is deliberately no way to send or receive through
+ * them, because there is no socket layer behind them yet. netmon.elf is
+ * the only consumer.
+ *
+ * Only the first NET_FRAME_BYTES of a frame are captured, which covers
+ * Ethernet plus an IPv4 and TCP/UDP header with room to spare. */
+#define NET_FRAME_BYTES   128
+#define NET_CAPTURE_BATCH  16
+
+#define NET_DIR_RX 0
+#define NET_DIR_TX 1
+
+struct net_frame {
+    uint64_t seq;       /* capture sequence, unique and monotonic */
+    uint64_t ticks;     /* scheduler ticks when captured          */
+    uint32_t length;    /* length on the wire                     */
+    uint32_t captured;  /* bytes present in data[]                */
+    uint32_t direction; /* NET_DIR_RX or NET_DIR_TX               */
+    uint32_t reserved;
+    uint8_t  data[NET_FRAME_BYTES];
+};
+
+struct net_stats {
+    uint64_t rx_frames;
+    uint64_t rx_bytes;
+    uint64_t tx_frames;
+    uint64_t tx_bytes;
+    uint64_t seq_next;    /* sequence the next frame will be given */
+    uint64_t seq_oldest;  /* oldest sequence still in the ring     */
+    uint8_t  mac[6];
+    uint8_t  ipv4[4];
+    uint32_t link_up;
+    uint32_t speed_mbps;
+    uint32_t present;     /* 0 when no NIC is bound                */
+    uint32_t ring_frames;
+};
+
+_Static_assert(sizeof(struct net_frame) == 160,
+               "net_frame must match kernel netmon_frame_user size");
+_Static_assert(sizeof(struct net_stats) == 80,
+               "net_stats must match kernel netmon_stats_user size");
 
 /* PCM output status. ring_queued is data waiting in the kernel queue;
  * device_queued has already reached DMA but has not finished playing. */
@@ -455,6 +502,17 @@ long  tty_drain(char *buf, long max);
  * returns 0 on success. */
 long  proc_list(struct proc_info *out, long max);
 long  mem_stats(struct mem_stats *out);
+
+/* NIC counters and captured frames. net_stats returns 0; net_capture
+ * returns how many frames it wrote and advances *cursor past them, so a
+ * caller polls with the same cursor forever. Start it at 0 to replay
+ * whatever the ring still holds, or at stats.seq_next to begin live.
+ *
+ * A cursor that falls behind the ring is moved forward to the oldest
+ * frame still held rather than failing; compare out[0].seq against what
+ * you passed in to see how many frames were missed. */
+long  net_stats(struct net_stats *out);
+long  net_capture(uint64_t *cursor, struct net_frame *out, long max);
 
 /* Threading */
 long  thread_create(void *(*entry)(void *), void *stack, void *arg);

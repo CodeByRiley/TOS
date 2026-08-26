@@ -37,6 +37,7 @@
 #include <memory/pmm.h>
 #include <memory/vmm.h>
 #include <msg/msg.h>
+#include <net/netmon.h>
 #include <sched/sched.h>
 #include <utilities/log.h>
 #include <utilities/string.h>
@@ -1906,6 +1907,29 @@ static long sys_mem_stats(struct mem_stats_user *out) {
   return 0;
 }
 
+/* Both of these write into user memory, so validate before the netmon
+ * layer copies: it runs with the ring lock held and interrupts off, which
+ * is no place to take a page fault. user_buffer_ok() faults the pages in
+ * up front, so the copy underneath the lock only touches present pages. */
+static long sys_net_stats(struct netmon_stats_user *out) {
+  if (!user_buffer_ok(out, sizeof(*out), 1))
+    return -1;
+  return netmon_read_stats(out);
+}
+
+static long sys_net_capture(uint64_t *cursor, struct netmon_frame_user *out,
+                            long max) {
+  if (max <= 0)
+    return -1;
+  if (max > NETMON_CAPTURE_BATCH)
+    max = NETMON_CAPTURE_BATCH;
+  if (!user_buffer_ok(cursor, sizeof(*cursor), 1))
+    return -1;
+  if (!user_buffer_ok(out, (uint64_t)max * sizeof(*out), 1))
+    return -1;
+  return netmon_read_frames(cursor, out, max);
+}
+
 static long sys_arch_prctl(long code, uint64_t addr) {
   switch (code) {
   case ARCH_SET_FS:
@@ -2293,6 +2317,13 @@ long syscall_dispatch(struct syscall_frame *f) {
     break;
   case SYS_FUTEX_WAKE:
     ret = sys_futex_wake((uint32_t *)(uintptr_t)a1);
+    break;
+  case SYS_NET_STATS:
+    ret = sys_net_stats((struct netmon_stats_user *)(uintptr_t)a1);
+    break;
+  case SYS_NET_CAPTURE:
+    ret = sys_net_capture((uint64_t *)(uintptr_t)a1,
+                          (struct netmon_frame_user *)(uintptr_t)a2, (long)a3);
     break;
   default:
     log_write_hex("unknown syscall =", num, KERNEL, LOG_ERROR);

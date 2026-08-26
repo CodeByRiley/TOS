@@ -90,7 +90,7 @@ MUSL_LINK     := libc/link_tos_musl.sh
 MUSL_LIBC     := $(MUSL_DIR)/lib/libc.a
 MUSL_BINS     := cat plist hello ls pkill gfx btop uidemo deskelf notepad tree \
                  shutdown reboot fdchild faulter mmaptest audiotest \
-                 stress stress_peer mtest vmtest muse sh winman
+                 stress stress_peer mtest vmtest muse sh winman netmon
 MUSL_BIN_ELFS := $(foreach b,$(MUSL_BINS),bin/$(b)/$(b).elf)
 
 # libtos.a — the parts of lib/ that musl does not provide: winman IPC, the
@@ -198,7 +198,7 @@ endif
 %.o: %.c
 	$(USER_ELF_CC) $(DOOM_CFLAGS) -c $< -o $@
 
-USERSPACE_TARGETS := $(SIMPLE_BIN_ELFS) $(MUSL_BIN_ELFS) $(PE_BIN_EXES) $(PE_VARIANT_EXES) bin/holyd/holyd.elf bin/helium/helium.elf
+USERSPACE_TARGETS := $(SIMPLE_BIN_ELFS) $(MUSL_BIN_ELFS) $(PE_BIN_EXES) $(PE_VARIANT_EXES) bin/holyd/holyd.elf
 ifeq ($(BUILD_DOOM),1)
 USERSPACE_TARGETS += bin/doom/doom.elf
 endif
@@ -230,7 +230,7 @@ $(SIMPLE_BIN_OBJS): %.o: %.c
 # — winman.h being the one that bites, since winman.c is almost all of it —
 # leaves a stale .o in place and the disk image ships last build's binary.
 # Leading '-' so a clean tree with no .d files yet is not an error.
-USER_DEP_FILES := $(patsubst %.o,%.d,$(LIB_C_OBJS) $(SIMPLE_BIN_OBJS) $(HOLYD_OBJS) $(HELIUM_OBJS))
+USER_DEP_FILES := $(patsubst %.o,%.d,$(LIB_C_OBJS) $(SIMPLE_BIN_OBJS) $(HOLYD_OBJS))
 -include $(USER_DEP_FILES)
 
 # Static pattern for the link step. bin/foo/foo.elf <- bin/foo/foo.o + lib.
@@ -269,46 +269,6 @@ $(HOLYD_OBJS): %.tos.o: %.c
 # compiler driver unchanged.
 bin/holyd/holyd.elf: $(HOLYD_OBJS) $(MUSL_LIBC) $(LIBTOS)
 	CC=$(USER_ELF_CC) "$(SHELL)" $(MUSL_LINK) $@ $(HOLYD_OBJS) $(LIBTOS)
-
-# --- helium (browser) rules ---------------------------------------------------------
-
-HELIUM_SRC_DIR := bin/helium
-
-# Find all .c and .cpp files. Adjust the subdirectories to match helium's actual structure!
-HELIUM_C_SOURCES   := $(wildcard $(HELIUM_SRC_DIR)/*.c) \
-                      $(wildcard $(HELIUM_SRC_DIR)/src/*.c) \
-                      $(wildcard $(HELIUM_SRC_DIR)/net/*.c) \
-                      $(wildcard $(HELIUM_SRC_DIR)/utils/*.c)
-
-HELIUM_CPP_SOURCES := $(wildcard $(HELIUM_SRC_DIR)/*.cpp) \
-                      $(wildcard $(HELIUM_SRC_DIR)/src/*.cpp) \
-                      $(wildcard $(HELIUM_SRC_DIR)/net/*.cpp) \
-                      $(wildcard $(HELIUM_SRC_DIR)/utils/*.cpp)
-
-# Compile C sources to .tos.o
-HELIUM_C_OBJS   := $(HELIUM_C_SOURCES:.c=.tos.o)
-# Compile C++ sources to .tos.o
-HELIUM_CXX_OBJS := $(HELIUM_CPP_SOURCES:.cpp=.tos.o)
-
-# Combine them for dependency tracking and linking
-HELIUM_OBJS     := $(HELIUM_C_OBJS) $(HELIUM_CXX_OBJS)
-
-# Define the flags (was missing previously)
-HELIUM_CFLAGS := $(MUSL_CFLAGS) -I $(HELIUM_SRC_DIR) -I $(HELIUM_SRC_DIR)/include -MMD -MP
-
-# Compile C sources
-$(HELIUM_C_OBJS): %.tos.o: %.c
-	$(USER_ELF_CC) $(HELIUM_CFLAGS) -c $< -o $@
-
-# Compile C++ sources
-$(HELIUM_CXX_OBJS): %.tos.o: %.cpp
-	$(USER_ELF_CXX) $(HELIUM_CFLAGS) -c $< -o $@
-
-# Link helium.elf.
-# IMPORTANT: We pass CC=$(USER_ELF_CXX) so the link script uses g++
-# instead of gcc, ensuring libstdc++ is linked properly.
-bin/helium/helium.elf: $(HELIUM_OBJS) $(MUSL_LIBC) $(LIBTOS)
-	CC=$(USER_ELF_CXX) "$(SHELL)" $(MUSL_LINK) $@ $(HELIUM_OBJS) $(LIBTOS)
 
 # --- PE binaries ---------------------------------------------------------
 

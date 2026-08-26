@@ -54,6 +54,7 @@ payloads=(
 	"userspace/bin/muse/muse.elf::usr/bin/muse.elf"
 	"userspace/bin/mmaptest/mmaptest.elf::usr/bin/mmaptest.elf"
 	"userspace/bin/faulter/faulter.elf::usr/bin/faulter.elf"
+	"userspace/bin/netmon/netmon.elf::usr/bin/netmon.elf"
 
 # System Apps
 	"userspace/bin/shutdown/shutdown.elf::system/bin/shutdown.elf"
