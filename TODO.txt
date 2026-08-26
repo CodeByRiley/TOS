@@ -1,0 +1,234 @@
+# TOS TODOs
+
+Priorities are based on the current tree. Keep each item small enough to land
+with its tests; the "done when" line is the acceptance criterion.
+
+## P0 - Stabilise the current userspace work
+
+- [ ] Finish and validate the musl/HolyD migration.
+  - Run a clean `mingw32-make build-x86_64`, `mingw32-make test-host`, and
+    `mingw32-make test-heavy`, followed by both musl smoke tests.
+  - Investigate every failure before committing the current userspace and
+    syscall changes.
+  - Done when a clean checkout builds the ISO and all host/QEMU tests pass.
+
+- [ ] Put the musl smoke tests in the normal regression suite.
+  - Add `tests/musl_smoke_test.py` and `tests/musl_posix_smoke_test.py` to an
+    appropriate Make target after their binaries have been packaged.
+  - Keep a smaller target for developers who only want the host tests.
+  - Done when CI or `test-heavy` cannot pass while a basic musl program fails
+    to start, use files, or exit.
+
+- [ ] Define a reproducible policy for generated userspace artifacts.
+  - Decide whether the tracked `.exe` files and `userspace/lib/libtos.a` are
+    release inputs or build outputs. If they are outputs, ignore/remove them;
+    if they are inputs, add a deterministic rebuild/check target.
+  - Done when an ordinary build does not leave unexplained binary-only diffs.
+
+## P1 - Correctness and isolation
+
+- [ ] Add regression tests for ring-3 faults without crashing TOS.
+  - The exception path already kills a faulting user task; update the stale
+    comments in `vmtest` and test that behaviour explicitly.
+  - Cover a null write and a write through a read-only `mprotect` mapping,
+    then prove the shell or a second process still runs.
+  - Done when a QEMU test observes the expected child failure and continued
+    kernel liveness.
+
+- [ ] Fix memory-safety bugs in the hand-rolled libc used by legacy programs.
+  - Make `realloc` track the old allocation size and copy only
+    `min(old_size, new_size)` bytes.
+  - Clamp `fprintf`, `vfprintf`, and `vprintf` writes to the bytes actually
+    stored in their scratch buffers when `vsnprintf` reports truncation.
+  - Add host tests for shrinking/growing allocations and output longer than
+    1 KiB.
+  - Done when ASan-enabled host tests show no over-read or buffer overrun.
+
+- [ ] Replace silent libc stubs with truthful behaviour.
+  - Make `assert` print the failed expression/location and terminate through
+    `abort`.
+  - Implement x86_64 `setjmp`/`longjmp`, or make unsupported callers fail
+    immediately instead of spinning forever.
+  - Return useful `errno` values/messages from remaining wrappers.
+  - Done when failure paths terminate predictably and have focused tests.
+
+- [ ] Add the next port-driven POSIX syscall tranche.
+  - Start with filesystem/FD calls identified in the musl README: `access`,
+    `readlink`, `dup`/`dup2`, `pipe`, and `rename`.
+  - Implement one coherent group at a time, including user-pointer validation,
+    fd lifetime rules, libc coverage, and a QEMU smoke test.
+  - Done when the next chosen real application runs without compatibility
+    shims for that group.
+
+- [ ] Add real pthread support for musl programs.
+  - Implement the required `clone` semantics, TLS setup, child-tid clearing,
+    futex wakeups, and thread address-space lifetime rules before switching
+    `thread.elf` away from the TOS-specific thread ABI.
+  - Follow with signal masks and robust futex handling as musl reaches them.
+  - Done when a musl pthread create/join/stress test survives repeated runs on
+    multiple CPUs without leaked tasks or page tables.
+
+## P2 - User-visible capabilities
+
+- [ ] Connect DOOM to the existing PCM audio syscalls.
+  - Replace `userspace/games/doom/sound_stub.c` with a mixer that converts
+    DOOM sound effects to signed 16-bit stereo and streams them with
+    `audio_open`/`audio_write`.
+  - Start with sound effects; music synthesis can be a separate task.
+  - Done when effects play without underruns and audio ownership is released
+    after DOOM exits or faults.
+
+- [ ] Implement a modern USB host-controller path.
+  - Prefer xHCI first because QEMU and current hardware expose it; keep UHCI as
+    the working reference and leave EHCI/OHCI as separate follow-ups.
+  - Split the work into controller reset/rings, enumeration/control transfers,
+    then HID keyboard/mouse support.
+  - Done when the same USB HID smoke test passes under xHCI and UHCI.
+
+- [ ] Advance HolyD to its next coherent language milestone.
+  - Reconcile `userspace/bin/holyd/HOLYD.todo` with features already completed
+    in the current tree (`--help`, `-tokens`, floats, array assignment, and
+    stricter parse failures).
+  - Next implement expression completeness as one tested slice: logical and
+    bitwise operators, shifts, compound assignment, and ternary expressions.
+  - Follow with `break`/`continue` and `switch`; keep native code generation
+    until the VM language and type model are stable.
+  - Done when host tests cover precedence, short-circuit side effects, bytecode
+    execution, interpreter parity, and rejected invalid syntax.
+
+## P3 - Networking stack, the active line of work
+
+Numbered after P2 because it is a sequence, not because it is less
+urgent: this is what `feat/netmon` is for, and NetSurf is blocked on all
+of it.
+
+The link and address layers landed already. `kernel/net/` now holds
+`netif`, `eth`, `arp`, `ipv4`, and `icmp`; the e1000 driver carries no protocol
+code and registers an interface instead; `tests/net_arp_test.py` proves TOS
+originates frames rather than only answering them (gratuitous ARP at link-up,
+then gateway resolution and the reply landing in the cache).
+
+Two things drive the order below. Each item is the cheapest change that makes
+the next one testable, and NetSurf is the consumer that decides when the stack
+is actually finished — it renders `data:` and `resource:` URLs today and cannot
+fetch a single byte over the network.
+
+- [ ] Cover the two layers that shipped without tests.
+  - ICMP echo reply and the ARP pending-queue flush have no coverage. SLIRP
+    will not forward a host ping to the guest, and nothing yet hands the queue
+    a payload to park, so neither is reachable from a boot test.
+  - Write host tests against `tests/host_kernel_stubs.c` instead: a corrupt
+    echo-request checksum must be rejected rather than echoed; cache eviction
+    must pick the entry nearest its deadline; retry exhaustion must drop the
+    parked frames; one reply must flush every frame queued behind that entry.
+  - `sync/spinlock.h` uses `cli`/`pushfq`, so the host build needs a stub
+    spinlock in the same style as the existing kernel stubs.
+  - Done when `arp.c` and `icmp.c` have host tests in `test-host`, and
+    deliberately inverting the checksum comparison fails them.
+
+- [ ] Fix `kernel/net/ksocket.c` before building anything on it.
+  - It has no callers and no syscalls behind it, so nothing here is a
+    regression risk — but the bugs are wrong behaviour, not missing features,
+    and inheriting them into UDP would be much more expensive to find later.
+  - `ring_buffer_push` tests `ring_buffer_full` and then writes `len` bytes
+    regardless, walking past the tail and silently corrupting queued data.
+  - A byte ring is the wrong shape for datagrams: two 100-byte packets read
+    back as one 200-byte blob, and the source address is taken from
+    `sock->remote`, which the most recent sender overwrote. Replace it with
+    fixed-size slots carrying length plus source address per datagram.
+  - `socket_sendto` returns `len` having transmitted nothing.
+  - No lock on the socket list or the receive queue; `socket_recvfrom` returns
+    0 instead of blocking; there is no `socket_close`, so every socket and its
+    buffer leaks for the life of the kernel.
+  - Reconcile the duplicate definitions in `ksocket.h` against `net/inet.h`
+    (`ipv4_addr_t`, `IPPROTO_*`) rather than leaving two sources of truth.
+  - Done when the datagram queue has host tests covering oversized writes, a
+    full queue, message boundaries, and per-datagram source addresses.
+
+- [ ] Turn the socket layer into working UDP.
+  - Add `udp.c` under `kernel/net/`: header, checksum over the pseudo-header,
+    `udp_input` demultiplexing to a bound socket, `udp_output` through
+    `ipv4_output_framed` using the `IPV4_HEADROOM` convention.
+  - Wire `IPPROTO_UDP` into the `ipv4_input` switch, which already has the
+    slot waiting.
+  - Add the syscalls at 1142+: socket, bind, sendto, recvfrom, close. Validate
+    every user pointer, and give sockets fd lifetime rules that survive a
+    process being killed mid-recv.
+  - Blocking receive needs a wait queue the driver poll task can wake;
+    `socket_handle_incoming` is where the wakeup belongs.
+  - Test loopback between two processes first, then against SLIRP's echo path
+    with `tests/net_arp_test.py`'s pcap parser asserting on the wire.
+  - Note the queue limits in the header rather than pretending there are none.
+  - Done when two processes exchange datagrams under SMP stress with no loss
+    beyond the documented queue depth, and a captured datagram has a checksum
+    the parser validates.
+
+- [ ] Take the address from DHCP instead of the source.
+  - `10.0.2.30`, the mask, and the gateway are hardcoded in `e1000.c`.
+    `netif_set_ipv4` and `arp_flush` already exist for exactly this handover.
+  - Discover, request, and honour the lease; re-announce with `arp_announce`
+    once it is taken, since the binding other hosts cached is now stale.
+  - Keep a static fallback for the case where no server answers, so a
+    direct-cable or misconfigured setup still boots to a usable link.
+  - Done when TOS takes SLIRP's offered address with the hardcoded constants
+    removed, and the pcap shows the four-packet exchange followed by a
+    gratuitous ARP for the new address.
+
+- [ ] Resolve names.
+  - A UDP client to the server DHCP hands over (`10.0.2.3` under SLIRP).
+    A/AAAA queries, the response cache honouring TTL, and a bounded retry.
+  - Compression pointers in responses are the classic place to write an
+    infinite loop or read out of bounds; bound the jump count and test a
+    hand-built malicious response.
+  - Expose it as `getaddrinfo`/`gethostbyname` in the musl port, not as a
+    TOS-specific call, so ported software finds it where it expects to.
+  - Done when a host test parses a captured response correctly, a pointer
+    loop is rejected rather than hanging, and a userspace tool resolves a
+    name end to end.
+
+- [ ] Implement TCP.
+  - The largest item here by a wide margin, and the one NetSurf is waiting
+    on. Do not start it until UDP, DHCP, and DNS are reliable — every bug
+    found in those layers is a bug that would otherwise be found while
+    debugging a retransmit timer.
+  - Stage it: connection setup and teardown with the full state machine;
+    then sequence/acknowledgement handling and a receive reassembly queue;
+    then retransmission with RTO estimation; then a send window and delayed
+    ACKs. Land each stage with its own tests.
+  - Client side first. Listening sockets can wait until something in TOS
+    wants to serve.
+  - Done when a userspace client completes a request against SLIRP's
+    forwarded port, survives a deliberately dropped segment, and closes
+    without leaving the socket wedged.
+
+- [ ] Move the e1000 off polling.
+  - `REG_ICR` is read and discarded in `e1000_init_hardware`, `REG_IMS` is
+    never written, and `e1000_enable_bus_master` sets `PCI_CMD_INT_DISABLE`.
+    Reception works only because the driver core polls.
+  - `netmon.c` and `arp.c` already take the IRQ-safe spinlock variants, so
+    the locking is in place. Handle RXT0/RXDMT0 and TXDW, keep the poll
+    callback for `arp_tick` and link reporting.
+  - Deliberately last: polling is honest while the protocols above are the
+    unknown, and an interrupt storm during protocol bring-up is a hard bug
+    to tell apart from a protocol bug.
+  - Done when the ISO boots with polling removed from the receive path and
+    `tests/netmon_test.py` still sees every frame the pcap does.
+
+- [ ] Give NetSurf a fetcher.
+  - `userspace/bin/netsurf/` builds and registers the `data`, `resource`,
+    `about`, and `file` fetchers. `curl.c` is not compiled;
+    `userspace/netsurf_compat/content/fetchers/curl.h` is a shim that
+    declares `fetch_curl_register` so `content/fetch.c` links, and nothing
+    implements it. The browser cannot fetch a byte over the network.
+  - Write a minimal HTTP/1.1 fetcher against the TOS socket API rather than
+    porting libcurl. Chunked transfer encoding, `Content-Length`, redirects,
+    and a request timeout are the whole requirement for reaching a plain
+    HTTP page; libcurl brings TLS, a dozen protocols, and its own event loop
+    for none of it.
+  - Register it in place of `fetch_curl_register` rather than under a new
+    name, so `content/fetch.c` stays unmodified against upstream.
+  - HTTPS is a separate item and a large one. Most of the useful web is
+    unreachable without it; decide whether that is a port of a TLS library
+    or a deliberate stopping point before starting.
+  - Done when NetSurf loads and renders a plain HTTP page served from the
+    host over a SLIRP hostfwd.

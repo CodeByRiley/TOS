@@ -16,11 +16,7 @@ kernel_asm_object_files := $(patsubst kernel/%.asm, build/kernel/%.o, $(kernel_a
 
 kernel_object_files := $(kernel_c_object_files) $(kernel_asm_object_files) $(ap_trampoline_obj)
 
-# -MMD -MP makes gcc emit a .d file per object listing the headers it pulled
-# in. Without it an object depends only on its .c, so editing a header rebuilds
-# nothing and the link silently reuses objects compiled against the old
-# definitions — the resulting binary is a mix of both, which reads as "my fix
-# had no effect".
+# Emit header dependencies for incremental rebuilds.
 kernel_c_flags := -I kernel -ffreestanding -mno-red-zone -mcmodel=kernel -fno-pic -fno-pie -MMD -MP -std=gnu23
 
 kernel_dep_files := $(kernel_c_object_files:.o=.d)
@@ -77,13 +73,7 @@ $(disk_img): userspace tools/create_disk.sh $(rootfs_payload_files)
 	wsl bash -c "cd \$$(wslpath '$(CURDIR)') && bash tools/create_disk.sh"
 
 # --- Kernel Symbol Table (Two-pass link) -----------------------------
-# To resolve symbols in panic backtraces, we need a symbol table. But the
-# symbol table must be generated from the final kernel layout, creating a
-# chicken-and-egg problem. We solve this by linking twice:
-# * Link all standard objects into a temporary ELF (kernel_nosyms.elf).
-# * Extract the .text symbols from that ELF into build/generated/symtab.c.
-# * Compile the generated symbol table.
-# * Link everything (including the symtab) into the final kernel.bin.
+# Link once to generate symbols, then relink with the generated table.
 kernel_nosyms_elf := build/kernel_nosyms.elf
 symtab_gen_src := build/generated/symtab.c
 symtab_gen_obj := build/generated/symtab.o
@@ -105,8 +95,6 @@ $(symtab_gen_obj): $(symtab_gen_src)
 .PHONY: kernel
 kernel: $(kernel_bin)
 
-# Note: kernel/utilities/symtab.c (the resolver) is automatically picked up
-# by the rwildcard rule and compiled into kernel_object_files.
 $(kernel_bin): $(kernel_object_files) $(symtab_gen_obj) $(linker_script)
 	mkdir -p $(dir $@)
 	x86_64-elf-ld -z max-page-size=0x1000 -o $@ -T $(linker_script) \
@@ -137,7 +125,6 @@ build-x86_64: $(kernel_bin) $(disk_img)
 	"
 
 # --- host + QEMU regression suites -------------------------------------
-
 HOST_CC ?= gcc
 HOST_TEST_CFLAGS := -std=c11 -O2 -Wall -Wextra
 HOST_TEST_DIR := build/tests
@@ -237,6 +224,7 @@ test-qemu-heavy: build-x86_64
 		python3 tests/virtio_resize_test.py --boot-timeout 90 && \
 		python3 tests/deskelf_test.py --timeout 90 && \
 		python3 tests/netmon_test.py --timeout 120 && \
+		python3 tests/net_arp_test.py --timeout 120 && \
 		python3 tests/winman_partial_repaint_test.py --timeout 90 && \
 		python3 tests/winman_titlebar_double_click_test.py --timeout 90 && \
 		python3 tests/path_lookup_test.py --timeout 90 && \

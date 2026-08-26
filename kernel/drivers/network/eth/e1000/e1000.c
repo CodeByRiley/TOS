@@ -5,6 +5,9 @@
 #include <memory/hhdm.h>
 #include <memory/pmm.h>
 #include <memory/vmm.h>
+#include <net/arp.h>
+#include <net/eth.h>
+#include <net/netif.h>
 #include <net/netmon.h>
 #include <pci/pci.h>
 #include <utilities/log.h>
@@ -17,84 +20,12 @@
 #define E1000_FRAME_MAX 1514U
 #define E1000_FRAME_MIN 60U
 
-#define ETH_TYPE_IPV4 0x0800U
-#define ETH_TYPE_ARP 0x0806U
-#define ARP_OP_REQUEST 1U
-#define ARP_OP_REPLY 2U
-#define IPPROTO_ICMP 1U
-#define ICMP_ECHO_REPLY 0U
-#define ICMP_ECHO_REQUEST 8U
-
-static const uint8_t e1000_ipv4_addr[4] = {10, 0, 2, 30};
+/* QEMU's slirp gateway is 10.0.2.2 and it serves a /24. Static addressing
+ * until DHCP lands, at which point netif_set_ipv4 replaces all three. */
+static const uint8_t e1000_ipv4_addr[IPV4_ALEN] = {10, 0, 2, 30};
+static const uint8_t e1000_ipv4_mask[IPV4_ALEN] = {255, 255, 255, 0};
+static const uint8_t e1000_ipv4_gateway[IPV4_ALEN] = {10, 0, 2, 2};
 static uint64_t next_mmio_virt = MMIO_VIRT_BASE;
-
-struct eth_hdr {
-  uint8_t dst[6];
-  uint8_t src[6];
-  uint16_t type;
-} __attribute__((packed));
-
-struct arp_ipv4 {
-  uint16_t htype;
-  uint16_t ptype;
-  uint8_t hlen;
-  uint8_t plen;
-  uint16_t oper;
-  uint8_t sha[6];
-  uint8_t spa[4];
-  uint8_t tha[6];
-  uint8_t tpa[4];
-} __attribute__((packed));
-
-struct ipv4_hdr {
-  uint8_t version_ihl;
-  uint8_t tos;
-  uint16_t total_length;
-  uint16_t id;
-  uint16_t flags_fragment;
-  uint8_t ttl;
-  uint8_t protocol;
-  uint16_t checksum;
-  uint8_t src[4];
-  uint8_t dst[4];
-} __attribute__((packed));
-
-struct icmp_hdr {
-  uint8_t type;
-  uint8_t code;
-  uint16_t checksum;
-  uint16_t ident;
-  uint16_t sequence;
-} __attribute__((packed));
-
-static uint16_t bswap16(uint16_t value) {
-  return (uint16_t)((value << 8) | (value >> 8));
-}
-
-static uint16_t from_be16(uint16_t value) { return bswap16(value); }
-static uint16_t to_be16(uint16_t value) { return bswap16(value); }
-
-static uint16_t inet_checksum(const void *data, uint32_t len) {
-  const uint8_t *bytes = (const uint8_t *)data;
-  uint32_t sum = 0;
-
-  while (len > 1) {
-    sum += ((uint16_t)bytes[0] << 8) | bytes[1];
-    bytes += 2;
-    len -= 2;
-  }
-  if (len)
-    sum += (uint16_t)bytes[0] << 8;
-
-  while (sum >> 16)
-    sum = (sum & 0xFFFF) + (sum >> 16);
-
-  return (uint16_t)~sum;
-}
-
-static int ipv4_addr_equal(const uint8_t *a, const uint8_t *b) {
-  return a[0] == b[0] && a[1] == b[1] && a[2] == b[2] && a[3] == b[3];
-}
 
 static int e1000_wait_clear(struct e1000_dev *nic, uint32_t reg,
                             uint32_t mask) {
@@ -151,7 +82,6 @@ static int e1000_read_mac_address(struct e1000_dev *nic) {
     e1000_read_mac_from_registers(nic);
   }
 
-  // Write MAC to Receive Address Register 0
   uint32_t mac_low = nic->mac_addr[0] | (nic->mac_addr[1] << 8) |
                      (nic->mac_addr[2] << 16) | (nic->mac_addr[3] << 24);
   uint32_t mac_high = nic->mac_addr[4] | (nic->mac_addr[5] << 8);
@@ -254,8 +184,11 @@ static void e1000_enable_bus_master(const struct pci_device *pci) {
   pci_write16(pci->addr, PCI_CFG_COMMAND, cmd);
 }
 
-static int e1000_send_frame(struct e1000_dev *nic, const void *frame,
-                            uint16_t len) {
+/* netif tx callback. Must not block: reached from the driver poll task
+ * today and from the IRQ handler once that path lands. A full ring is
+ * reported as failure rather than spun on. */
+static int e1000_tx(void *driver_data, const void *frame, uint16_t len) {
+  struct e1000_dev *nic = (struct e1000_dev *)driver_data;
   if (!nic || !frame || len > E1000_FRAME_MAX)
     return -1;
 
@@ -282,153 +215,6 @@ static int e1000_send_frame(struct e1000_dev *nic, const void *frame,
   E1000_WRITE(nic, REG_TXDESCTAIL, nic->tx_current);
   netmon_record(NETMON_DIR_TX, frame, len);
   return 0;
-}
-
-// void e1000_send_test_ping(struct e1000_dev *nic) {
-//     uint8_t frame[74]; // 14 (eth) + 20 (ip) + 8 (icmp) + 32 (data)
-//     memset(frame, 0, sizeof(frame));
-
-//     struct eth_hdr *eth = (struct eth_hdr *)frame;
-//     // QEMU's gateway MAC address is always 52:55:0a:00:02:02
-//     uint8_t gw_mac[6] = {0x52, 0x55, 0x0a, 0x00, 0x02, 0x02};
-//     memcpy(eth->dst, gw_mac, 6);
-//     memcpy(eth->src, nic->mac_addr, 6);
-//     eth->type = to_be16(ETH_TYPE_IPV4);
-
-//     struct ipv4_hdr *ip = (struct ipv4_hdr *)(frame + 14);
-//     ip->version_ihl = 0x45;
-//     ip->tos = 0;
-//     ip->total_length = to_be16(20 + 8 + 32); // IP + ICMP + Data
-//     ip->id = to_be16(1);
-//     ip->flags_fragment = 0;
-//     ip->ttl = 64;
-//     ip->protocol = IPPROTO_ICMP;
-//     uint8_t src_ip[4] = {10, 0, 2, 30};
-//     uint8_t dst_ip[4] = {10, 0, 2, 2}; // 10.0.2.2 is QEMU's gateway
-//     memcpy(ip->src, src_ip, 4);
-//     memcpy(ip->dst, dst_ip, 4);
-//     ip->checksum = 0;
-//     ip->checksum = to_be16(inet_checksum(ip, 20));
-
-//     struct icmp_hdr *icmp = (struct icmp_hdr *)(frame + 14 + 20);
-//     icmp->type = ICMP_ECHO_REQUEST;
-//     icmp->code = 0;
-//     icmp->ident = to_be16(1);
-//     icmp->sequence = to_be16(1);
-//     // ICMP data (32 bytes of 'A')
-//     memset(frame + 14 + 20 + 8, 'A', 32);
-//     icmp->checksum = 0;
-//     icmp->checksum = to_be16(inet_checksum(icmp, 8 + 32));
-
-//     e1000_send_frame(nic, frame, 74);
-//     log_write("e1000: Sent test ICMP ping to 10.0.2.2", KERNEL, LOG_INFO);
-// }
-
-static void e1000_handle_arp(struct e1000_dev *nic, const struct eth_hdr *eth,
-                             const uint8_t *payload, uint16_t len) {
-  if (len < sizeof(struct arp_ipv4))
-    return;
-
-  const struct arp_ipv4 *arp = (const struct arp_ipv4 *)payload;
-  if (from_be16(arp->htype) != 1 || from_be16(arp->ptype) != ETH_TYPE_IPV4 ||
-      arp->hlen != 6 || arp->plen != 4 ||
-      from_be16(arp->oper) != ARP_OP_REQUEST ||
-      !ipv4_addr_equal(arp->tpa, e1000_ipv4_addr)) {
-    return;
-  }
-
-  uint8_t frame[sizeof(struct eth_hdr) + sizeof(struct arp_ipv4)];
-  struct eth_hdr *reply_eth = (struct eth_hdr *)frame;
-  struct arp_ipv4 *reply_arp =
-      (struct arp_ipv4 *)(frame + sizeof(struct eth_hdr));
-
-  memcpy(reply_eth->dst, eth->src, sizeof(reply_eth->dst));
-  memcpy(reply_eth->src, nic->mac_addr, sizeof(reply_eth->src));
-  reply_eth->type = to_be16(ETH_TYPE_ARP);
-
-  reply_arp->htype = to_be16(1);
-  reply_arp->ptype = to_be16(ETH_TYPE_IPV4);
-  reply_arp->hlen = 6;
-  reply_arp->plen = 4;
-  reply_arp->oper = to_be16(ARP_OP_REPLY);
-  memcpy(reply_arp->sha, nic->mac_addr, sizeof(reply_arp->sha));
-  memcpy(reply_arp->spa, e1000_ipv4_addr, sizeof(reply_arp->spa));
-  memcpy(reply_arp->tha, arp->sha, sizeof(reply_arp->tha));
-  memcpy(reply_arp->tpa, arp->spa, sizeof(reply_arp->tpa));
-
-  e1000_send_frame(nic, frame, sizeof(frame));
-}
-
-static void e1000_handle_icmp(struct e1000_dev *nic, const struct eth_hdr *eth,
-                              const uint8_t *packet, uint16_t len) {
-  if (len < sizeof(struct ipv4_hdr))
-    return;
-
-  const struct ipv4_hdr *ip = (const struct ipv4_hdr *)packet;
-  uint8_t ihl = (uint8_t)((ip->version_ihl & 0x0F) * 4);
-  uint16_t total_len = from_be16(ip->total_length);
-
-  if ((ip->version_ihl >> 4) != 4 || ihl < sizeof(struct ipv4_hdr) ||
-      total_len < ihl + sizeof(struct icmp_hdr) || total_len > len ||
-      ip->protocol != IPPROTO_ICMP ||
-      !ipv4_addr_equal(ip->dst, e1000_ipv4_addr)) {
-    return;
-  }
-
-  uint16_t frag = from_be16(ip->flags_fragment);
-  if (frag & 0x3FFF)
-    return;
-
-  const struct icmp_hdr *icmp = (const struct icmp_hdr *)(packet + ihl);
-  uint16_t icmp_len = total_len - ihl;
-  if (icmp->type != ICMP_ECHO_REQUEST || icmp->code != 0)
-    return;
-
-  uint16_t frame_len = (uint16_t)(sizeof(struct eth_hdr) + total_len);
-  if (frame_len > E1000_FRAME_MAX)
-    return;
-
-  uint8_t frame[E1000_FRAME_MAX];
-  memcpy(frame, eth, frame_len);
-
-  struct eth_hdr *reply_eth = (struct eth_hdr *)frame;
-  struct ipv4_hdr *reply_ip =
-      (struct ipv4_hdr *)(frame + sizeof(struct eth_hdr));
-  struct icmp_hdr *reply_icmp = (struct icmp_hdr *)((uint8_t *)reply_ip + ihl);
-
-  memcpy(reply_eth->dst, eth->src, sizeof(reply_eth->dst));
-  memcpy(reply_eth->src, nic->mac_addr, sizeof(reply_eth->src));
-
-  uint8_t tmp_ip[4];
-  memcpy(tmp_ip, reply_ip->src, sizeof(tmp_ip));
-  memcpy(reply_ip->src, e1000_ipv4_addr, sizeof(reply_ip->src));
-  memcpy(reply_ip->dst, tmp_ip, sizeof(reply_ip->dst));
-  reply_ip->ttl = 64;
-  reply_ip->checksum = 0;
-  reply_ip->checksum = to_be16(inet_checksum(reply_ip, ihl));
-
-  reply_icmp->type = ICMP_ECHO_REPLY;
-  reply_icmp->checksum = 0;
-  reply_icmp->checksum = to_be16(inet_checksum(reply_icmp, icmp_len));
-
-  e1000_send_frame(nic, frame, frame_len);
-}
-
-static void e1000_handle_frame(struct e1000_dev *nic, const uint8_t *packet,
-                               uint16_t len) {
-  if (len < sizeof(struct eth_hdr))
-    return;
-
-  const struct eth_hdr *eth = (const struct eth_hdr *)packet;
-  uint16_t type = from_be16(eth->type);
-  const uint8_t *payload = packet + sizeof(struct eth_hdr);
-  uint16_t payload_len = (uint16_t)(len - sizeof(struct eth_hdr));
-  log_write_hex("e1000: received frame of type", type, KERNEL, LOG_INFO);
-  if (type == ETH_TYPE_ARP) {
-    e1000_handle_arp(nic, eth, payload, payload_len);
-  } else if (type == ETH_TYPE_IPV4) {
-    e1000_handle_icmp(nic, eth, payload, payload_len);
-  }
 }
 
 static int e1000_match(const struct device *dev) {
@@ -480,6 +266,25 @@ static int e1000_init_hardware(struct e1000_dev *nic) {
 
   netmon_bind(nic->mac_addr, e1000_ipv4_addr);
 
+  /* Publish the interface only now: netif_register makes the whole stack
+   * reachable, and anything that transmits before the rings are set up
+   * writes into descriptors the hardware has not been told about. */
+  struct netif nif;
+  memset(&nif, 0, sizeof(nif));
+  memcpy(nif.mac, nic->mac_addr, NETIF_MAC_LEN);
+  memcpy(nif.ipv4, e1000_ipv4_addr, IPV4_ALEN);
+  memcpy(nif.netmask, e1000_ipv4_mask, IPV4_ALEN);
+  memcpy(nif.gateway, e1000_ipv4_gateway, IPV4_ALEN);
+  nif.mtu = E1000_FRAME_MAX - ETH_HDR_LEN;
+  nif.driver_data = nic;
+  nif.tx = e1000_tx;
+  netif_register(&nif);
+
+  /* Announce the binding now that transmit is live, and resolve the
+   * gateway while nothing is waiting on it. */
+  arp_announce();
+  arp_prime_gateway();
+
   log_write("e1000: RX/TX ready at 10.0.2.30", KERNEL, LOG_INFO);
 
   //e1000_send_test_ping(nic);
@@ -516,9 +321,10 @@ static void e1000_poll_rx(struct device *dev) {
     netmon_record(NETMON_DIR_RX, nic->rx_buffers[nic->rx_current],
                   packet_len);
 
-    // Pass the packet to the network stack (ARP/ICMP)
+    // Hand the frame to the stack. netmon above saw it either way; the
+    // address filter and protocol demux live in eth_input now.
     if (packet_len <= E1000_FRAME_MAX) {
-      e1000_handle_frame(nic, (const uint8_t *)nic->rx_buffers[nic->rx_current], packet_len);
+      eth_input((const uint8_t *)nic->rx_buffers[nic->rx_current], packet_len);
     }
 
     // Give the buffer back to the hardware.
@@ -535,6 +341,10 @@ static void e1000_poll_rx(struct device *dev) {
     nic->rx_current = (nic->rx_current + 1) % E1000_NUM_RX_DESC;
     E1000_WRITE(nic, REG_RXDESCTAIL, consumed);
   }
+
+  /* ARP timeouts ride the poll task instead of earning a timer of their
+   * own; the cache is empty and this returns immediately on most passes. */
+  arp_tick();
 }
 
 static int e1000_probe(struct device *dev) {
