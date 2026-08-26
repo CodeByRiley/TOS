@@ -8,6 +8,7 @@ typedef struct {
     Lexer lexer;
     Token current;
     Token previous;
+    int had_error;      // Set by any diagnostic; ParseProgram fails on it.
 } Parser;
 
 void ParserInit(Parser* parser, const char* source);

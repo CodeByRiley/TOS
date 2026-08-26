@@ -111,7 +111,18 @@ static Token number(Lexer* lexer) {
     while (is_digit(peek(lexer))) {
         advance(lexer);
     }
-    // Handle floats (F64) later...
+
+    /* A '.' only opens a fraction when a digit follows. That keeps the
+     * number short in `1..5` (a range) and `1.length` (a property), which
+     * would otherwise be swallowed as part of the literal. */
+    if (peek(lexer) == '.' && is_digit(peek_next(lexer))) {
+        advance(lexer);
+        while (is_digit(peek(lexer))) {
+            advance(lexer);
+        }
+        return make_token(lexer, TOKEN_FLOAT);
+    }
+
     return make_token(lexer, TOKEN_NUMBER);
 }
 
@@ -189,7 +200,18 @@ Token LexerNextToken(Lexer* lexer) {
         case ';': return make_token(lexer, TOKEN_SEMICOLON);
         case ':': return make_token(lexer, TOKEN_COLON);
         case ',': return make_token(lexer, TOKEN_COMMA);
-        case '.': return make_token(lexer, TOKEN_DOT);
+        case '.':
+            /* Longest run wins: '...' before '..' before a lone '.'. */
+            if (peek(lexer) == '.' && peek_next(lexer) == '.') {
+                advance(lexer);
+                advance(lexer);
+                return make_token(lexer, TOKEN_DOTDOTDOT);
+            }
+            if (peek(lexer) == '.') {
+                advance(lexer);
+                return make_token(lexer, TOKEN_DOTDOT);
+            }
+            return make_token(lexer, TOKEN_DOT);
         case '+': return make_token(lexer, match(lexer, '+') ? TOKEN_PLUSPLUS : TOKEN_PLUS);
         case '-': return make_token(lexer, match(lexer, '-') ? TOKEN_MINUSMINUS : TOKEN_MINUS);
         case '*': return make_token(lexer, TOKEN_STAR);
@@ -209,7 +231,9 @@ Token LexerNextToken(Lexer* lexer) {
 const char* TokenTypeToString(TokenType type) {
     switch (type) {
         case TOKEN_EOF: return "EOF";
+        case TOKEN_NEWLINE: return "NEWLINE";
         case TOKEN_NUMBER: return "NUMBER";
+        case TOKEN_FLOAT: return "FLOAT";
         case TOKEN_STRING: return "STRING";
         case TOKEN_IDENTIFIER: return "IDENTIFIER";
         case TOKEN_U0: return "U0";
@@ -261,6 +285,8 @@ const char* TokenTypeToString(TokenType type) {
         case TOKEN_COLON: return "COLON";
         case TOKEN_COMMA: return "COMMA";
         case TOKEN_DOT: return "DOT";
+        case TOKEN_DOTDOT: return "DOTDOT";
+        case TOKEN_DOTDOTDOT: return "DOTDOTDOT";
         case TOKEN_LPAREN: return "LPAREN";
         case TOKEN_RPAREN: return "RPAREN";
         case TOKEN_LBRACE: return "LBRACE";

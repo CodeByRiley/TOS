@@ -10,6 +10,7 @@ typedef enum {
 
     // Literals and Identifiers
     TOKEN_NUMBER,       // 123
+    TOKEN_FLOAT,        // 1.5
     TOKEN_STRING,       // "Hello"
     TOKEN_IDENTIFIER,   // variable names like x, Print, myVar
 
@@ -68,6 +69,8 @@ typedef enum {
     TOKEN_COLON,        // :
     TOKEN_COMMA,        // ,
     TOKEN_DOT,          // .
+    TOKEN_DOTDOT,       // .. (D slice bounds)
+    TOKEN_DOTDOTDOT,    // ... (HolyC case ranges, variadic parameters)
     TOKEN_LPAREN,       // (
     TOKEN_RPAREN,       // )
     TOKEN_LBRACE,       // {

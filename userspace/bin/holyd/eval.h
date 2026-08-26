@@ -5,6 +5,7 @@
 
 typedef enum {
     VAL_INT,
+    VAL_FLOAT,
     VAL_STRING,
     VAL_ARRAY
 } ValueType;
@@ -15,6 +16,7 @@ typedef struct HDValue HDValue;
 struct HDValue {
     ValueType type;
     long long i64;
+    double f64;         // For VAL_FLOAT
     const char* str;
     int str_len;
 
@@ -42,5 +44,9 @@ void EnvSet(Environment* env, const char* name, size_t name_len, HDValue value);
 HDValue* EnvGet(Environment* env, const char* name, size_t name_len);
 
 HDValue EvalNode(ASTNode* node, Environment* env);
+
+/* Lives in compiler.c so both execution paths format floats identically.
+ * printf has no %f conversion, so this builds the digits by hand. */
+void HDPrintDouble(double value);
 
 #endif

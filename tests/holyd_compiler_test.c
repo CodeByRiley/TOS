@@ -28,6 +28,20 @@ static int run_case(const char* name, const char* source) {
     return 1;
 }
 
+/* Source the parser must reject. Before ParseProgram grew an error flag it
+ * printed a diagnostic and handed back an AST anyway, so broken files still
+ * reached the compiler and "passed". */
+static int expect_parse_failure(const char* name, const char* source) {
+    Parser parser;
+    ParserInit(&parser, source);
+    if (ParseProgram(&parser) != NULL) {
+        printf("[holyd] expected parse failure, got an AST: %s\n", name);
+        return 0;
+    }
+    printf("[holyd] ok (rejected): %s\n", name);
+    return 1;
+}
+
 int main(void) {
     int ok = 1;
 
@@ -105,6 +119,78 @@ int main(void) {
         "    Banner;\n"
         "    writeln(\"len=\", nums.length, \" total=\", total, \" countdown=\", countdown);\n"
         "}\n");
+
+    /* Each check divides by a comparison: if the comparison is false the VM
+     * traps on division by zero and run_case fails. */
+    ok &= run_case("precedence",
+        "I64 i = 5;\n"
+        "I64 n = 4;\n"
+        "I64 lt = i < n + 1;\n"          /* 5 < 5 -> 0, not (5 < 4) + 1 -> 1 */
+        "I64 c1 = 1 / (lt == 0);\n"
+        "I64 mul = 1 + 2 * 3;\n"         /* 7 */
+        "I64 c2 = 1 / (mul == 7);\n"
+        "I64 eq = 1 == 2 - 1;\n"         /* 1 == 1 -> 1, not (1 == 2) - 1 -> -1 */
+        "I64 c3 = 1 / (eq == 1);\n"
+        "Print(\"precedence ok\\n\");\n");
+
+    ok &= run_case("array assignment",
+        "auto arr = [1, 2, 3];\n"
+        "arr[1] = 20;\n"
+        "arr[0]++;\n"
+        "I64 c1 = 1 / (arr[0] == 2);\n"
+        "I64 c2 = 1 / (arr[1] == 20);\n"
+        "I64 c3 = 1 / (arr[2] == 3);\n"
+        "Print(\"array assignment ok\\n\");\n");
+
+    ok &= expect_parse_failure("missing initializer",
+        "I64 x = ;\n");
+
+    ok &= expect_parse_failure("unknown property",
+        "auto a = [1, 2];\n"
+        "Print(a.nope);\n");
+
+    ok &= run_case("braceless bodies",
+        "I64 hits = 0;\n"
+        "I64 x = 0;\n"
+        "if (x == 1) hits = hits + 100;\n"
+        "hits = hits + 1;\n"        /* not part of the if body */
+        "I64 c1 = 1 / (hits == 1);\n"
+        "if (x == 0) hits = hits + 10; else hits = hits + 200;\n"
+        "I64 c2 = 1 / (hits == 11);\n"
+        "I64 n = 0;\n"
+        "while (n < 3) n++;\n"
+        "I64 c3 = 1 / (n == 3);\n"
+        "Print(\"braceless ok\\n\");\n");
+
+    ok &= run_case("else if chain",
+        "I64 g = 2;\n"
+        "I64 r = 0;\n"
+        "if (g == 1) r = 10; else if (g == 2) r = 20; else r = 30;\n"
+        "I64 c1 = 1 / (r == 20);\n"
+        "Print(\"else if ok\\n\");\n");
+
+    ok &= expect_parse_failure("unterminated block",
+        "if (1) {\n"
+        "    Print(\"x\\n\");\n");
+
+    /* Every literal here is binary-exact, so == is a fair check. */
+    ok &= run_case("floats",
+        "F64 a = 1.5;\n"
+        "F64 b = 2.25;\n"
+        "I64 c1 = 1 / (a + b == 3.75);\n"
+        "I64 c2 = 1 / (a * 2 == 3.0);\n"      /* int promotes to float */
+        "I64 c3 = 1 / (a < 2);\n"
+        "I64 c4 = 1 / (10 / 4 == 2);\n"       /* int division stays integer */
+        "I64 c5 = 1 / (10.0 / 4 == 2.5);\n"   /* float division does not */
+        "Print(a + b); Print(\" \"); Print(3.0); Print(\" \"); Print(0 - 0.25);\n"
+        "Print(\"\\n\");\n");
+
+    ok &= expect_parse_failure("array slice",
+        "auto a = [1, 2, 3];\n"
+        "auto b = a[0..2];\n");
+
+    ok &= expect_parse_failure("variadic parameters",
+        "U0 Sum(...) { }\n");
 
     return ok ? 0 : 1;
 }

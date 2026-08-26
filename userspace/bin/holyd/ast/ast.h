@@ -9,10 +9,12 @@ typedef struct ASTNode ASTNode;
 // All the different kinds of AST nodes
 typedef enum {
     AST_NUMBER,         // 123
+    AST_FLOAT,          // 1.5
     AST_STRING,         // "Hello"
     AST_VAR_DECL,       // I64 x = expr;
     AST_VAR_REF,        // x
     AST_ASSIGN,         // x = expr;
+    AST_INDEX_ASSIGN,   // arr[index] = expr;
     AST_BINARY_OP,      // expr + expr
     AST_CALL,           // Print(expr)
     AST_INDEX,          // array[index]
@@ -31,6 +33,9 @@ struct ASTNode {
 
     // For AST_NUMBER
     long long number_val;
+
+    // For AST_FLOAT
+    double float_val;
 
     // For AST_STRING
     const char* string_val;
@@ -89,12 +94,14 @@ struct ASTNode {
 
 // Helper functions to create nodes (allocates memory)
 ASTNode* ASTNewNumber(long long val);
+ASTNode* ASTNewFloat(double val);
 ASTNode* ASTNewString(const char* str, int len);
 ASTNode* ASTNewVarRef(const char* name, int len);
 ASTNode* ASTNewVarDecl(TokenType type, const char* name, int len, ASTNode* init);
 ASTNode* ASTNewAssign(const char* name, int len, ASTNode* value);
 ASTNode* ASTNewBinaryOp(TokenType op, ASTNode* left, ASTNode* right);
 ASTNode* ASTNewIndex(ASTNode* target, ASTNode* index);
+ASTNode* ASTNewIndexAssign(ASTNode* target, ASTNode* index, ASTNode* value);
 ASTNode* ASTNewArrayLenExpr(ASTNode* target);
 ASTNode* ASTNewCall(const char* name, int len, ASTNode** args, int arg_count);
 ASTNode* ASTNewBlock(ASTNode** stmts, int count);

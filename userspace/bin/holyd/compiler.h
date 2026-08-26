@@ -6,6 +6,7 @@
 
 typedef enum {
     BC_PUSH_INT,
+    BC_PUSH_FLOAT,
     BC_PUSH_STRING,
     BC_LOAD,
     BC_DEFINE,
@@ -24,6 +25,7 @@ typedef enum {
     BC_MAKE_ARRAY,
     BC_ARRAY_LEN,
     BC_ARRAY_GET,
+    BC_ARRAY_SET,
     BC_JUMP,
     BC_JUMP_IF_FALSE,
     BC_CALL,
@@ -34,6 +36,7 @@ typedef enum {
 typedef struct {
     BytecodeOp op;
     long long i64;
+    double f64;
     const char* text;
     int text_len;
     int operand;

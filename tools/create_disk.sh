@@ -15,14 +15,15 @@ mkdir -p "$(dirname "$IMG")"
 # second spelling to keep in sync with the kernel's hardcoded paths.
 payloads=(
 	"rootfs/readme.txt::readme.txt"
-	"rootfs/holyd/array.hd::holyd/array.hd"
-	"rootfs/holyd/conditionals.hd::holyd/conditionals.hd"
-	"rootfs/holyd/strings.hd::holyd/strings.hd"
-	"rootfs/holyd/hello.hd::holyd/hello.hd"
-	"rootfs/holyd/math.hd::holyd/math.hd"
-	"rootfs/holyd/functions.hd::holyd/functions.hd"
-	"rootfs/holyd/no_semis.hd::holyd/no_semis.hd"
-	"rootfs/holyd/holyc_d_style.hd::holyd/holyc_d_style.hd"
+
+	"rootfs/holyd/array.hd::holyd/tests/array.hd"
+	"rootfs/holyd/conditionals.hd::holyd/tests/conditionals.hd"
+	"rootfs/holyd/strings.hd::holyd/tests/strings.hd"
+	"rootfs/holyd/hello.hd::holyd/tests/hello.hd"
+	"rootfs/holyd/math.hd::holyd/tests/math.hd"
+	"rootfs/holyd/functions.hd::holyd/tests/functions.hd"
+	"rootfs/holyd/no_semis.hd::holyd/tests/no_semis.hd"
+	"rootfs/holyd/holyc_d_style.hd::holyd/tests/holyc_d_style.hd"
 
 	"rootfs/music/beethoven.wav::music/beethoven.wav"
 

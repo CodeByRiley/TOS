@@ -1,7 +1,7 @@
 #include "parser.h"
-#include <include/stdlib.h>
-#include <include/stdio.h>
-#include <include/string.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
 
 static ASTNode* ParseExpression(Parser* parser);
 static ASTNode* ParseStatement(Parser* parser);
@@ -82,6 +82,7 @@ static int is_type_token(TokenType type) {
 static Token consume_type(Parser* parser) {
     Token type_token = parser->current;
     if (!is_type_token(type_token.type)) {
+        parser->had_error = 1;
         printf("Parse error: Expected type on line %d\n", parser->lexer.line);
         return type_token;
     }
@@ -89,6 +90,7 @@ static Token consume_type(Parser* parser) {
     advance(parser);
     while (match(parser, TOKEN_LBRACKET)) {
         if (!match(parser, TOKEN_RBRACKET)) {
+            parser->had_error = 1;
             printf("Parse error: Expected ']' after array type on line %d\n", parser->lexer.line);
             break;
         }
@@ -118,6 +120,32 @@ static ASTNode* ParseNumber(Parser* parser) {
         val = val * base + digit;
     }
     return ASTNewNumber(val);
+}
+
+static ASTNode* ParseFloat(Parser* parser) {
+    /* No strtod in freestanding. The lexer already guaranteed the shape
+     * `digits . digits`, so a two-pass scan over the token is enough. */
+    const char* text = parser->previous.start;
+    int length = parser->previous.length;
+
+    double val = 0.0;
+    int i = 0;
+    for (; i < length && text[i] != '.'; i++) {
+        val = val * 10.0 + (double)(text[i] - '0');
+    }
+
+    /* Accumulate the fraction as an integer and divide once. Scaling by 0.1
+     * per digit instead would fold a rounding error in at every step, so
+     * even 3.75 could miss the exactly-representable value. */
+    long long frac = 0;
+    double divisor = 1.0;
+    for (i++; i < length && divisor < 1.0e18; i++) {
+        frac = frac * 10 + (text[i] - '0');
+        divisor *= 10.0;
+    }
+    val += (double)frac / divisor;
+
+    return ASTNewFloat(val);
 }
 
 static ASTNode* ParseString(Parser* parser) {
@@ -151,7 +179,20 @@ static ASTNode* ParseCall(Parser* parser) {
 }
 
 static ASTNode* ParsePrimary(Parser* parser) {
+    /* These lex now, but no production consumes them. Name the missing
+     * feature rather than reporting a bare unexpected token. */
+    if (check(parser, TOKEN_DOTDOT) || check(parser, TOKEN_DOTDOTDOT)) {
+        int is_range = check(parser, TOKEN_DOTDOT);
+        parser->had_error = 1;
+        printf("Parse error: '%s' is not implemented on line %d "
+               "(slices, case ranges and variadics are unbuilt)\n",
+               is_range ? ".." : "...", parser->lexer.line);
+        advance(parser);
+        return NULL;
+    }
+
     if (match(parser, TOKEN_NUMBER)) return ParseNumber(parser);
+    if (match(parser, TOKEN_FLOAT)) return ParseFloat(parser);
     if (match(parser, TOKEN_STRING)) return ParseString(parser);
     if (match(parser, TOKEN_TRUE)) return ASTNewNumber(1);
     if (match(parser, TOKEN_FALSE)) return ASTNewNumber(0);
@@ -159,6 +200,7 @@ static ASTNode* ParsePrimary(Parser* parser) {
     if (match(parser, TOKEN_LPAREN)) {
         ASTNode* expr = ParseExpression(parser);
         if (!match(parser, TOKEN_RPAREN)) {
+            parser->had_error = 1;
             printf("Parse error: Expected ')' on line %d\n", parser->lexer.line);
         }
         return expr;
@@ -196,7 +238,8 @@ static ASTNode* ParsePrimary(Parser* parser) {
         return ASTNewCall("[array]", 7, elements, count);
     }
 
-    return NULL; // Error
+    parser->had_error = 1;
+    return NULL; // No production matched the current token.
 }
 
 static int token_is_identifier_text(Token token, const char* text) {
@@ -211,18 +254,27 @@ static ASTNode* ParsePostfix(Parser* parser) {
     while (node != NULL) {
         if (match(parser, TOKEN_LBRACKET)) {
             ASTNode* index = ParseExpression(parser);
+            if (check(parser, TOKEN_DOTDOT)) {
+                parser->had_error = 1;
+                printf("Parse error: array slices are not implemented on line %d\n",
+                       parser->lexer.line);
+                break;
+            }
             if (!match(parser, TOKEN_RBRACKET)) {
+                parser->had_error = 1;
                 printf("Parse error: Expected ']' on line %d\n", parser->lexer.line);
             }
             node = ASTNewIndex(node, index);
         } else if (match(parser, TOKEN_DOT)) {
             if (!match(parser, TOKEN_IDENTIFIER)) {
+                parser->had_error = 1;
                 printf("Parse error: Expected property name after '.' on line %d\n", parser->lexer.line);
                 break;
             }
             if (token_is_identifier_text(parser->previous, "length")) {
                 node = ASTNewArrayLenExpr(node);
             } else {
+                parser->had_error = 1;
                 printf("Parse error: Unknown property '%.*s' on line %d\n",
                        parser->previous.length, parser->previous.start, parser->lexer.line);
             }
@@ -234,28 +286,52 @@ static ASTNode* ParsePostfix(Parser* parser) {
     return node;
 }
 
+/* Binary precedence, tightest binding first:
+ *   ParseTerm        *  /
+ *   ParseAdditive    +  -  ~
+ *   ParseComparison  <  >  <=  >=
+ *   ParseExpression  ==  !=
+ *
+ * Comparison used to share a rung with addition, so `i < n + 1` folded to
+ * `(i < n) + 1`. Each rung now parses the tighter one on both sides. */
 static ASTNode* ParseTerm(Parser* parser) {
     ASTNode* node = ParsePostfix(parser);
     while (check(parser, TOKEN_STAR) || check(parser, TOKEN_SLASH)) {
         TokenType op = parser->current.type;
         advance(parser);
-        ASTNode* right = ParsePostfix(parser);
-        node = ASTNewBinaryOp(op, node, right);
+        node = ASTNewBinaryOp(op, node, ParsePostfix(parser));
+    }
+    return node;
+}
+
+static ASTNode* ParseAdditive(Parser* parser) {
+    ASTNode* node = ParseTerm(parser);
+    while (check(parser, TOKEN_PLUS) || check(parser, TOKEN_MINUS) ||
+           check(parser, TOKEN_TILDE)) {
+        TokenType op = parser->current.type;
+        advance(parser);
+        node = ASTNewBinaryOp(op, node, ParseTerm(parser));
+    }
+    return node;
+}
+
+static ASTNode* ParseComparison(Parser* parser) {
+    ASTNode* node = ParseAdditive(parser);
+    while (check(parser, TOKEN_LT) || check(parser, TOKEN_GT) ||
+           check(parser, TOKEN_LTEQ) || check(parser, TOKEN_GTEQ)) {
+        TokenType op = parser->current.type;
+        advance(parser);
+        node = ASTNewBinaryOp(op, node, ParseAdditive(parser));
     }
     return node;
 }
 
 static ASTNode* ParseExpression(Parser* parser) {
-    ASTNode* node = ParseTerm(parser);
-    while (check(parser, TOKEN_PLUS) || check(parser, TOKEN_MINUS) ||
-           check(parser, TOKEN_TILDE) || check(parser, TOKEN_EQEQ) ||
-           check(parser, TOKEN_NEQ) || check(parser, TOKEN_LT) ||
-           check(parser, TOKEN_GT) || check(parser, TOKEN_LTEQ) ||
-           check(parser, TOKEN_GTEQ)) {
+    ASTNode* node = ParseComparison(parser);
+    while (check(parser, TOKEN_EQEQ) || check(parser, TOKEN_NEQ)) {
         TokenType op = parser->current.type;
         advance(parser);
-        ASTNode* right = ParseTerm(parser);
-        node = ASTNewBinaryOp(op, node, right);
+        node = ASTNewBinaryOp(op, node, ParseComparison(parser));
     }
     return node;
 }
@@ -279,6 +355,22 @@ static ASTNode* ParseAssignmentExpression(Parser* parser) {
         }
         if (match(parser, TOKEN_MINUSMINUS)) {
             return make_inc_dec(expr, TOKEN_MINUSMINUS);
+        }
+    }
+
+    if (expr != NULL && expr->type == AST_INDEX) {
+        if (match(parser, TOKEN_ASSIGN)) {
+            return ASTNewIndexAssign(expr->index_target, expr->index_expr,
+                                     ParseExpression(parser));
+        }
+        /* arr[i]++ desugars to arr[i] = arr[i] + 1, which evaluates the
+         * index twice. Safe for the plain expressions the parser accepts
+         * today; revisit if indices ever gain side effects. */
+        if (match(parser, TOKEN_PLUSPLUS) || match(parser, TOKEN_MINUSMINUS)) {
+            TokenType bin_op = parser->previous.type == TOKEN_PLUSPLUS
+                                   ? TOKEN_PLUS : TOKEN_MINUS;
+            return ASTNewIndexAssign(expr->index_target, expr->index_expr,
+                                     ASTNewBinaryOp(bin_op, expr, ASTNewNumber(1)));
         }
     }
     return expr;
@@ -325,6 +417,7 @@ static ASTNode* ParseForStatement(Parser* parser) {
         if (is_type_token(parser->current.type)) {
             Token type_token = consume_type(parser);
             if (!check(parser, TOKEN_IDENTIFIER)) {
+                parser->had_error = 1;
                 printf("Parse error: Expected variable name in for initializer on line %d\n", parser->lexer.line);
                 return NULL;
             }
@@ -361,6 +454,7 @@ static ASTNode* ParseForeach(Parser* parser) {
     }
 
     if (!match(parser, TOKEN_IDENTIFIER)) {
+        parser->had_error = 1;
         printf("Parse error: Expected foreach variable on line %d\n", parser->lexer.line);
         return NULL;
     }
@@ -380,6 +474,7 @@ static ASTNode* ParseForeach(Parser* parser) {
             consume_type(parser);
         }
         if (!match(parser, TOKEN_IDENTIFIER)) {
+            parser->had_error = 1;
             printf("Parse error: Expected foreach value variable on line %d\n", parser->lexer.line);
             return NULL;
         }
@@ -395,9 +490,38 @@ static ASTNode* ParseForeach(Parser* parser) {
     return ASTNewForeach(var_name, var_len, index_name, index_len, array_expr, body);
 }
 
+/* A loop or conditional body. With braces it is a statement list; without
+ * them it is exactly one statement, as in C and HolyC.
+ *
+ * The brace used to be optional here and nothing replaced it, so the loop
+ * below ran to '}' or EOF either way: `if (c) Foo();` quietly pulled every
+ * following statement into the body. */
 static ASTNode* ParseBlock(Parser* parser) {
-    match(parser, TOKEN_LBRACE); // Consume '{'
-    skip_terminators(parser);    // NEW: Skip newlines after '{'
+    if (!match(parser, TOKEN_LBRACE)) {
+        if (match(parser, TOKEN_SEMICOLON)) {
+            return ASTNewBlock(NULL, 0); // `if (c) ;` — an empty body.
+        }
+
+        ASTNode* stmt = ParseStatement(parser);
+        if (stmt == NULL) {
+            parser->had_error = 1;
+            printf("Parse error: Expected a statement or '{' on line %d\n",
+                   parser->lexer.line);
+            return ASTNewBlock(NULL, 0);
+        }
+
+        ASTNode** only = (ASTNode**)malloc(sizeof(ASTNode*));
+        if (only == NULL) {
+            parser->had_error = 1;
+            printf("Parse error: out of memory while building a block.\n");
+            return ASTNewBlock(NULL, 0);
+        }
+
+        only[0] = stmt;
+        return ASTNewBlock(only, 1);
+    }
+
+    skip_terminators(parser);    // Skip newlines after '{'
 
     ASTNode** stmts = NULL;
     int count = 0;
@@ -410,6 +534,7 @@ static ASTNode* ParseBlock(Parser* parser) {
                 break;
             }
         } else {
+            parser->had_error = 1;
             printf("Parse error: Unexpected token '%.*s' on line %d\n",
                    parser->current.length, parser->current.start, parser->lexer.line);
             advance(parser);
@@ -417,7 +542,11 @@ static ASTNode* ParseBlock(Parser* parser) {
         skip_terminators(parser); // NEW: Skip newlines between statements in block
     }
 
-    match(parser, TOKEN_RBRACE); // Consume '}'
+    if (!match(parser, TOKEN_RBRACE)) {
+        parser->had_error = 1;
+        printf("Parse error: Expected '}' on line %d\n", parser->lexer.line);
+    }
+
     return ASTNewBlock(stmts, count);
 }
 
@@ -433,13 +562,21 @@ static ASTNode* ParseFuncDecl(Parser* parser, Token name) {
         param_lens = (int*)malloc(sizeof(int) * 8);
 
         do {
+            if (check(parser, TOKEN_DOTDOTDOT)) {
+                parser->had_error = 1;
+                printf("Parse error: variadic parameters are not implemented on line %d\n",
+                       parser->lexer.line);
+                break;
+            }
             if (!is_type_token(parser->current.type)) {
+                parser->had_error = 1;
                 printf("Parse error: Expected parameter type on line %d\n", parser->lexer.line);
                 break;
             }
             consume_type(parser);
 
             if (!match(parser, TOKEN_IDENTIFIER)) {
+                parser->had_error = 1;
                 printf("Parse error: Expected parameter name on line %d\n", parser->lexer.line);
                 break;
             }
@@ -490,6 +627,7 @@ static ASTNode* ParseStatement(Parser* parser) {
             return ParseVarDecl(parser, type_token.type, name_token);
         }
 
+        parser->had_error = 1;
         printf("Parse error: Expected identifier after type on line %d\n", parser->lexer.line);
         return NULL;
     }
@@ -522,6 +660,7 @@ static ASTNode* ParseStatement(Parser* parser) {
 
 void ParserInit(Parser* parser, const char* source) {
     LexerInit(&parser->lexer, source);
+    parser->had_error = 0;
     advance(parser); // Load the first token
 }
 
@@ -539,11 +678,18 @@ ASTNode* ParseProgram(Parser* parser) {
                 break;
             }
         } else {
+            parser->had_error = 1;
             printf("Parse error: Unexpected token '%.*s' on line %d\n",
                    parser->current.length, parser->current.start, parser->lexer.line);
             advance(parser);
         }
         skip_terminators(parser); // Skip blank lines between statements
+    }
+
+    /* Diagnostics used to print and let parsing continue, so a malformed
+     * file still produced an AST and "compiled". Fail the parse instead. */
+    if (parser->had_error) {
+        return NULL;
     }
 
     return ASTNewBlock(stmts, count);

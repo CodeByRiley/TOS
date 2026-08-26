@@ -1,7 +1,7 @@
 #include "compiler.h"
-#include <include/stdio.h>
-#include <include/stdlib.h>
-#include <include/string.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 typedef struct {
     HDProgram* program;
@@ -46,6 +46,7 @@ static Instruction make_ins(BytecodeOp op) {
     Instruction ins;
     ins.op = op;
     ins.i64 = 0;
+    ins.f64 = 0.0;
     ins.text = NULL;
     ins.text_len = 0;
     ins.operand = 0;
@@ -66,6 +67,12 @@ static int emit_text(BytecodeChunk* chunk, BytecodeOp op, const char* text, int 
 static int emit_int(BytecodeChunk* chunk, long long value) {
     Instruction ins = make_ins(BC_PUSH_INT);
     ins.i64 = value;
+    return emit(chunk, ins);
+}
+
+static int emit_float(BytecodeChunk* chunk, double value) {
+    Instruction ins = make_ins(BC_PUSH_FLOAT);
+    ins.f64 = value;
     return emit(chunk, ins);
 }
 
@@ -160,6 +167,10 @@ static void compile_expression(Compiler* compiler, BytecodeChunk* chunk, ASTNode
     switch (node->type) {
         case AST_NUMBER:
             emit_int(chunk, node->number_val);
+            break;
+
+        case AST_FLOAT:
+            emit_float(chunk, node->float_val);
             break;
 
         case AST_STRING: {
@@ -273,6 +284,16 @@ static void compile_statement(Compiler* compiler, BytecodeChunk* chunk, ASTNode*
         case AST_ASSIGN:
             compile_expression(compiler, chunk, node->initializer);
             emit_text(chunk, BC_STORE, node->var_name, node->var_name_len);
+            break;
+
+        /* Array, index, value -> BC_ARRAY_SET. Elements are reached through
+         * the shared HDValue.elements pointer, so writing through the copy
+         * on the stack updates the array held by the environment. */
+        case AST_INDEX_ASSIGN:
+            compile_expression(compiler, chunk, node->index_target);
+            compile_expression(compiler, chunk, node->index_expr);
+            compile_expression(compiler, chunk, node->initializer);
+            emit_simple(chunk, BC_ARRAY_SET);
             break;
 
         case AST_BLOCK:
@@ -436,6 +457,7 @@ static HDValue int_value(long long v) {
     HDValue value;
     value.type = VAL_INT;
     value.i64 = v;
+    value.f64 = 0.0;
     value.str = NULL;
     value.str_len = 0;
     value.elements = NULL;
@@ -451,8 +473,58 @@ static HDValue string_value(const char* s, int len) {
     return value;
 }
 
+static HDValue float_value(double v) {
+    HDValue value = int_value(0);
+    value.type = VAL_FLOAT;
+    value.f64 = v;
+    return value;
+}
+
+static int is_numeric(HDValue value) {
+    return value.type == VAL_INT || value.type == VAL_FLOAT;
+}
+
+static double as_double(HDValue value) {
+    return value.type == VAL_FLOAT ? value.f64 : (double)value.i64;
+}
+
+/* printf carries no %f conversion, so build the digits here: whole part,
+ * then six rounded decimals with trailing zeros trimmed. Magnitudes past
+ * 64-bit say so instead of overflowing the cast. */
+void HDPrintDouble(double value) {
+    if (value != value) {
+        printf("nan");
+        return;
+    }
+    if (value < 0.0) {
+        printf("-");
+        value = -value;
+    }
+    if (value >= 9.0e18) {
+        printf("<out of range>");
+        return;
+    }
+
+    long long whole = (long long)value;
+    long long frac = (long long)((value - (double)whole) * 1000000.0 + 0.5);
+    if (frac >= 1000000) {
+        whole++;
+        frac -= 1000000;
+    }
+
+    char digits[24];
+    snprintf(digits, sizeof(digits), "%06lld", frac);
+
+    int last = 5;
+    while (last > 0 && digits[last] == '0') last--;
+    digits[last + 1] = '\0';
+
+    printf("%lld.%s", whole, digits);
+}
+
 static int value_truthy(HDValue value) {
     if (value.type == VAL_INT) return value.i64 != 0;
+    if (value.type == VAL_FLOAT) return value.f64 != 0.0;
     if (value.type == VAL_STRING) return value.str_len != 0;
     if (value.type == VAL_ARRAY) return value.array_len != 0;
     return 0;
@@ -490,8 +562,10 @@ static void print_value(HDValue value) {
             print_value(value.elements[i]);
         }
         printf("]");
+    } else if (value.type == VAL_FLOAT) {
+        HDPrintDouble(value.f64);
     } else {
-        printf("%d", (int)value.i64);
+        printf("%lld", value.i64);
     }
 }
 
@@ -649,6 +723,10 @@ static int run_chunk(VM* vm, BytecodeChunk* chunk, Environment* env, HDValue* ou
                 if (!push_value(stack, &sp, int_value(ins->i64))) return 0;
                 break;
 
+            case BC_PUSH_FLOAT:
+                if (!push_value(stack, &sp, float_value(ins->f64))) return 0;
+                break;
+
             case BC_PUSH_STRING:
                 if (!push_value(stack, &sp, string_value(ins->text, ins->text_len))) return 0;
                 break;
@@ -684,10 +762,39 @@ static int run_chunk(VM* vm, BytecodeChunk* chunk, Environment* env, HDValue* ou
             case BC_LE:
             case BC_GE:
                 if (!pop_value(stack, &sp, &right) || !pop_value(stack, &sp, &left)) return 0;
-                if (left.type != VAL_INT || right.type != VAL_INT) {
-                    printf("Runtime error: numeric operator used on non-integer value.\n");
+                if (!is_numeric(left) || !is_numeric(right)) {
+                    printf("Runtime error: numeric operator used on a non-numeric value.\n");
                     return 0;
                 }
+
+                /* A float on either side promotes both, as in C. Comparisons
+                 * still yield an int so the jump ops stay integer-only. */
+                if (left.type == VAL_FLOAT || right.type == VAL_FLOAT) {
+                    double a = as_double(left);
+                    double b = as_double(right);
+                    switch (ins->op) {
+                        case BC_ADD: value = float_value(a + b); break;
+                        case BC_SUB: value = float_value(a - b); break;
+                        case BC_MUL: value = float_value(a * b); break;
+                        case BC_DIV:
+                            if (b == 0.0) {
+                                printf("Runtime error: division by zero.\n");
+                                return 0;
+                            }
+                            value = float_value(a / b);
+                            break;
+                        case BC_EQ: value = int_value(a == b); break;
+                        case BC_NE: value = int_value(a != b); break;
+                        case BC_LT: value = int_value(a < b); break;
+                        case BC_GT: value = int_value(a > b); break;
+                        case BC_LE: value = int_value(a <= b); break;
+                        case BC_GE: value = int_value(a >= b); break;
+                        default: value = int_value(0); break;
+                    }
+                    if (!push_value(stack, &sp, value)) return 0;
+                    break;
+                }
+
                 switch (ins->op) {
                     case BC_ADD: value = int_value(left.i64 + right.i64); break;
                     case BC_SUB: value = int_value(left.i64 - right.i64); break;
@@ -753,6 +860,18 @@ static int run_chunk(VM* vm, BytecodeChunk* chunk, Environment* env, HDValue* ou
                 if (!push_value(stack, &sp, left.elements[right.i64])) return 0;
                 break;
 
+            case BC_ARRAY_SET:
+                if (!pop_value(stack, &sp, &value) ||
+                    !pop_value(stack, &sp, &right) ||
+                    !pop_value(stack, &sp, &left)) return 0;
+                if (left.type != VAL_ARRAY || right.type != VAL_INT ||
+                    right.i64 < 0 || right.i64 >= left.array_len) {
+                    printf("Runtime error: invalid array assignment.\n");
+                    return 0;
+                }
+                left.elements[right.i64] = value;
+                break;
+
             case BC_JUMP:
                 ip = ins->operand;
                 break;
@@ -799,6 +918,7 @@ int HDRunProgram(HDProgram* program) {
 static const char* op_name(BytecodeOp op) {
     switch (op) {
         case BC_PUSH_INT: return "PUSH_INT";
+        case BC_PUSH_FLOAT: return "PUSH_FLOAT";
         case BC_PUSH_STRING: return "PUSH_STRING";
         case BC_LOAD: return "LOAD";
         case BC_DEFINE: return "DEFINE";
@@ -817,6 +937,7 @@ static const char* op_name(BytecodeOp op) {
         case BC_MAKE_ARRAY: return "MAKE_ARRAY";
         case BC_ARRAY_LEN: return "ARRAY_LEN";
         case BC_ARRAY_GET: return "ARRAY_GET";
+        case BC_ARRAY_SET: return "ARRAY_SET";
         case BC_JUMP: return "JUMP";
         case BC_JUMP_IF_FALSE: return "JUMP_IF_FALSE";
         case BC_CALL: return "CALL";
@@ -832,7 +953,10 @@ static void dump_chunk(const char* name, BytecodeChunk* chunk) {
         Instruction* ins = &chunk->code[i];
         printf("%04d %-14s", i, op_name(ins->op));
         if (ins->op == BC_PUSH_INT) {
-            printf(" %d", (int)ins->i64);
+            printf(" %lld", ins->i64);
+        } else if (ins->op == BC_PUSH_FLOAT) {
+            printf(" ");
+            HDPrintDouble(ins->f64);
         } else if (ins->op == BC_PUSH_STRING) {
             printf(" \"%.*s\"", ins->text_len, ins->text);
         } else if (ins->op == BC_LOAD || ins->op == BC_DEFINE ||

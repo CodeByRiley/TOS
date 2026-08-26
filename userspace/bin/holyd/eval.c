@@ -1,7 +1,7 @@
 #include "eval.h"
-#include <include/stdio.h>
-#include <include/stdlib.h>
-#include <include/string.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 void EnvInit(Environment* env) {
     env->head = NULL;
@@ -79,6 +79,11 @@ static HDValue EvalExpression(ASTNode* node, Environment* env) {
             val.i64 = node->number_val;
             break;
 
+        case AST_FLOAT:
+            val.type = VAL_FLOAT;
+            val.f64 = node->float_val;
+            break;
+
         case AST_STRING:
             val.type = VAL_STRING;
             val.str = node->string_val;
@@ -109,6 +114,27 @@ static HDValue EvalExpression(ASTNode* node, Environment* env) {
                 val.type = VAL_STRING;
                 val.str = new_str;
                 val.str_len = new_len;
+                return val;
+            }
+
+            // A float on either side promotes both, matching the VM.
+            if (left.type == VAL_FLOAT || right.type == VAL_FLOAT) {
+                double a = left.type == VAL_FLOAT ? left.f64 : (double)left.i64;
+                double b = right.type == VAL_FLOAT ? right.f64 : (double)right.i64;
+                val.type = VAL_FLOAT;
+                switch (node->op) {
+                    case TOKEN_PLUS:  val.f64 = a + b; break;
+                    case TOKEN_MINUS: val.f64 = a - b; break;
+                    case TOKEN_STAR:  val.f64 = a * b; break;
+                    case TOKEN_SLASH: val.f64 = a / b; break;
+                    case TOKEN_EQEQ:  val.type = VAL_INT; val.i64 = (a == b); break;
+                    case TOKEN_NEQ:   val.type = VAL_INT; val.i64 = (a != b); break;
+                    case TOKEN_LT:    val.type = VAL_INT; val.i64 = (a < b); break;
+                    case TOKEN_GT:    val.type = VAL_INT; val.i64 = (a > b); break;
+                    case TOKEN_LTEQ:  val.type = VAL_INT; val.i64 = (a <= b); break;
+                    case TOKEN_GTEQ:  val.type = VAL_INT; val.i64 = (a >= b); break;
+                    default: val.type = VAL_INT; val.i64 = 0; break;
+                }
                 return val;
             }
 
@@ -246,13 +272,40 @@ HDValue EvalNode(ASTNode* node, Environment* env) {
                                 printf("%c", arg.str[j]);
                             }
                         }
+                    } else if (arg.type == VAL_FLOAT) {
+                        HDPrintDouble(arg.f64);
                     } else {
-                        printf("%d", (int)arg.i64);
+                        printf("%lld", arg.i64);
                     }
                 }
             } else {
                 printf("Error: Unknown function '%.*s'\n", node->callee_len, node->callee_name);
             }
+            break;
+        }
+
+        case AST_INDEX_ASSIGN: {
+            if (node->index_target == NULL ||
+                node->index_target->type != AST_VAR_REF) {
+                printf("Error: indexed assignment needs a named array.\n");
+                break;
+            }
+
+            HDValue* array = EnvGet(env, node->index_target->var_name,
+                                    (size_t)node->index_target->var_name_len);
+            if (array == NULL || array->type != VAL_ARRAY) {
+                printf("Error: indexed assignment target is not an array.\n");
+                break;
+            }
+
+            HDValue index = EvalExpression(node->index_expr, env);
+            if (index.type != VAL_INT || index.i64 < 0 ||
+                index.i64 >= array->array_len) {
+                printf("Error: array index out of range.\n");
+                break;
+            }
+
+            array->elements[index.i64] = EvalExpression(node->initializer, env);
             break;
         }
 

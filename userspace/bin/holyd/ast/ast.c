@@ -1,10 +1,17 @@
 #include "ast.h"
-#include <include/stdlib.h>
+#include <stdlib.h>
 
 ASTNode* ASTNewNumber(long long val) {
     ASTNode* node = (ASTNode*)malloc(sizeof(ASTNode));
     node->type = AST_NUMBER;
     node->number_val = val;
+    return node;
+}
+
+ASTNode* ASTNewFloat(double val) {
+    ASTNode* node = (ASTNode*)malloc(sizeof(ASTNode));
+    node->type = AST_FLOAT;
+    node->float_val = val;
     return node;
 }
 
@@ -57,6 +64,17 @@ ASTNode* ASTNewIndex(ASTNode* target, ASTNode* index) {
     node->type = AST_INDEX;
     node->index_target = target;
     node->index_expr = index;
+    return node;
+}
+
+/* arr[index] = value. The element being written lives in index_target /
+ * index_expr; the value lands in initializer, matching AST_ASSIGN. */
+ASTNode* ASTNewIndexAssign(ASTNode* target, ASTNode* index, ASTNode* value) {
+    ASTNode* node = (ASTNode*)malloc(sizeof(ASTNode));
+    node->type = AST_INDEX_ASSIGN;
+    node->index_target = target;
+    node->index_expr = index;
+    node->initializer = value;
     return node;
 }
 
