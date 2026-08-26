@@ -1,10 +1,10 @@
 /* userspace/bin/cat/cat.c — dump one or more files to stdout.
  *
- * First binary built against musl rather than userspace/lib. It uses only
- * standard headers: no <lib/syscall.h>, no hand-declared externs. The
- * hand-rolled libc is still what every other binary links, so this one is
- * the canary for the migration — if musl's startup, stdio, or syscall layer
- * is wrong on TOS, `cat` is where it shows up first.
+ * The first binary that was built against musl rather than userspace/lib,
+ * and still the smallest one that touches startup, stdio and the syscall
+ * layer at once — so it stays the first thing to check when a musl or
+ * kernel change breaks userspace. Uses standard headers only: no
+ * <lib/syscall.h>, no hand-declared externs.
  */
 #include <stdio.h>
 #include <unistd.h>

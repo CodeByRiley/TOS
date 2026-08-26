@@ -4,10 +4,9 @@
  * string the kernel logs before powering off. Doesn't return on success.
  */
 #include <lib/syscall.h>
-#include <include/stdlib.h>
-#include <include/string.h>
-
-extern int printf(const char *, ...);
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 /* Trigger the shutdown syscall after printing a status line. */
 static void elfshutdown(int time, const char *reason) {

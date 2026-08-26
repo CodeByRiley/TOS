@@ -5,10 +5,9 @@
  * syscall doesn't return on success.
  */
 #include <lib/syscall.h>
-#include <include/stdlib.h>
-#include <include/string.h>
-
-extern int printf(const char *, ...);
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 /* Trigger the reboot syscall after printing a status line. */
 static void elfreboot(int time) {

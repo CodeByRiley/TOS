@@ -8,8 +8,7 @@
 #include <lib/syscall.h>
 #include <lib/wm.h>
 #include <include/key_codes.h>
-
-extern int printf(const char *, ...);
+#include <stdio.h>
 
 #define CURSOR_SIZE   12
 #define CURSOR_COLOR  0x00FFFFFFu

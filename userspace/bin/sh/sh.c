@@ -22,21 +22,11 @@
 #include <include/key_codes.h>
 #include <utilities/types.h>
 #include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 // #endregion INCLUDES
 
-// #region EXTERNS
-extern int    vsnprintf(char *, size_t, const char *, va_list);
-extern void  *fopen(const char *, const char *);
-extern size_t fread(void *, size_t, size_t, void *);
-extern size_t fwrite(const void *, size_t, size_t, void *);
-extern int    fclose(void *);
-extern void  *malloc(size_t);
-extern void   free(void *);
-extern size_t strlen(const char *);
-extern int    strcmp(const char *, const char *);
-extern char  *strchr(const char *, int);
-extern void  *memset(void *, int, size_t);
-// #endregion EXTERNS
 
 // #region PRINTF WRAPPER
 /* Local printf bound to the console (not stdout) so anything writing to
@@ -458,7 +448,7 @@ static int builtin_echo(int argc, char **argv) {
 
 static int builtin_write(int argc, char **argv) {
     if (argc < 3) { printf("usage: write FILE TEXT...\n"); return 1; }
-    void *fp = fopen(argv[1], "w");
+    FILE *fp = fopen(argv[1], "w");
     if (!fp) { printf("write: %s: open failed\n", argv[1]); return 1; }
     for (int i = 2; i < argc; i++) {
         if (i > 2) fwrite(" ", 1, 1, fp);

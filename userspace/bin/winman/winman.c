@@ -967,7 +967,7 @@ static int backbuffer_reserve(size_t required) {
 
   size_t capacity = pages * 4096;
   uint32_t *new_fb = (uint32_t *)mmap(0, capacity, PROT_READ | PROT_WRITE,
-                                      MAP_PRIVATE | MAP_ANONYMOUS);
+                                      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   if (new_fb == MAP_FAILED)
     return -1;
 

@@ -44,6 +44,19 @@ hit the process argument length limit. GNU `ar` supports response files, so the
 overlay writes the object list to `lib/libc.a.rsp` and invokes `ar` with
 `@lib/libc.a.rsp`.
 
+musl is the default libc for userspace. Every program under `bin/` links
+`crt1.o` + `libc.a` plus `lib/libtos.a` (the TOS-only half: winman IPC, the
+framebuffer, the console, audio, the drawing and font helpers), except:
+
+- `bin/thread` — drives TOS's own `SYS_THREAD_CREATE`/`EXIT`/`JOIN`, while
+  musl's pthreads issue Linux `clone(2)`, which the kernel does not implement.
+- `games/doom` — a vendored tree that has not been re-ported.
+- the PE builds (`*.exe`) — mingw targets, a separate toolchain entirely.
+
+Those still link the hand-rolled `userspace/lib` objects. Everything else
+should use standard headers; reach for `<lib/syscall.h>` only for calls musl
+has no name for, such as `readdir_path()` or the winman surface.
+
 The kernel now provides enough of the Linux x86_64 syscall ABI for basic static
 musl programs to run unchanged:
 

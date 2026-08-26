@@ -8,8 +8,8 @@
  * ENFORCEMENT below become worth writing.
  */
 #include <lib/syscall.h>
-
-extern int printf(const char *, ...);
+#include <stdio.h>
+#include <sys/mman.h>
 
 static int failures = 0;
 
@@ -27,7 +27,7 @@ static void test_anon(void) {
 
     size_t len = 4096 * 4;
     unsigned char *p = mmap(0, len, PROT_READ | PROT_WRITE,
-                            MAP_PRIVATE | MAP_ANONYMOUS);
+                            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     check("mmap returns a mapping", p != MAP_FAILED);
     if (p == MAP_FAILED) return;
 
@@ -48,7 +48,7 @@ static void test_anon(void) {
     /* The freed range goes on the hole list, so an identical request has
      * to come back to the same address instead of walking the arena. */
     void *again = mmap(0, len, PROT_READ | PROT_WRITE,
-                       MAP_PRIVATE | MAP_ANONYMOUS);
+                       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     check("freed VA is reused", again == (void *)p);
     if (again != MAP_FAILED) munmap(again, len);
 }
@@ -59,7 +59,7 @@ static void test_fixed(void) {
     size_t len = 4096 * 2;
     void *want = (void *)PE_IMAGE_BASE;
     void *got = mmap(want, len, PROT_READ | PROT_WRITE,
-                     MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED);
+                     MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
     check("maps at a PE ImageBase", got == want);
     if (got != want) return;
 
@@ -70,18 +70,18 @@ static void test_fixed(void) {
     /* Second claim on a live range must be refused, not silently take it:
      * a loader reads the failure as "relocate instead". */
     void *dup = mmap(want, len, PROT_READ | PROT_WRITE,
-                     MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED);
+                     MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
     check("refuses an occupied range", dup == MAP_FAILED);
 
     check("unaligned address rejected",
           mmap((void *)(PE_IMAGE_BASE + 0x800), len, PROT_READ,
-               MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED) == MAP_FAILED);
+               MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0) == MAP_FAILED);
 
     check("munmap fixed range", munmap(got, len) == 0);
 
     /* Now that it is free, the same address must be claimable again. */
     void *retry = mmap(want, len, PROT_READ | PROT_WRITE,
-                       MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED);
+                       MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
     check("re-maps after unmap", retry == want);
     if (retry != MAP_FAILED) munmap(retry, len);
 }
@@ -91,7 +91,7 @@ static void test_prot(void) {
 
     size_t len = 4096 * 3;
     unsigned char *p = mmap(0, len, PROT_READ | PROT_WRITE,
-                            MAP_PRIVATE | MAP_ANONYMOUS);
+                            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (p == MAP_FAILED) { check("setup mapping", 0); return; }
 
     p[0] = 0x42;
@@ -123,18 +123,18 @@ static void test_prot(void) {
 static void test_bad_args(void) {
     printf("argument validation\n");
 
-    check("zero length", mmap(0, 0, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS)
+    check("zero length", mmap(0, 0, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0)
                              == MAP_FAILED);
     check("no PROT_READ", mmap(0, 4096, PROT_EXEC,
-                               MAP_PRIVATE | MAP_ANONYMOUS) == MAP_FAILED);
+                               MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) == MAP_FAILED);
     check("bogus prot bits", mmap(0, 4096, 0x40,
-                                  MAP_PRIVATE | MAP_ANONYMOUS) == MAP_FAILED);
+                                  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) == MAP_FAILED);
     check("kernel-half address refused",
           mmap((void *)0xFFFF800000000000ULL, 4096, PROT_READ,
-               MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED) == MAP_FAILED);
+               MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0) == MAP_FAILED);
     check("null page refused",
           mmap((void *)0, 4096, PROT_READ,
-               MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED) == MAP_FAILED);
+               MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0) == MAP_FAILED);
     check("munmap unaligned", munmap((void *)1, 4096) != 0);
 }
 
@@ -189,7 +189,7 @@ static void test_shmem_unshare(void) {
     check("get_pid for self", self > 0);
 
     unsigned char *page = mmap(0, 4096, PROT_READ | PROT_WRITE,
-                               MAP_PRIVATE | MAP_ANONYMOUS);
+                               MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (page == MAP_FAILED) { check("setup mapping", 0); return; }
     page[0] = 0x5A;
 

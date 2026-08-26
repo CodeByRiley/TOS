@@ -100,7 +100,7 @@ extern size_t strlen(const char *);
 extern int strcmp(const char *, const char *);
 extern void *malloc(size_t);
 extern void free(void *);
-extern int printf(const char *, ...);
+#include <stdio.h>
 
 /* Forward decls — used by helpers that appear before their definitions
  * because GEOMETRY + DRAG sit ahead of the helper bag. */

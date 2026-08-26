@@ -30,6 +30,7 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <signal.h>
+#include <sys/mman.h>
 #endif
 
 /* ---------------- System-call numbers -----------------------------------
@@ -146,7 +147,12 @@
  *     as completely inaccessible, so PROT_NONE is still an error.
  *
  * Mappings are always anonymous, private, and zero-filled. There is no
- * file-backed mapping: map the range, then read() into it. */
+ * file-backed mapping: map the range, then read() into it.
+ *
+ * musl's <sys/mman.h> defines the same names with the same values, so a
+ * musl-linked translation unit takes them from there and redefining them
+ * here is pure -Wmacro-redefined noise. */
+#ifndef TOS_USE_MUSL
 #define PROT_NONE       0x0
 #define PROT_READ       0x1
 #define PROT_WRITE      0x2
@@ -158,6 +164,7 @@
 #define MAP_ANON        MAP_ANONYMOUS
 
 #define MAP_FAILED      ((void *)-1)
+#endif
 
 /* ---------------- File metadata (SYS_STAT / SYS_FSTAT) ------------------ */
 /* Byte-for-byte mirror of kernel struct stat_user. libc's POSIX struct

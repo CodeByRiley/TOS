@@ -1,5 +1,5 @@
-#include <lib/syscall.h>
 #include <stddef.h>
+#include <sys/mman.h>
 
 // 512 Megabytes!
 // If the kernel eagerly allocated this, it would immediately run out of RAM and panic.
@@ -8,7 +8,8 @@
 int main() {
     // Ask the kernel for 512MB of memory.
     // With demand paging, this returns instantly using 0 bytes of physical RAM.
-    char *huge_mem = mmap(0, HUGE_SIZE, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE);
+    char *huge_mem = mmap(0, HUGE_SIZE, PROT_READ | PROT_WRITE,
+                          MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
 
     if (huge_mem == MAP_FAILED) {
         return 1; // Failed to get virtual address space

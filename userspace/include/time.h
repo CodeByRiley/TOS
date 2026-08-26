@@ -9,10 +9,19 @@
  * `-rtc base=localtime` switches it.
  *
  * Implementations: lib/time_stub.c (time, clock_gettime, civil conversion).
- * musl-linked binaries get the real <time.h> instead of this one.
+ *
+ * A musl-linked binary gets time_t, struct timespec, time() and
+ * clock_gettime() from the real <time.h>; redeclaring them here would be a
+ * struct redefinition, so only the TOS-only calendar helper below survives.
+ * Such a binary still has to reach this header by its full path
+ * (<include/time.h>) because a plain <time.h> resolves to musl's.
  */
 #ifndef TIME_H
 #define TIME_H
+
+#ifdef TOS_USE_MUSL
+#include <time.h>
+#else
 
 #include <stddef.h>
 
@@ -34,6 +43,8 @@ time_t time(time_t *t);
 /* 0 on success, -1 on a bad clock id or pointer. CLOCK_MONOTONIC is uptime;
  * CLOCK_REALTIME is wall clock. */
 int clock_gettime(int clock_id, struct timespec *ts);
+
+#endif /* TOS_USE_MUSL */
 
 /* Broken-down calendar time, in whatever zone the RTC is keeping. Fields
  * follow the obvious ranges rather than struct tm's offsets — year is

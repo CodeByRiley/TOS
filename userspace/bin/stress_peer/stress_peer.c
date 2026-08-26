@@ -1,6 +1,6 @@
 /* Shared-memory verifier used by stress.elf. */
-#include <include/stdio.h>
-#include <include/stdlib.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <lib/syscall.h>
 #include <stdint.h>
 

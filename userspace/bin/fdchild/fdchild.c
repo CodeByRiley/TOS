@@ -1,8 +1,9 @@
-#include <include/stdio.h>
-#include <lib/syscall.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <unistd.h>
 
 int main(void) {
-    int fd = (int)open("readme.txt", 0);
+    int fd = open("readme.txt", O_RDONLY);
     printf("fdchild: open returned fd=%d\n", fd);
 
     if (fd >= 0)

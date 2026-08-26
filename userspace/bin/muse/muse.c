@@ -1,8 +1,8 @@
 /* userspace/bin/muse/muse.c - streaming PCM WAV media player. */
 #include <include/key_codes.h>
-#include <include/stdio.h>
-#include <include/stdlib.h>
-#include <include/string.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <lib/gfx.h>
 #include <lib/syscall.h>
 #include <lib/ui.h>

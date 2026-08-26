@@ -1,7 +1,8 @@
 /* Heavy in-guest regression test for VM, FAT, IPC, Winman and task churn. */
-#include <include/fcntl.h>
-#include <include/stdio.h>
-#include <include/string.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/mman.h>
 #include <lib/syscall.h>
 #include <lib/wm.h>
 #include <stdint.h>
@@ -50,7 +51,7 @@ static int memory_stress(void) {
             size_t pages = (size_t)slot + 1;
             size_t length = pages * PAGE_SIZE;
             uint64_t *mapping = mmap(0, length, PROT_READ | PROT_WRITE,
-                                     MAP_PRIVATE | MAP_ANONYMOUS);
+                                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
             if (mapping == MAP_FAILED) {
                 check(0, "mmap during VM churn");
                 return -1;
@@ -109,7 +110,7 @@ static int file_stress(void) {
         for (size_t i = 0; i < sizeof(file_buffer); i++)
             file_buffer[i] = (uint8_t)(round * 17 + (int)i * 29);
 
-        int fd = (int)open(path, O_RDWR | O_CREAT | O_TRUNC);
+        int fd = open(path, O_RDWR | O_CREAT | O_TRUNC, 0644);
         if (fd < 0) {
             check(0, "open stress file");
             return -1;
@@ -187,7 +188,7 @@ static int shmem_stress(void) {
         int pages = 1 + (round & 7);
         size_t length = (size_t)pages * PAGE_SIZE;
         uint64_t *owner = mmap(0, length, PROT_READ | PROT_WRITE,
-                               MAP_PRIVATE | MAP_ANONYMOUS);
+                               MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         if (owner == MAP_FAILED) {
             check(0, "allocate shared-memory owner pages");
             break;

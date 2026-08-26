@@ -1,8 +1,7 @@
 /* Exercise the PCM syscall surface with one second of a quiet square wave. */
 #include <lib/syscall.h>
 #include <stdint.h>
-
-extern int printf(const char *, ...);
+#include <stdio.h>
 
 #define TEST_RATE   22050U
 #define TEST_HZ       440U

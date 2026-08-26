@@ -7,6 +7,11 @@
 #include <include/time.h>
 #include <lib/syscall.h>
 
+/* musl implements both of these against the same kernel calls. Only
+ * time_to_calendar() below is TOS's own, so that is all a musl-linked
+ * binary picks up from this file (via libtos.a). */
+#ifndef TOS_USE_MUSL
+
 int clock_gettime(int clock_id, struct timespec *ts) {
     if (!ts)
         return -1;
@@ -22,6 +27,8 @@ time_t time(time_t *t) {
         *t = v;
     return v;
 }
+
+#endif /* TOS_USE_MUSL */
 
 /* Inverse of the kernel's days_from_civil. Shifts the year to start in March
  * so February's variable length falls at the end of the 400-year cycle and no
