@@ -1,5 +1,17 @@
 #!/usr/bin/env python3
-"""Boot TOS and verify bare commands resolve through the default PATH."""
+"""Boot TOS and verify bare commands resolve through the default PATH.
+
+Two lookups, one per directory that actually holds binaries: `hello` from
+/usr/bin and `ls` from /system/bin.
+
+This used to list /bin, which stopped existing when 8320fab moved every
+binary out of it during the musl migration -- sh, ls, cat, shutdown,
+reboot, pkill and holyd all went to /system/bin. By then the assertion had
+nothing to do with PATH: it was checking the contents of a directory that
+was no longer created, while its failure message blamed PATH resolution.
+/bin and /usr/local/bin are still named in the shell's DEFAULT_EXEC_PATH
+and still do not exist, which is harmless but is why the original premise
+looked reasonable."""
 
 from __future__ import annotations
 
@@ -78,10 +90,15 @@ def main() -> int:
             print("PATH did not resolve hello from /usr/bin", file=sys.stderr)
             return 1
 
-        send_text(qmp, "ls /bin\n")
+        # ls lives in /system/bin, so finding it at all exercises the last
+        # PATH component; listing that directory then proves the lookup
+        # landed on a real path rather than succeeding by accident.
+        send_text(qmp, "ls /system/bin\n")
         if not wait_for_text(log_path, "shutdown.elf", deadline):
             print(log_path.read_text(encoding="utf-8", errors="replace"))
-            print("PATH did not resolve ls from /bin", file=sys.stderr)
+            print("ls did not list /system/bin -- either PATH failed to "
+                  "resolve ls, or the disk layout in tools/create_disk.sh "
+                  "moved shutdown.elf again", file=sys.stderr)
             return 1
 
         log = log_path.read_text(encoding="utf-8", errors="replace")
@@ -90,7 +107,7 @@ def main() -> int:
             print("kernel panic detected", file=sys.stderr)
             return 1
 
-        print("default PATH resolved /bin and /usr/bin commands")
+        print("default PATH resolved /usr/bin and /system/bin commands")
         return 0
     finally:
         if qmp is not None:
