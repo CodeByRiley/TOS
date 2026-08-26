@@ -10,18 +10,19 @@
 #ifndef PANIC_H
 #define PANIC_H
 
+#include "utilities/types.h"
 #include <utilities/symtab.h>
 #include <devices/io.h>
 
 struct interrupt_frame;
 
 /* Never returns. Prefer the panic() macro so the call site fills itself in. */
-__attribute__((noreturn))
+NORETURN
 void panic_at(const char *msg, const char *file, int line, const char *func);
 
 /* Fatal CPU exception entry. The IDT recovery path handles recoverable probe
  * faults before calling this, so this function never returns. */
-__attribute__((noreturn))
+NORETURN
 void panic_from_exception(const char *name,
                           const struct interrupt_frame *frame,
                           uint64_t fault_address,

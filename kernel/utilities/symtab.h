@@ -1,6 +1,7 @@
 #ifndef TOS_UTILITIES_SYMTAB_H
 #define TOS_UTILITIES_SYMTAB_H
 
+#include "utilities/types.h"
 #include <stddef.h>
 #include <stdint.h>
 
@@ -26,8 +27,8 @@ struct ksym {
  * at 0 and makes symtab_resolve() return NULL before it can dereference the
  * null table. Pass two links the generated definitions in and they win.
  */
-extern const struct ksym __ksymtab[] __attribute__((weak));
-extern const size_t __ksymtab_count __attribute__((weak));
+extern const struct ksym __ksymtab[] WEAK;
+extern const size_t __ksymtab_count WEAK;
 
 /*
  * Resolve a virtual address to the nearest preceding function symbol.

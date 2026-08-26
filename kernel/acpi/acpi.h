@@ -9,6 +9,7 @@
 #ifndef ACPI_H
 #define ACPI_H
 
+#include "utilities/types.h"
 #include <stdint.h>
 
 /* Signatures used to locate the four tables we care about. RSDP's
@@ -19,7 +20,7 @@
 #define ACPI_SIG_APIC "APIC"            /* MADT signature */
 
 /* ACPI 1.0 Root System Description Pointer (20 bytes). */
-struct __attribute__((packed)) acpi_rsdp_v1 {
+struct PACKED acpi_rsdp_v1 {
     char     signature[8];
     uint8_t  checksum;
     char     oem_id[6];
@@ -28,7 +29,7 @@ struct __attribute__((packed)) acpi_rsdp_v1 {
 };
 
 /* ACPI 2.0+ RSDP (36 bytes; embeds v1 followed by extended fields). */
-struct __attribute__((packed)) acpi_rsdp_v2 {
+struct PACKED acpi_rsdp_v2 {
     struct acpi_rsdp_v1 v1;
     uint32_t length;
     uint64_t xsdt_phys;
@@ -37,7 +38,7 @@ struct __attribute__((packed)) acpi_rsdp_v2 {
 };
 
 /* Header common to every SDT. `length` covers the header + variable body. */
-struct __attribute__((packed)) acpi_sdt_header {
+struct PACKED acpi_sdt_header {
     char     signature[4];
     uint32_t length;
     uint8_t  revision;
@@ -50,7 +51,7 @@ struct __attribute__((packed)) acpi_sdt_header {
 };
 
 /* Multiple APIC Description Table — enumerates LAPICs / IOAPICs. */
-struct __attribute__((packed)) acpi_madt {
+struct PACKED acpi_madt {
     struct acpi_sdt_header h;
     uint32_t lapic_phys;                /* default LAPIC MMIO base */
     uint32_t flags;                     /* bit 0: legacy PIC present */
@@ -66,7 +67,7 @@ struct __attribute__((packed)) acpi_madt {
 #define MADT_TYPE_LOCAL_X2APIC      9
 
 /* One CPU's LAPIC entry inside MADT. */
-struct __attribute__((packed)) madt_entry_local_apic {
+struct PACKED madt_entry_local_apic {
     uint8_t  type;                      /* = 0 */
     uint8_t  length;                    /* = 8 */
     uint8_t  acpi_processor_id;

@@ -601,8 +601,6 @@ struct gfx_surface framebuffer_get_gfx_surface(void) {
   // gfx_surface.stride expects pixels per row.
   s.stride = framebuffer_pitch() / sizeof(uint32_t);
 
-  // Assuming gfx_rect is defined as {x, y, w, h}.
-  // Set the clip to the full screen bounds.
   s.clip.x = 0;
   s.clip.y = 0;
   s.clip.w = s.w;

@@ -1,6 +1,9 @@
 #ifndef PE_H
 #define PE_H
 
+
+/* PACKED and friends. */
+#include <utilities/types.h>
 #include <stdint.h>
 
 /**
@@ -15,7 +18,7 @@
  *
  * The structure is packed to match its on-disk layout exactly.
  */
-struct __attribute__((packed)) IMAGE_DOS_HEADER {
+struct PACKED IMAGE_DOS_HEADER {
     uint16_t e_magic;      ///< Magic number: 0x5A4D (ASCII "MZ").
     uint16_t e_cblp;       ///< Bytes on last page of file.
     uint16_t e_cp;         ///< Pages in file.
@@ -45,7 +48,7 @@ struct __attribute__((packed)) IMAGE_DOS_HEADER {
  * @ref IMAGE_NT_HEADERS64. It is roughly analogous to the metadata
  * portion of an ELF `Elf64_Ehdr`.
  */
-struct __attribute__((packed)) IMAGE_FILE_HEADER {
+struct PACKED IMAGE_FILE_HEADER {
     uint16_t machine;              ///< Target machine type (e.g. 0x8664 for x64).
     uint16_t numberOfSections;     ///< Number of entries in the section table (Phdr-equivalents).
     uint32_t timeDateStamp;        ///< Time & date the image was created (Unix-style stamp).
@@ -62,7 +65,7 @@ struct __attribute__((packed)) IMAGE_FILE_HEADER {
  * resources, etc.) within the image by giving its Relative Virtual
  * Address (RVA) and size in bytes.
  */
-struct __attribute__((packed)) IMAGE_DATA_DIRECTORY {
+struct PACKED IMAGE_DATA_DIRECTORY {
     uint32_t virtualAddress; ///< RVA of the table/data.
     uint32_t size;           ///< Size of the table/data, in bytes.
 };
@@ -77,7 +80,7 @@ struct __attribute__((packed)) IMAGE_DATA_DIRECTORY {
  *
  * Total size: 240 bytes.
  */
-struct __attribute__((packed)) IMAGE_OPTIONAL_HEADER64 {
+struct PACKED IMAGE_OPTIONAL_HEADER64 {
     uint16_t magic;                       ///< Magic: 0x20B identifies PE32+ (64-bit).
     uint8_t  majorLinkerVersion;          ///< Major version of the linker.
     uint8_t  minorLinkerVersion;          ///< Minor version of the linker.
@@ -121,7 +124,7 @@ struct __attribute__((packed)) IMAGE_OPTIONAL_HEADER64 {
  *
  * This is the conceptual equivalent of `Elf64_Ehdr` for the PE format.
  */
-struct __attribute__((packed)) IMAGE_NT_HEADERS64 {
+struct PACKED IMAGE_NT_HEADERS64 {
     uint32_t signature;                         ///< PE signature: 0x00004550 (ASCII "PE\0\0").
     struct IMAGE_FILE_HEADER fileHeader;        ///< COFF file header.
     struct IMAGE_OPTIONAL_HEADER64 optionalHeader; ///< PE32+ optional header.
@@ -137,7 +140,7 @@ struct __attribute__((packed)) IMAGE_NT_HEADERS64 {
  *
  * Total size: 40 bytes.
  */
-struct __attribute__((packed)) IMAGE_SECTION_HEADER {
+struct PACKED IMAGE_SECTION_HEADER {
     uint8_t  name[8];                  ///< Null-padded section name (e.g. ".text", ".data").
     uint32_t virtualSize;              ///< Size of the section in memory (analogous to p_memsz).
     uint32_t virtualAddress;           ///< RVA of the section in memory (add imageBase for a full VA).

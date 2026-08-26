@@ -10,7 +10,7 @@ typedef volatile uint32_t pthread_mutex_t;
 typedef int pthread_attr_t;
 typedef int pthread_mutexattr_t;
 
-// We need to keep track of the stack bases so pthread_join can free them.
+/* Stack records retained until join. */
 struct thread_node {
     long tid;
     void *stack_base;

@@ -88,8 +88,8 @@ void netmon_record(int direction, const void *frame, uint32_t length);
 long netmon_read_stats(struct netmon_stats_user *out);
 
 /* Copies frames from *cursor onward, advancing it past what was returned.
- * A cursor behind the ring jumps forward to the oldest frame still held;
- * compare out[0].seq against the cursor you passed to detect that. */
+ * A cursor behind the ring jumps to the oldest frame still held. Compare
+ * out[0].seq with the input cursor to detect the jump. */
 long netmon_read_frames(uint64_t *cursor, struct netmon_frame_user *out,
                         long max);
 

@@ -1,6 +1,9 @@
 #ifndef PCI_MCFG_H
 #define PCI_MCFG_H
 
+
+/* PACKED and friends. */
+#include <utilities/types.h>
 #include <acpi/acpi.h>
 #include <stdint.h>
 
@@ -8,12 +11,12 @@
 #define PCI_MCFG_MAX_RANGES 16
 
 /* The MCFG fixed body is followed by one or more allocation entries. */
-struct __attribute__((packed)) acpi_mcfg {
+struct PACKED acpi_mcfg {
     struct acpi_sdt_header h;
     uint64_t reserved;
 };
 
-struct __attribute__((packed)) acpi_mcfg_allocation {
+struct PACKED acpi_mcfg_allocation {
     uint64_t base_phys;
     uint16_t segment;
     uint8_t  start_bus;

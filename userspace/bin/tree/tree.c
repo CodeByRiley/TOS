@@ -26,8 +26,7 @@ static int printf(const char *fmt, ...) {
 }
 
 static void print_tree(const char *path, const char *prefix) {
-    // Allocate arrays to hold directory entries so we can look ahead
-    // and know which entry is the last one (for proper branch drawing).
+    /* Buffer entries to identify the final branch. */
     char (*names)[NAME_MAX_LEN] = malloc(MAX_ENTRIES * NAME_MAX_LEN);
     int  *is_dir = malloc(MAX_ENTRIES * sizeof(int));
 
@@ -77,7 +76,6 @@ static void print_tree(const char *path, const char *prefix) {
     for (int i = 0; i < count; i++) {
         int is_last = (i == count - 1);
 
-        // Print the prefix and the branch
         printf("%s%s%s\n", prefix, is_last ? "`-- " : "|-- ", names[i]);
 
         if (is_dir[i]) {

@@ -27,6 +27,7 @@
  * clients means one busy app decides the whole desktop's frame rate.
  * Scheduling is weighted, not strict — see SCHED_HIGH_BURST — so a spinning
  * HIGH task slows the system down instead of wedging it. */
+#include "utilities/types.h"
 #define SCHED_PRIO_NORMAL 0
 #define SCHED_PRIO_HIGH   1
 #define SCHED_PRIO_LEVELS 2
@@ -149,7 +150,7 @@ struct task {
 
   /* x87 + SSE state saved/restored on context switch. 16-byte aligned per
    * fxsave's hardware contract. */
-  uint8_t fxstate[512] __attribute__((aligned(16)));
+  uint8_t fxstate[512] ALIGNED(16);
 
   /* Human-readable task name (basename of ELF path for user tasks, hard-
    * coded for kthreads). Used by btop and other introspection consumers. */
@@ -222,8 +223,8 @@ void sched_preempt_tick(void);
 void task_block(int waiting_for_pid);
 void task_wakeup(struct task *t);
 int task_wake_futex(uint64_t phys);
-void task_exit(long code) __attribute__((noreturn));
-void task_exit_thread(void) __attribute__((noreturn));
+void task_exit(long code) NORETURN;
+void task_exit_thread(void) NORETURN;
 int task_kill(int pid, long code);
 struct task *task_current(void);
 int task_set_fs_base(uint64_t base);

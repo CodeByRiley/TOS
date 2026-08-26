@@ -11,7 +11,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-struct __attribute__((packed)) elf64_header {
+struct PACKED elf64_header {
     uint8_t ident[16];
     uint16_t type;
     uint16_t machine;
@@ -28,7 +28,7 @@ struct __attribute__((packed)) elf64_header {
     uint16_t shstrndx;
 };
 
-struct __attribute__((packed)) elf64_section {
+struct PACKED elf64_section {
     uint32_t name;
     uint32_t type;
     uint64_t flags;

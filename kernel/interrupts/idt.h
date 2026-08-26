@@ -15,6 +15,9 @@
 #ifndef IDT_H
 #define IDT_H
 
+
+/* PACKED and friends. */
+#include <utilities/types.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -37,13 +40,13 @@ struct idt_entry {
     uint16_t offset_mid;    /* bits 16-31                                  */
     uint32_t offset_high;   /* bits 32-63                                  */
     uint32_t zero;
-} __attribute__((packed));
+} PACKED;
 
 /* lidt operand. */
 struct idt_ptr {
     uint16_t limit;
     uint64_t base;
-} __attribute__((packed));
+} PACKED;
 
 _Static_assert(sizeof(struct idt_entry) == 16,
                "IDT gate descriptor must be 16 bytes in long mode");

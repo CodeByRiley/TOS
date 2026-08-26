@@ -22,7 +22,6 @@ int main() {
     huge_mem[4096 * 100] = 'B';   // Touch page 100
     huge_mem[4096 * 5000] = 'C';  // Touch page 5000
 
-    // Read them back to prove the kernel mapped them correctly
     if (huge_mem[0] == 'A' &&
         huge_mem[4096 * 100] == 'B' &&
         huge_mem[4096 * 5000] == 'C') {

@@ -509,8 +509,8 @@ long  mem_stats(struct mem_stats *out);
  * whatever the ring still holds, or at stats.seq_next to begin live.
  *
  * A cursor that falls behind the ring is moved forward to the oldest
- * frame still held rather than failing; compare out[0].seq against what
- * you passed in to see how many frames were missed. */
+ * frame still held rather than failing; compare out[0].seq with the input
+ * cursor to count missed frames. */
 long  net_stats(struct net_stats *out);
 long  net_capture(uint64_t *cursor, struct net_frame *out, long max);
 

@@ -42,12 +42,12 @@ struct gpu_ctrl_hdr {
     uint64_t fence_id;
     uint32_t ctx_id;
     uint32_t padding;
-} __attribute__((packed));
+} PACKED;
 
 struct gpu_resp_display_info {
     struct gpu_ctrl_hdr hdr;
     struct virtio_gpu_display_one pmodes[VIRTIO_GPU_MAX_SCANOUTS];
-} __attribute__((packed));
+} PACKED;
 
 struct gpu_resource_create_2d {
     struct gpu_ctrl_hdr hdr;
@@ -55,27 +55,27 @@ struct gpu_resource_create_2d {
     uint32_t format;
     uint32_t width;
     uint32_t height;
-} __attribute__((packed));
+} PACKED;
 
 struct gpu_resource_unref {
     struct gpu_ctrl_hdr hdr;
     uint32_t resource_id;
     uint32_t padding;
-} __attribute__((packed));
+} PACKED;
 
 struct gpu_set_scanout {
     struct gpu_ctrl_hdr hdr;
     struct virtio_gpu_rect r;
     uint32_t scanout_id;
     uint32_t resource_id;
-} __attribute__((packed));
+} PACKED;
 
 struct gpu_resource_flush {
     struct gpu_ctrl_hdr hdr;
     struct virtio_gpu_rect r;
     uint32_t resource_id;
     uint32_t padding;
-} __attribute__((packed));
+} PACKED;
 
 struct gpu_transfer_to_host_2d {
     struct gpu_ctrl_hdr hdr;
@@ -83,13 +83,13 @@ struct gpu_transfer_to_host_2d {
     uint64_t offset;
     uint32_t resource_id;
     uint32_t padding;
-} __attribute__((packed));
+} PACKED;
 
 struct gpu_mem_entry {
     uint64_t addr;
     uint32_t length;
     uint32_t padding;
-} __attribute__((packed));
+} PACKED;
 
 /* The driver submits one command at a time. Keeping this 16 KiB coalescing
  * workspace out of the boot/task stack avoids overflowing the small kernel
@@ -100,7 +100,7 @@ struct gpu_attach_backing_hdr {
     struct gpu_ctrl_hdr hdr;
     uint32_t resource_id;
     uint32_t nr_entries;
-} __attribute__((packed));
+} PACKED;
 
 static int submit_two_buf(uint32_t req_len, uint32_t resp_len) {
     uint16_t d0 = virtq_alloc_desc(&controlq);

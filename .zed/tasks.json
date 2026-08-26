@@ -1,16 +1,18 @@
 [
-  {
+	{
     "label": "Build",
-    "command": "./tools/build.bat",
+    "command": "C:/msys64/usr/bin/bash.exe",
+    "args": ["-lc", "cd /e/Projects/Weird/TOS && ./tools/build.bat"],
     "use_new_terminal": false,
     "allow_concurrent_runs": false,
     "shell": "system",
     "show_summary": true,
     "show_command": true,
-  },
+	},
   {
     "label": "Build (Clean)",
-    "command": "./tools/build_clean.bat",
+    "command": "C:/msys64/usr/bin/bash.exe",
+    "args": ["-lc", "cd /e/Projects/Weird/TOS && ./tools/build_clean.bat"],
     "use_new_terminal": false,
     "allow_concurrent_runs": false,
     "shell": "system",
@@ -19,8 +21,8 @@
   },
   {
     "label": "Build (W/ Doom)",
-    "command": "./tools/build.bat",
-    "args": ["BUILD_DOOM=1"],
+    "command": "C:/msys64/usr/bin/bash.exe",
+    "args": ["-lc", "cd /e/Projects/Weird/TOS && ./tools/build.bat BUILD_DOOM=1"],
     "use_new_terminal": false,
     "allow_concurrent_runs": false,
     "shell": "system",
@@ -29,8 +31,8 @@
   },
   {
     "label": "Build (Clean W/ Doom)",
-    "command": "./tools/build_clean.bat",
-    "args": ["BUILD_DOOM=1"],
+    "command": "C:/msys64/usr/bin/bash.exe",
+    "args": ["-lc", "cd /e/Projects/Weird/TOS && ./tools/build_clean.bat BUILD_DOOM=1"],
     "use_new_terminal": false,
     "allow_concurrent_runs": false,
     "shell": "system",

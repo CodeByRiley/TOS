@@ -18,7 +18,7 @@
 #define MSR_GS_BASE         0xC0000101u
 #define MSR_KERNEL_GS_BASE  0xC0000102u
 
-static struct cpu_local cpus[MAX_CPUS] __attribute__((aligned(64)));
+static struct cpu_local cpus[MAX_CPUS] ALIGNED(64);
 static int              cpu_count = 1;
 
 static inline void wrmsr(uint32_t msr, uint64_t val) {

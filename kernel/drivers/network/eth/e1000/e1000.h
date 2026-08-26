@@ -1,6 +1,9 @@
 #ifndef E1000_H
 #define E1000_H
 
+
+/* PACKED and friends. */
+#include <utilities/types.h>
 #include <drivers/driver.h>
 #include <drivers/base/vendors/pci_ids.h>
 
@@ -125,24 +128,20 @@ struct e1000_dev {
   uint16_t device;
   uint16_t function;
 
-  // MMIO Base
   volatile uint8_t *mmio_base;
 
-  // RX Ring State
-  struct e1000_rx_desc *rx_ring_virt; // Used by your C code to read descriptors
-  uintptr_t rx_ring_phys;             // Given to the hardware via REG_RXDESCLO
+  struct e1000_rx_desc *rx_ring_virt;
+  uintptr_t rx_ring_phys;             // Programmed into REG_RXDESCLO.
   uintptr_t rx_buffer_phys[E1000_NUM_RX_DESC];
   void *rx_buffers[E1000_NUM_RX_DESC];
   uint32_t rx_current;
 
-  // TX Ring State
   struct e1000_tx_desc *tx_ring_virt;
   uintptr_t tx_ring_phys;
   uintptr_t tx_buffer_phys[E1000_NUM_TX_DESC];
   void *tx_buffers[E1000_NUM_TX_DESC];
   uint32_t tx_current;
 
-  // MAC Address
   uint8_t mac_addr[6];
 };
 
@@ -153,7 +152,7 @@ struct e1000_rx_desc {
   volatile uint8_t status;
   volatile uint8_t errors;
   volatile uint16_t special;
-} __attribute__((packed));
+} PACKED;
 
 struct e1000_tx_desc {
   volatile uint64_t addr;      // 0: Buffer Address
@@ -163,7 +162,7 @@ struct e1000_tx_desc {
   volatile uint8_t  status;    // 12: Status (DD bit goes here)
   volatile uint8_t  css;       // 13: Checksum Start (usually 0)
   volatile uint16_t special;   // 14: Special / VLAN tag (usually 0)
-} __attribute__((packed));
+} PACKED;
 
 void e1000_driver_init(void);
 

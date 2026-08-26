@@ -32,7 +32,7 @@ struct virtio_pci_cap_hdr {
     uint8_t  pad[3];
     uint32_t offset;
     uint32_t length;
-} __attribute__((packed));
+} PACKED;
 
 /* Map a contiguous physical MMIO range into a kernel virt slot. Round to
  * pages. Returns the kernel VA matching `phys` (preserves intra-page offset).

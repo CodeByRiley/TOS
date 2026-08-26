@@ -166,7 +166,6 @@ static void desktop_load(void) {
     icon->h = 32;
   }
 
-  /* Load Icon Images */
   for (int i = 0; i < desktop_icon_count; i++) {
     char path[64];
     snprintf(path, sizeof(path), "/system/icons/%s.bmp",
@@ -421,9 +420,7 @@ static void mark_dirty(int x, int y, int w, int h) {
   desktop_dirty = 1;
 }
 
-/* Start-button artwork. Same contract as cursor_load: a failed or absurdly
- * sized load leaves tb_start_icon_loaded at 0 and draw_taskbar falls back to
- * the built-in mask, so a missing file is cosmetic and never fatal. */
+/* Missing artwork falls back to the built-in mask. */
 static struct bmp_image tb_start_icon;
 static int tb_start_icon_loaded = 0;
 static void tb_load_start_icon(void) {
@@ -611,7 +608,6 @@ static int build_taskbar_entries(struct tb_entry *out, int max) {
     n++;
   }
 
-  /* Calculate how many characters actually fit in the button width */
   int max_chars = (TASKBAR_BTN_W - 8) / FONT_GLYPH_W;
 
   for (int i = 0; i < MAX_WINDOWS && n < max; i++) {
@@ -682,7 +678,6 @@ static int in_start_menu(int menu_x, int menu_y, int mx, int my) {
  * console is just another z-stack entry now; whichever handle is at
  * z_order[0] wins ties at the same pixel. */
 static int hit_test_at(int mx, int my, int *out_handle) {
-  /* GLOBAL UI CHECKS FIRST */
   if (start_menu_open) {
     int menu_x = 0;
     int menu_h = start_menu_count * START_MENU_ITEM_H + START_MENU_PAD * 2;
@@ -692,22 +687,18 @@ static int hit_test_at(int mx, int my, int *out_handle) {
     }
   }
 
-  /* TASKBAR CHECKS */
   if (my >= taskbar_y()) {
-    // Check Start Button
     if (mx >= 0 && mx < TASKBAR_START_W) {
       return HIT_START_BTN;
     }
-    // Check Taskbar Window Buttons
     int tb_handle = 0;
     if (hit_taskbar(mx, my, &tb_handle)) {
       *out_handle = tb_handle;
       return HIT_TASKBAR_BTN;
     }
-    return HIT_NONE; // Clicked on empty taskbar area
+    return HIT_NONE;
   }
 
-  /* WINDOW CHECKS */
   for (int i = 0; i < z_count; i++) {
     int h = z_order[i];
     if (is_minimized(h))
@@ -1258,10 +1249,7 @@ static void blit_surface(const struct window *w) {
 static void blit_icon(int dst_x, int dst_y, int dst_w, int dst_h, int src_w,
                       int src_h, uint32_t *pixels);
 
-/* Start button. Uses the on-disk artwork when it loaded, the built-in mask
- * otherwise. The icon is inset by TB_START_ICON_PAD so it doesn't run into
- * the taskbar edges, and blit_icon rescales it to whatever that leaves —
- * the source BMP does not have to match the button size. */
+/* Scale available artwork inside the padded button. */
 static void draw_start_button(int y) {
   if (!tb_start_icon_loaded) {
     draw_button_mask_large(0, y, fallback_taskbar_start_mask, PRINT_COLOR_GREEN,
@@ -1269,8 +1257,7 @@ static void draw_start_button(int y) {
     return;
   }
 
-  /* The icon has transparent pixels, so the button needs its own opaque
-   * ground rather than inheriting whatever was under the taskbar. */
+  /* Clear behind transparent icon pixels. */
   fb_fill_rect(0, y, TASKBAR_START_W, TASKBAR_PX, TASKBAR_BG);
 
   int pad = TB_START_ICON_PAD;
@@ -1401,24 +1388,20 @@ static void draw_start_menu(void) {
   int mx = 0;
   int my = taskbar_y() - menu_h;
 
-  // Background
   fb_fill_rect(mx, my, START_MENU_W, menu_h, MENU_BG);
 
-  // Simple 1px Black Border
-  fb_fill_rect(mx, my, START_MENU_W, 1, PRINT_COLOR_BLACK); // Top
+  fb_fill_rect(mx, my, START_MENU_W, 1, PRINT_COLOR_BLACK);
   fb_fill_rect(mx, my + menu_h - 1, START_MENU_W, 1,
-               PRINT_COLOR_BLACK);                    // Bottom
-  fb_fill_rect(mx, my, 1, menu_h, PRINT_COLOR_BLACK); // Left
+               PRINT_COLOR_BLACK);
+  fb_fill_rect(mx, my, 1, menu_h, PRINT_COLOR_BLACK);
   fb_fill_rect(mx + START_MENU_W - 1, my, 1, menu_h,
-               PRINT_COLOR_BLACK); // Right
+               PRINT_COLOR_BLACK);
 
-  // Draw the programs
   for (int i = 0; i < start_menu_count; i++) {
     int item_y = my + START_MENU_PAD + (i * START_MENU_ITEM_H);
     int item_x = mx + START_MENU_PAD;
     int item_w = START_MENU_W - (START_MENU_PAD * 2);
 
-    // Highlight if hovered
     uint32_t bg = (i == start_menu_hover) ? MENU_HOVER_BG : MENU_BG;
     uint32_t fg = (i == start_menu_hover) ? MENU_HOVER_FG : MENU_TEXT;
 
@@ -1818,10 +1801,7 @@ static void blit_icon(int dst_x, int dst_y, int dst_w, int dst_h, int src_w,
       uint32_t alpha = src >> 24;
       uint32_t color = src & 0x00FFFFFF;
 
-      /* Check chroma key FIRST, regardless of alpha.
-       * Because bmp.c promotes 24-bit images to alpha=255, the previous
-       * 'else' block was dead code and transparent magenta backgrounds
-       * were being drawn as solid magenta. */
+      /* Chroma key precedes alpha because 24-bit BMPs decode opaque. */
       if (color == 0x00FF00FF) {
         continue;
       }
@@ -1877,24 +1857,20 @@ static void compose(void) {
   int cx0 = clip_x, cy0 = clip_y;
   int cx1 = clip_x + clip_w, cy1 = clip_y + clip_h;
 
-  /* Draw Desktop Background (Tiled) */
   if (wallpaper_loaded) {
     int w = wallpaper_img.width;
     int h = wallpaper_img.height;
 
     for (int y = cy0; y < cy1; y++) {
-      // Get the correct source row from the wallpaper (wrapping vertically)
       uint32_t *src_row = &wallpaper_img.pixels[(y % h) * w];
       uint32_t *dst_row = fb_pix(0, y);
 
       int x = cx0;
-      // Tile horizontally across the clip box
       while (x < cx1) {
-        int col = x % w;     // where we are within the tile
-        int chunk = w - col; // rest of this tile
+        int col = x % w;
+        int chunk = w - col;
         if (x + chunk > cx1)
           chunk = cx1 - x;
-        // Fast copy of a chunk of pixels
         memcpy(dst_row + x, src_row + col, (size_t)chunk * 4);
         x += chunk;
       }
@@ -1903,35 +1879,28 @@ static void compose(void) {
     fb_fill_rect(cx0, cy0, cx1 - cx0, cy1 - cy0, DESKTOP_BG);
   }
 
-  /* Draw Desktop Icons */
   for (int i = 0; i < desktop_icon_count; i++) {
     /* Label sits under the icon, so extend the cull box downward. */
     if (!clip_hits(desktop_icons[i].x, desktop_icons[i].y, desktop_icons[i].w,
                    desktop_icons[i].h + 2 + FONT_GLYPH_H))
       continue;
     if (desktop_icons[i].loaded) {
-      // Pass target size (desktop_icons[i].w / h) and source size (img.width /
-      // height)
       blit_icon(desktop_icons[i].x, desktop_icons[i].y, desktop_icons[i].w,
                 desktop_icons[i].h, desktop_icons[i].icon.width,
                 desktop_icons[i].icon.height, desktop_icons[i].icon.pixels);
     } else {
-      // Draw a fallback grey square if the image is missing
       fb_fill_rect(desktop_icons[i].x, desktop_icons[i].y, desktop_icons[i].w,
                    desktop_icons[i].h, 0x00808080);
     }
 
-    // Draw the text label under the icon
     int text_y = desktop_icons[i].y + desktop_icons[i].h + 2;
     draw_text_fb(desktop_icons[i].x, text_y, desktop_icons[i].program.name,
                  desktop_icons[i].w, 0x00FFFFFF, DESKTOP_BG);
   }
-  /* Draw Windows back-to-front */
   for (int i = z_count - 1; i >= 0; i--) {
     compose_handle(z_order[i]);
   }
 
-  /* Draw Taskbar (always on top) */
   if (clip_hits(0, taskbar_y(), fb_w, TASKBAR_PX))
     draw_taskbar();
   draw_start_menu();
@@ -2145,8 +2114,7 @@ static void present_rect(int x, int y, int w, int h) {
   present_backbuffer_rect(x, y, w, h);
 }
 
-/* Restore the four 1px sides of a previously-drawn ghost outline by blitting
- * the corresponding strips from the (frozen-during-drag) back buffer. */
+/* Restore a ghost outline from the frozen backbuffer. */
 static void erase_ghost(int x, int y, int w, int h) {
   if (w <= 0 || h <= 0)
     return;
@@ -2156,9 +2124,7 @@ static void erase_ghost(int x, int y, int w, int h) {
   present_rect(x + w - 1, y, 1, h); /* right  */
 }
 
-/* Draw a 1px white outline directly on fb_hw at the proposed drag position.
- * Bypasses the back buffer so the underlying composite stays untouched and
- * erase_ghost can restore from it next frame. */
+/* Draw directly to hardware without changing the backbuffer. */
 static void draw_ghost(int x, int y, int w, int h) {
   if (w <= 0 || h <= 0)
     return;
@@ -2284,12 +2250,10 @@ static int handle_create(int client_pid, int w, int h, const char *title,
   }
 
   win->in_use = 1;
-  /* Handle = slot index + 1. Stable for the slot's lifetime; reused when
-   * the slot is freed (find_slot reclaims it). */
+  /* Handles remain stable until their slot is reused. */
   win->handle = (int)(win - windows) + 1;
   win->owner_pid = client_pid;
-  /* Cascade placement: stagger new windows down-right so they don't
-   * all stack at (0,0). */
+  /* Cascade new windows. */
   int placed = 0;
   for (int i = 0; i < MAX_WINDOWS; i++) {
     if (&windows[i] != win && windows[i].in_use)
@@ -2356,7 +2320,7 @@ static void handle_destroy_internal(int handle, int client_pid_check) {
   if (client_pid_check && w->owner_pid != client_pid_check)
     return;
 
-  /* Save geometry so we can mark the dirty rect AFTER the struct is wiped */
+  /* Preserve cleanup state before clearing the window. */
   int old_x = w->x;
   int old_y = w->y;
   int old_ow = outer_w(w);
@@ -2591,23 +2555,14 @@ static int prompt_button_result(int kind, int idx) {
   return WM_PROMPT_OK;
 }
 
-/* Work out where the dialog goes and freeze it into prompt_state. Called
- * once, from handle_prompt_req, before anything draws or damages.
- *
- * The result must not be recomputed later: it depends on the owner window's
- * position and on the framebuffer size, and both can change while the
- * dialog is up. The destroy path is the concrete case — handle_destroy_internal
- * wipes the window before abandoning its prompt, so a recomputing version
- * silently switches to the screen-centred fallback and erases a rectangle
- * the dialog was never drawn in, stranding it on screen. */
+/* Freeze dialog geometry so draw and damage paths use the same rect. */
 static void prompt_freeze_rect(void) {
   prompt.w = PROMPT_W;
   prompt.h = PROMPT_H;
 
   int wx = 0, wy = 0, wcw = 0, wch = 0;
 
-  /* If we can find the owner window, center over its outer rect.
-   * Otherwise, fall back to the screen center. */
+  /* Prefer the owner window; otherwise use the screen center. */
   if (prompt.owner_handle > 0 &&
       win_get_rect(prompt.owner_handle, &wx, &wy, &wcw, &wch)) {
     int o_w = outer_w_dims(wcw);
@@ -2620,8 +2575,7 @@ static void prompt_freeze_rect(void) {
     prompt.y = (fb_h - TASKBAR_PX - PROMPT_H) / 2;
   }
 
-  /* Clamp to screen so the dialog doesn't vanish if the window is tiny
-   * or pushed off-screen. */
+  /* Keep the dialog on-screen. */
   if (prompt.x < 0)
     prompt.x = 0;
   if (prompt.y < 0)
@@ -2708,8 +2662,7 @@ static void handle_prompt_req(int owner_pid, int handle, int kind,
     prompt.message[i] = 0;
   }
 
-  /* Fix the position now, while the owner window is still around to be
-   * centred on. Everything afterwards reads the stored rect. */
+  /* Freeze the rect while the owner window still exists. */
   prompt_freeze_rect();
 
   int px, py, pw, ph;
@@ -2925,7 +2878,7 @@ static void pump_ipc(void) {
       handle_prompt_req(from, m.a, m.b, m.str);
       break;
     case IPC_PEER_EXITED: {
-      // The dead PID might be in from_pid or m.a depending on your kernel
+      /* Accept both peer-exit message layouts. */
       int dead_pid = (int)m.from_pid;
       if (dead_pid <= 0)
         dead_pid = (int)m.a;
@@ -2952,7 +2905,6 @@ static void forward_input(int target_pid, int win_handle, const struct msg *m) {
   out.type = IPC_WM_INPUT;
   out.a = m->type;
 
-  /* Check if event is mouse-related */
   if (m->type == MSG_MOUSE_MOVE || m->type == MSG_MOUSE_DOWN ||
       m->type == MSG_MOUSE_UP) {
     int wx = 0, wy = 0, wcw = 0, wch = 0;
@@ -3114,28 +3066,16 @@ static void pump_input(void) {
         reset_titlebar_click();
       }
 
-      /*
-       * Window close button.
-       */
       if (kind == HIT_BTN_CLOSE) {
-        // if (hit_handle != HANDLE_CONSOLE) {
         request_window_close(hit_handle, (u32)m.when);
-        //}
-
         continue;
       }
 
-      /*
-       * Window maximize button.
-       */
       if (kind == HIT_BTN_MAX) {
         toggle_maximize(hit_handle);
         continue;
       }
 
-      /*
-       * Window minimize button.
-       */
       if (kind == HIT_BTN_MIN) {
         toggle_minimize(hit_handle);
 
@@ -3143,9 +3083,6 @@ static void pump_input(void) {
         continue;
       }
 
-      /*
-       * Start button.
-       */
       if (kind == HIT_START_BTN) {
         /* Damage the rect the menu currently occupies before rebuilding: if
          * the rescan changes the entry count the old, taller rect still has
@@ -3190,22 +3127,13 @@ static void pump_input(void) {
 
           if (wt) {
             if (wt->minimized) {
-              /*
-               * Restore a minimized window.
-               */
               toggle_minimize(hit_handle);
               focused_handle = hit_handle;
               z_bring_to_front(hit_handle);
             } else if (focused_handle == hit_handle) {
-              /*
-               * Clicking the focused taskbar button minimizes it.
-               */
               toggle_minimize(hit_handle);
               z_send_to_back(hit_handle);
             } else {
-              /*
-               * Clicking an unfocused visible window raises it.
-               */
               focused_handle = hit_handle;
               z_bring_to_front(hit_handle);
             }
@@ -3214,10 +3142,7 @@ static void pump_input(void) {
           }
         }
 
-        /*
-         * Repaint the previously focused window.
-         * win_get_rect() also supports HANDLE_CONSOLE.
-         */
+        /* Repaint the old and new focus chrome. */
         int x, y, cw, ch;
 
         if (win_get_rect(prev_focus, &x, &y, &cw, &ch)) {
@@ -3225,9 +3150,6 @@ static void pump_input(void) {
                      outer_h_dims(ch, status_h_of(prev_focus)));
         }
 
-        /*
-         * Repaint the newly selected taskbar window.
-         */
         if (win_get_rect(hit_handle, &x, &y, &cw, &ch)) {
           mark_dirty(x, y, outer_w_dims(cw),
                      outer_h_dims(ch, status_h_of(hit_handle)));
@@ -3238,9 +3160,6 @@ static void pump_input(void) {
         continue;
       }
 
-      /*
-       * Start menu item.
-       */
       if (kind == HIT_START_MENU) {
         int menu_h = start_menu_count * START_MENU_ITEM_H + START_MENU_PAD * 2;
 
@@ -3275,9 +3194,6 @@ static void pump_input(void) {
         continue;
       }
 
-      /*
-       * Start moving or resizing a window.
-       */
       if (kind == HIT_TITLEBAR || kind == HIT_GRIP) {
         int x, y, cw, ch;
 

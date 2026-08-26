@@ -1091,7 +1091,7 @@ static void hw_reboot(void) {
   outb(0x64, 0xFE);  /* keyboard controller pulse */
   outb(0xCF9, 0x06); /* PIIX/q35 reset */
   /* triple-fault: null IDT + INT3 */
-  struct __attribute__((packed)) {
+  struct PACKED {
     uint16_t limit;
     uint64_t base;
   } idtr = {0, 0};

@@ -1,26 +1,4 @@
-/* kernel/main.c — kernel entry point.
- *
- * kernel_main is the C entry called from the assembly boot trampoline
- * (kernel/arch/x86_64/boot/main64.asm) once long mode is up. Brings the
- * kernel up in dependency order:
- *
- *   1. serial + VGA print  — earliest visible output
- *   2. GDT + percpu (BSP)  — segments + gs-relative state
- *   3. PIC remap + IDT     — interrupt routing
- *   4. PIT                 — tick source for sched + sleeps
- *   5. PMM + VMM + heap    — memory subsystems
- *   6. ACPI + LAPIC + SMP  — multi-CPU bring-up
- *   7. PCI scan            — device enumeration
- *   8. virtio-gpu          — optional; falls back to MB2 fb on failure
- *   9. FAT (rootfs)        — file access for ELF load
- *  10. keyboard / mouse    — input
- *  11. TTY                 — framebuffer-backed kernel console
- *  12. msg + syscall       — userspace ABI
- *  13. sched_init + spawn  — launches winman + the userspace shell
- *
- * After init, the BSP becomes the scheduler's idle task and lets ring 3
- * take over.
- */
+/* Kernel entry point and staged subsystem initialization. */
 #include <acpi/acpi.h>
 #include <arch/gdt.h>
 #include <arch/percpu.h>
@@ -83,12 +61,12 @@ static void memory_init(uint64_t mb2_addr) {
     heap_init();
     log_write("pmm, vmm, heap initialised", KERNEL, LOG_INFO);
 
-    /* Demand-paging self-test (keep it here or move to a debug-only helper) */
+    /* Demand-paging boot check. */
     log_write("Testing Demand Paging...", KERNEL, LOG_INFO);
     uint64_t test_page = vma_alloc(4096);
     if (!test_page) {
         log_write("Demand Paging Test: vma_alloc failed!", KERNEL, LOG_ERROR);
-        return;                     /* or panic if you prefer */
+        return;
     }
     log_write("Allocated unmapped VMA. Preparing to write to it...", KERNEL, LOG_INFO);
     uint32_t *ptr = (uint32_t *)test_page;
@@ -125,7 +103,6 @@ static void display_init(uint64_t mb2_addr) {
     framebuffer_init(mb2_addr);
     log_write("framebuffer initialised", KERNEL, LOG_INFO);
 
-    /* Same decision logic you already have */
     if (!nvidia_display_active()) {
         if (nvidia_device_count() > 0) {
             log_write("display: NVIDIA detected but not driving scanout",
@@ -221,8 +198,7 @@ static void late_init(void) {
     task_spawn(tty_thread_entry);
     log_write("tty: render thread spawned", KERNEL, LOG_INFO);
 
-    /* Syscall kernel stack */
-    static uint8_t syscall_kstack[16384] __attribute__((aligned(16)));
+    static uint8_t syscall_kstack[16384] ALIGNED(16);
     syscall_init((uint64_t)(syscall_kstack + sizeof(syscall_kstack)));
 }
 

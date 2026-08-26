@@ -90,7 +90,7 @@ static Token string(Lexer* lexer) {
     }
 
     if (peek(lexer) == '\0') {
-        // Unterminated string error (we'll just return unknown for now)
+        /* Unterminated strings are invalid tokens. */
         return make_token(lexer, TOKEN_UNKNOWN);
     }
 
@@ -133,7 +133,6 @@ static Token identifier(Lexer* lexer) {
 
     int length = (int)(lexer->current - lexer->start);
 
-    // Check for keywords
     if (length == 2 && string_match(lexer->start, "U0", 2)) return make_token(lexer, TOKEN_U0);
     if (length == 2 && string_match(lexer->start, "I8", 2)) return make_token(lexer, TOKEN_I8);
     if (length == 2 && string_match(lexer->start, "U8", 2)) return make_token(lexer, TOKEN_U8);

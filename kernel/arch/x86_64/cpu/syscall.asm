@@ -4,10 +4,7 @@
 ; `struct syscall_frame` (kernel/arch/syscall.h) expects, calls into
 ; C, unwinds, sysrets.
 ;
-; The push order below is load-bearing: each `push` maps to a struct
-; field by position, so reorder one and the C dispatcher will silently
-; read the wrong register from the wrong syscall arg. If you "clean
-; this up" you will also be cleaning up production. Don't.
+; Push order is part of the ABI and must match `struct syscall_frame`.
 ;
 ; kernel_rsp_top and user_rsp_save are re-staged on every context switch
 ; (sched.c::stage_for / capture_from) so per-task syscall stacks work.

@@ -155,9 +155,8 @@ char *get_test_files(const char *dir) {
       char *filename = &buf[i];
       size_t len = strlen(filename);
 
-      // Check if the file ends in ".hd"
+      /* Append .hd names to a NUL-separated list. */
       if (len >= 3 && strcmp(filename + len - 3, ".hd") == 0) {
-        // Check if we have enough space in our output buffer (+1 for \0)
         if (out_len + len + 2 > total_capacity) {
           total_capacity *= 2;
           char *new_buf = realloc(out_buf, total_capacity);
@@ -168,9 +167,8 @@ char *get_test_files(const char *dir) {
           out_buf = new_buf;
         }
 
-        // Copy the filename into the output buffer
         strcpy(out_buf + out_len, filename);
-        out_len += len + 1; // Advance past the null terminator
+        out_len += len + 1;
       }
 
       i += len; // Skip to the end of the current filename
@@ -189,7 +187,7 @@ char *get_test_files(const char *dir) {
 int test(void) {
   int success = 0, failure = 0;
 
-  // Get the packed list of .hd files
+  /* NUL-separated .hd paths. */
   char *files = get_test_files("holyd/tests");
   if (files == NULL || files[0] == '\0') {
     printf("holyd: no .hd test files found in holyd/tests/\n");
@@ -243,7 +241,7 @@ int test(void) {
     current += strlen(current) + 1; // Move to next string
   }
 
-  free(files); // Don't forget to free the buffer!
+  free(files);
 
   printf("\n--- Results ---\n");
   printf("holyd: success: %d, Failure: %d\n", success, failure);

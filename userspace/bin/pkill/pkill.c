@@ -76,10 +76,7 @@ int main(int argc, char *argv[]) {
             continue;
         }
 
-        /* task_kill rejects a RUNNING target, and on a uniprocessor the
-         * only RUNNING task is pkill itself — so this is the self-check.
-         * Not counted as a failure: declining to kill yourself is the
-         * right outcome, not a broken one. */
+        /* On one CPU, the running entry is pkill itself. */
         if (procs[i].state == PROC_STATE_RUNNING) {
             printf("pkill: not killing myself (pid %d)\n", procs[i].pid);
             continue;

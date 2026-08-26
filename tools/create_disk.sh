@@ -73,6 +73,19 @@ payloads=(
 # Firmware and DOOM are optional: QEMU and non-NVIDIA systems continue to
 # build the same root filesystem without them.
 optional_payloads=(
+	"userspace/bin/netsurf/netsurf.elf::usr/bin/netsurf.elf"
+	"userspace/netsurf_compat/generated/Messages::res/netsurf/Messages"
+	"userspace/bin/netsurf/netsurf/frontends/framebuffer/res/adblock.css::res/netsurf/adblock.css"
+	"userspace/bin/netsurf/netsurf/frontends/framebuffer/res/credits.html::res/netsurf/credits.html"
+	"userspace/bin/netsurf/netsurf/frontends/framebuffer/res/default.css::res/netsurf/default.css"
+	"userspace/bin/netsurf/netsurf/frontends/framebuffer/res/favicon.png::res/netsurf/favicon.png"
+	"userspace/bin/netsurf/netsurf/frontends/framebuffer/res/internal.css::res/netsurf/internal.css"
+	"userspace/bin/netsurf/netsurf/frontends/framebuffer/res/licence.html::res/netsurf/licence.html"
+	"userspace/bin/netsurf/netsurf/frontends/framebuffer/res/netsurf.png::res/netsurf/netsurf.png"
+	"userspace/bin/netsurf/netsurf/frontends/framebuffer/res/quirks.css::res/netsurf/quirks.css"
+	"userspace/bin/netsurf/netsurf/frontends/framebuffer/res/welcome.html::res/netsurf/welcome.html"
+	"userspace/bin/netsurf/netsurf/resources/icons/content.png::res/netsurf/icons/content.png"
+	"userspace/bin/netsurf/netsurf/resources/icons/directory.png::res/netsurf/icons/directory.png"
 	"userspace/libc/build-musl-tos/muslhello.elf::usr/bin/muslhello.elf"
 	"userspace/libc/build-musl-tos/muslposix.elf::usr/bin/muslposix.elf"
 	"rootfs/games/doom/doom.wad::games/doom/doom.wad"

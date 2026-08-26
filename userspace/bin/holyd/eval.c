@@ -157,7 +157,7 @@ static HDValue EvalExpression(ASTNode* node, Environment* env) {
         }
 
         case AST_CALL: {
-            // Check for our hacky array literal
+            /* Array literals use a synthetic call node. */
             if (node->callee_len == 7 && strncmp(node->callee_name, "[array]", 7) == 0) {
                 HDValue val;
                 val.type = VAL_ARRAY;
@@ -232,9 +232,7 @@ HDValue EvalNode(ASTNode* node, Environment* env) {
                 break;
             }
 
-            // Loop through the elements
             for (int i = 0; i < array.array_len; i++) {
-                // Set the loop variable to the current element
                 EnvSet(env, node->var_name, node->var_name_len, array.elements[i]);
 
                 // Execute the body of the loop

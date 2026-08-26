@@ -13,6 +13,9 @@
 #ifndef VIRTIO_GPU_H
 #define VIRTIO_GPU_H
 
+
+/* PACKED and friends. */
+#include <utilities/types.h>
 #include <stdint.h>
 
 #define VIRTIO_PCI_VENDOR        0x1AF4
@@ -49,20 +52,20 @@
 
 struct virtio_gpu_rect {
     uint32_t x, y, width, height;
-} __attribute__((packed));
+} PACKED;
 
 struct virtio_gpu_display_one {
     struct virtio_gpu_rect r;
     uint32_t enabled;
     uint32_t flags;
-} __attribute__((packed));
+} PACKED;
 
 struct virtio_gpu_config {
     uint32_t events_read;
     uint32_t events_clear;
     uint32_t num_scanouts;
     uint32_t num_capsets;
-} __attribute__((packed));
+} PACKED;
 
 /* Public driver state shared with framebuffer.c. */
 struct virtio_gpu {

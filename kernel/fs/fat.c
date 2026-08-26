@@ -61,7 +61,7 @@ enum fat_type {
   FAT_TYPE_32 = 32,
 };
 
-struct __attribute__((packed)) bpb {
+struct PACKED bpb {
   uint8_t jmp[3];
   char oem[8];
   uint16_t bytes_per_sector;
@@ -87,7 +87,7 @@ struct __attribute__((packed)) bpb {
 
 _Static_assert(sizeof(struct bpb) == 52, "BPB layout must match on-disk");
 
-struct __attribute__((packed)) dir_entry {
+struct PACKED dir_entry {
   char name[8];
   char ext[3];
   uint8_t attr;

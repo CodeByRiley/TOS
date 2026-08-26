@@ -243,20 +243,18 @@ static void render_text(void) {
       continue;
     }
 
-    // Word wrap
     if (x + cell_w > surf_w) {
       x = 0;
       y += cell_h;
       baseline = y + ascent;
     }
 
-    // Out of bounds vertical scroll (simple cut-off for now)
     if (y + cell_h > surf_h) {
       break;
     }
 
     if (c >= 32 && c <= 126) {
-      // Set a clip rect so glyphs don't bleed over the edge
+      /* Keep glyphs inside their cells. */
       struct gfx_rect prev =
           gfx_clip_push(&s, gfx_rect_make(x, y, cell_w, cell_h));
       ttf_draw_glyph_cell(&s, g_sys_font, x, baseline, cell_w, (unsigned char)c,
@@ -271,16 +269,13 @@ static void render_text(void) {
 static void invalidate(void) { wm_window_invalidate(win_handle); }
 
 int main(int argc, char **argv) {
-  /* `notepad <path>` opens that file; with no argument the buffer starts
-   * empty and Ctrl+S has nowhere to write. */
   if (argc > 1 && argv[1] && argv[1][0]) {
     strncpy(file_path, argv[1], sizeof(file_path) - 1);
     file_path[sizeof(file_path) - 1] = 0;
     have_file = 1;
   }
 
-  /* g_sys_font starts NULL in every process — nothing in crt0 or libwm
-   * populates it, so an app wanting the shared font has to ask for it. */
+  /* Font state is process-local. */
   ttf_init_font();
   if (g_sys_font) {
     cell_w = ttf_cell_width(g_sys_font, FONT_PX);
@@ -299,9 +294,6 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  /* Window creation goes through libwm rather than a hand-rolled handshake:
-   * it addresses winman by its real pid (wm_pid()) and spins on the reply
-   * with a timeout instead of reading the queue once. */
   struct wm_window win;
   if (wm_window_create_ex(WIN_W, WIN_H, "Notepad", WM_CREATE_STATUSBAR, &win) !=
       0) {
@@ -318,37 +310,29 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  /* Load after the window exists so a truncation notice has somewhere to go
-   * and the title can name the file. */
+  /* Load after window creation so errors can be displayed. */
   if (have_file)
     load_text_file(file_path);
   update_title();
   update_status();
 
-  // Initial Render
   render_text();
   invalidate();
 
-  // Event Loop
   struct wm_event event;
   int running = 1;
   while (running) {
     /* wm_poll_event returns 1 when it filled `event`, 0 when the queue was
      * empty — the raw ipc_recv this used to call has the same polarity. */
     if (wm_poll_event(&event)) {
-      /* The titlebar close button is a request. Winman sends WM_EV_QUIT and
-       * waits for the owner to tear its own window down. An app that ignores it
-       * simply never closes. */
+      /* The owner must destroy its window after WM_EV_QUIT. */
       if (event.type == WM_EV_QUIT) {
-        /* Unsaved work gets a say before the window goes. Cancel keeps the
-         * app alive; winman treats a second close click as "force" anyway,
-         * so an indecisive user is never trapped. */
+        /* Cancel keeps an unsaved document open. */
         if (!confirm_discard("Save changes before closing?"))
           continue;
         running = 0;
         break;
       }
-      /* Message loop */
       {
         int msg_type = event.type;
         int keycode = event.param;
@@ -396,7 +380,6 @@ int main(int argc, char **argv) {
               }
             }
           }
-          // Enter
           else if (keycode == KEY_ENTER || keycode == KEY_KPENTER) {
             if (text_len < MAX_CHARS - 1) {
               text_buf[text_len++] = '\n';
@@ -404,7 +387,6 @@ int main(int argc, char **argv) {
               needs_redraw = 1;
             }
           }
-          // Backspace
           else if (keycode == KEY_BACKSPACE) {
             if (text_len > 0) {
               text_len--;
@@ -412,7 +394,6 @@ int main(int argc, char **argv) {
               needs_redraw = 1;
             }
           }
-          // Tab
           else if (keycode == KEY_TAB) {
             if (text_len < MAX_CHARS - 1) {
               text_buf[text_len++] = '\t';
@@ -420,7 +401,6 @@ int main(int argc, char **argv) {
               needs_redraw = 1;
             }
           }
-          // Printable chars via your civilized keymap
           else {
             char c = keymap_to_ascii(keycode, shift_pressed);
 
@@ -437,7 +417,6 @@ int main(int argc, char **argv) {
           }
         }
 
-        // Track key releases for Shift
         else if (msg_type == WM_EV_KEY_UP) {
           if (keycode == KEY_LEFTSHIFT || keycode == KEY_RIGHTSHIFT) {
             shift_pressed = 0;

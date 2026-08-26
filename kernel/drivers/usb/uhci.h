@@ -199,7 +199,7 @@ struct pci_device;
 /* Frame list entry. The list is 1024 of these and must be 4KB aligned. */
 struct uhci_frame {
 	u32 link_ptr;
-} __attribute__((packed));
+} PACKED;
 
 /* Queue Head (8 bytes, 16-byte aligned).
  * link_ptr chains to the next QH; element_ptr is the work queue, which the
@@ -207,12 +207,12 @@ struct uhci_frame {
 struct uhci_qh {
 	u32 link_ptr;
 	u32 element_ptr;
-} __attribute__((packed));
+} PACKED;
 
 /* TD link word (DWORD 0). */
 struct uhci_tdn {
 	u32 link_ptr;
-} __attribute__((packed));
+} PACKED;
 
 /* TD status word (DWORD 1), as bitfields. Layout and the reasoning behind it
  * are documented at UHCI_TD_STS_* above; access it through those masks, not
@@ -233,7 +233,7 @@ struct uhci_tds {
   u32 error_counter : 2;
   u32 short_packet  : 1;
   u32 reserved2     : 2;
-} __attribute__((packed));
+} PACKED;
 
 /* Transfer Descriptor (16 bytes, 16-byte aligned). buffer_ptr is a physical
  * address the controller DMAs to or from, so it must be under 4 GiB. */
@@ -242,7 +242,7 @@ struct uhci_td {
   struct uhci_tds status;
   u32 token;
   u32 buffer_ptr;
-} __attribute__((packed));
+} PACKED;
 
 int uhci_init(struct pci_device *dev);
 

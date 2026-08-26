@@ -131,10 +131,8 @@ static int32_t bound_h = 0;
 static uint8_t pkt[3];
 static int     pkt_idx = 0;
 
-/* Wait for the controller's input buffer to be empty (we can write).
- * 100000 was picked the way every magic timeout in every kernel has ever
- * been picked: it worked once, nobody dared touch it. Real fix is to drive
- * this off PIT ticks; "real fix" has a habit of staying in the todo list. */
+/* The bounded poll prevents a stuck controller from hanging boot.
+ * TODO: Use a PIT-based deadline. */
 static int wait_in_empty(void) {
     for (int i = 0; i < 100000; i++) {
         if (!(inb(PS2_STATUS) & PS2_STATUS_IN_FULL)) return 0;

@@ -496,7 +496,6 @@ void isr_handler(struct interrupt_frame *r) {
         }
       }
 
-      // Print the diagnostic report for the fault
       page_fault_report(r, cr2);
     }
 

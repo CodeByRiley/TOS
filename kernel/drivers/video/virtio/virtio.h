@@ -14,6 +14,9 @@
 #ifndef VIRTIO_H
 #define VIRTIO_H
 
+
+/* PACKED and friends. */
+#include <utilities/types.h>
 #include <stdint.h>
 
 /* virtio 1.1, section 4.1.4 — vendor-specific PCI capability structure. */
@@ -66,24 +69,24 @@ struct virtq_desc {
     uint32_t len;
     uint16_t flags;
     uint16_t next;
-} __attribute__((packed));
+} PACKED;
 
 struct virtq_avail {
     uint16_t flags;
     uint16_t idx;
     uint16_t ring[];   /* size = qsize; followed by optional used_event u16 */
-} __attribute__((packed));
+} PACKED;
 
 struct virtq_used_elem {
     uint32_t id;
     uint32_t len;
-} __attribute__((packed));
+} PACKED;
 
 struct virtq_used {
     uint16_t flags;
     uint16_t idx;
     struct virtq_used_elem ring[];   /* size = qsize; followed by avail_event */
-} __attribute__((packed));
+} PACKED;
 
 /* virtio 1.1, 4.1.4.3 — common configuration structure. Field offsets
  * and widths are part of the spec; do not reorder. */
@@ -105,7 +108,7 @@ struct virtio_pci_common_cfg {
     uint64_t queue_desc;                 /* 0x20 RW */
     uint64_t queue_driver;               /* 0x28 RW */
     uint64_t queue_device;               /* 0x30 RW */
-} __attribute__((packed));
+} PACKED;
 
 /* Driver-side view of a virtio device after probe + cap parse. */
 struct virtio_dev {

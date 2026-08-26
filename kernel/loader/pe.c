@@ -93,15 +93,12 @@ uint64_t pe_load(const char *path, uint64_t *pml4) {
         return 0;
     }
 
-    /* In ELF, you loop PT_LOAD segments. In PE, you loop Section Headers.
-     * They sit immediately after the OptionalHeader. */
+    /* PE sections follow the optional header. */
     uint32_t num_sections = nt.fileHeader.numberOfSections;
     uint32_t size_of_optional = nt.fileHeader.sizeOfOptionalHeader;
 
-    // Calculate file offset to the beginning of the section header table
     long sections_offset = dos.e_lfanew + sizeof(nt.signature) + sizeof(struct IMAGE_FILE_HEADER) + size_of_optional;
 
-    // Iterate and Map Sections
     for (int i = 0; i < num_sections; i++) {
         struct IMAGE_SECTION_HEADER sh;
         fseek(fp, sections_offset + i * sizeof(sh), SEEK_SET);
@@ -130,16 +127,13 @@ uint64_t pe_load(const char *path, uint64_t *pml4) {
             return 0;
         }
 
-        // Page-align the memory region to be mapped
         uint64_t va_start = va_base & ~0xFFFULL;
         uint64_t va_end   = (va_base + memsz + 0xFFF) & ~0xFFFULL;
 
-        // Determine VMM mapping flags based on PE section characteristics
         uint64_t flags = VMM_PRESENT | VMM_USER;
         if (sh.characteristics & IMAGE_SCN_MEM_WRITE) flags |= VMM_WRITE;
         if (!(sh.characteristics & IMAGE_SCN_MEM_EXECUTE)) flags |= VMM_NX;
 
-        // Allocate and Map Pages
         // Map missing pages and zero them, just like ELF PT_LOAD bss handling
         int mapped_since_yield = 0;
         for (uint64_t va = va_start; va < va_end; va += 4096) {
@@ -150,7 +144,7 @@ uint64_t pe_load(const char *path, uint64_t *pml4) {
                     fclose(fp);
                     return 0;
                 }
-                memset(phys_to_virt(phys), 0, 4096); // Zero out new pages
+                memset(phys_to_virt(phys), 0, 4096);
                 if (vmm_map_in(pml4, va, phys, flags) != 0) {
                     pmm_free_frame(phys);
                     log_write("pe: map failed", KERNEL, LOG_ERROR);
@@ -158,14 +152,13 @@ uint64_t pe_load(const char *path, uint64_t *pml4) {
                     return 0;
                 }
             }
-            // Yield periodically to prevent locking up the scheduler during large mappings
+            /* Keep large images scheduler-friendly. */
             if (++mapped_since_yield == 32) {
                 mapped_since_yield = 0;
                 task_yield();
             }
         }
 
-        // Copy File Data into Mapped Pages
         if (filesz > 0) {
             fseek(fp, sh.pointerToRawData, SEEK_SET);
             int copied_since_yield = 0;
@@ -178,11 +171,9 @@ uint64_t pe_load(const char *path, uint64_t *pml4) {
                     return 0;
                 }
 
-                // Calculate how much we can copy into the current page
                 size_t   chunk = 4096 - (va & 0xFFF);
                 if (chunk > filesz - done) chunk = filesz - done;
 
-                // Write data through the HHDM (Higher Half Direct Map)
                 if (fread((uint8_t*)phys_to_virt(phys) + (va & 0xFFF), 1, chunk, fp) != chunk) {
                     log_write("pe: could not read full section data", KERNEL, LOG_ERROR);
                     fclose(fp);
@@ -200,8 +191,6 @@ uint64_t pe_load(const char *path, uint64_t *pml4) {
 
     fclose(fp);
 
-    // Return Entry Point
-    // In ELF e_entry is absolute; in PE AddressOfEntryPoint is an RVA.
-    // Return absolute VA by adding the ImageBase.
+    /* PE entry points are RVAs, unlike ELF's absolute e_entry. */
     return image_base + entry_rva;
 }

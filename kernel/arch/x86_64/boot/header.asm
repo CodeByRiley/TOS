@@ -1,11 +1,6 @@
 ; kernel/arch/x86_64/boot/header.asm — Multiboot2 header.
 ;
-; First thing GRUB looks at when it decides whether the file you just
-; handed it is a kernel or a sandwich. Magic + checksum + a single
-; optional tag asking GRUB to give us a 1920x1080x32bpp framebuffer.
-; The framebuffer "request" is advisory — GRUB will hand back something
-; else if it doesn't like the size — but every sane firmware honours it.
-; Insane firmware can write in.
+; Magic, checksum, and an advisory 1920x1080x32 framebuffer request.
 
 section .multiboot_header progbits alloc noexec nowrite align=8
 align 8

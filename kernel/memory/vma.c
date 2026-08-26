@@ -14,7 +14,6 @@ void vma_init(void) {
     vma_head = NULL;
 }
 
-/* Helper to find tracking metadata by virtual address */
 vma_node_t *vma_find(uint64_t virt) {
     vma_node_t *curr = vma_head;
     while (curr) {
@@ -29,9 +28,8 @@ vma_node_t *vma_find(uint64_t virt) {
 uint64_t vma_alloc(size_t size) {
     if (size == 0) return 0;
 
-    size = (size + 0xFFF) & ~0xFFF; // Round up to 4KB page boundary
+    size = (size + 0xFFF) & ~0xFFF;
 
-    // Standard static/kmalloc allocation for the tracking node
     vma_node_t *node = (vma_node_t *)kmalloc(sizeof(vma_node_t));
     if (!node) return 0;
 
@@ -46,7 +44,6 @@ uint64_t vma_alloc(size_t size) {
     return node->virt_addr;
 }
 
-/* Allocate kernel virtual memory and map physical frames */
 uint64_t vmalloc(size_t size) {
     uint64_t virt = vma_alloc(size);
     if (!virt) return 0;
@@ -59,7 +56,7 @@ uint64_t vmalloc(size_t size) {
         if (!phys) {
             log_write("VMALLOC: Out of physical memory!", KERNEL, LOG_ERROR);
 
-            // Clean up partially mapped pages before returning
+            /* Release pages mapped before the allocation failed. */
             vfree(virt);
             return 0;
         }
@@ -69,7 +66,6 @@ uint64_t vmalloc(size_t size) {
     return virt;
 }
 
-/* Retain/increment reference count on shared virtual memory */
 void vma_retain(uint64_t virt) {
     vma_node_t *node = vma_find(virt);
     if (node) {
@@ -78,7 +74,6 @@ void vma_retain(uint64_t virt) {
     }
 }
 
-/* Update access timestamp manually (e.g., on touch/read/write) */
 void vma_touch(uint64_t virt) {
     vma_node_t *node = vma_find(virt);
     if (node) {
@@ -86,7 +81,6 @@ void vma_touch(uint64_t virt) {
     }
 }
 
-/* Decrement ref_count and only free hardware frames when count reaches 0 */
 void vfree(uint64_t virt) {
     vma_node_t **curr = &vma_head;
 
@@ -94,14 +88,12 @@ void vfree(uint64_t virt) {
         if ((*curr)->virt_addr == virt) {
             vma_node_t *node = *curr;
 
-            // Decrement reference count
             if (node->ref_count > 1) {
                 node->ref_count--;
                 node->last_used = pit_ticks();
-                return; // Memory is still referenced elsewhere
+                return;
             }
 
-            // Reference count hit 0 -> Unmap virtual pages and free physical frames
             uint64_t num_pages = (node->size + 0xFFF) / 0x1000;
             for (uint64_t i = 0; i < num_pages; i++) {
                 uint64_t vaddr = virt + i * 0x1000;
@@ -112,7 +104,6 @@ void vfree(uint64_t virt) {
                 }
             }
 
-            // Unlink node from VMA tracking list and free metadata node
             *curr = node->next;
             kfree(node);
             return;

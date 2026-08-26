@@ -9,7 +9,7 @@ fi
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 src_name=${MUSL_SRC:-musl-1.2.6}
 build_name=${MUSL_BUILD:-build-musl-tos}
-cc=${CC:-x86_64-elf-gcc}
+cc=${CC:-/c/elf-tools/bin/x86_64-elf-gcc}
 
 out=$1
 shift

@@ -55,7 +55,7 @@ static char exception_messages[MAX_CPUS][128];
 extern char _kernel_start[];
 extern char _kernel_end[];
 
-static __attribute__((noreturn)) void panic_halt(void) {
+static NORETURN void panic_halt(void) {
   for (;;)
     __asm__ volatile("cli; hlt");
 }
@@ -592,7 +592,7 @@ static void panic_diagnostic_screen(const struct panic_record *record,
   framebuffer_present();
 }
 
-static __attribute__((noreturn)) void
+static NORETURN void
 panic_finish(struct panic_record *record) {
   __asm__ volatile("cli");
 

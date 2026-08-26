@@ -119,9 +119,7 @@ static void push_event(uint16_t key, int pressed) {
         kbd_ring[kbd_head].key.pressed = (uint8_t)pressed;
         kbd_head = next;
     }
-    /* Two queues, one event. Legacy poll API drops on full; the msg bus
-     * gets posted regardless. If both fill up, you're typing too fast for
-     * the OS to care, which is somehow on-brand. */
+    /* The message bus still receives events when the legacy queue is full. */
 
     struct msg m = {
         .type  = pressed ? MSG_KEY_DOWN : MSG_KEY_UP,

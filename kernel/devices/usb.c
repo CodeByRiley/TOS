@@ -3,7 +3,6 @@
 #include <utilities/log.h>
 #include <stdint.h>
 
-// Forward declarations of your future HCD init functions
 int uhci_init(struct pci_device *dev);
 int ehci_init(struct pci_device *dev);
 int xhci_init(struct pci_device *dev);
@@ -11,15 +10,14 @@ int xhci_init(struct pci_device *dev);
 #define PCI_CLASS_SERIAL_BUS 0x0C
 #define PCI_SUBCLASS_USB     0x03
 
-/* Prog IF identifies which host controller standard the device speaks. */
+/* PCI programming-interface values for USB controllers. */
 #define USB_PROGIF_UHCI 0x00
 #define USB_PROGIF_OHCI 0x10
 #define USB_PROGIF_EHCI 0x20
 #define USB_PROGIF_XHCI 0x30
 
 static void usb_init_controller(struct pci_device *dev) {
-    /* IO/MMIO decoding and bus mastering must be on before the driver touches
-     * a BAR or hands the controller a descriptor address. */
+    /* Enable BAR access and bus mastering before controller setup. */
     pci_enable(dev);
 
     switch (dev->prog_if) {
@@ -29,7 +27,7 @@ static void usb_init_controller(struct pci_device *dev) {
             break;
         case USB_PROGIF_OHCI:
             log_write("USB: Found OHCI controller.", KERNEL, LOG_INFO);
-            // OHCI not implemented yet
+            // TODO: Implement OHCI.
             break;
         case USB_PROGIF_EHCI:
             log_write("USB: Found EHCI controller.", KERNEL, LOG_INFO);
@@ -48,11 +46,7 @@ static void usb_init_controller(struct pci_device *dev) {
 void usb_init(void) {
     log_write("USB: Initializing.", KERNEL, LOG_INFO);
 
-    /* Every controller, not just the first match. A machine routinely has
-     * several — ICH9 exposes an EHCI plus three companion UHCIs and splits its
-     * root ports across them — so stopping at the first hit hides any device
-     * on another controller, while the one found truthfully reports an empty
-     * port. */
+    /* USB ports may be split across several controllers. */
     uint32_t found = 0;
     uint32_t count = pci_device_count();
 
@@ -66,8 +60,7 @@ void usb_init(void) {
 
         found++;
 
-        /* Topology first: when a device fails to appear on the controller you
-         * expected, this is what tells you which others exist. */
+        /* Log the PCI address to diagnose controller routing. */
         log_write("USB: Found USB controller.", KERNEL, LOG_INFO);
         log_write_hex("USB:   bus", dev.addr.bus, KERNEL, LOG_INFO);
         log_write_hex("USB:   device", dev.addr.dev, KERNEL, LOG_INFO);

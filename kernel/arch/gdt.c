@@ -13,6 +13,7 @@
  * installed by gdt_install_tss() and loaded into TR by
  * gdt_load_tss_this_cpu().
  */
+#include "utilities/types.h"
 #include <arch/gdt.h>
 #include <arch/percpu.h>
 #include <utilities/log.h>
@@ -20,7 +21,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-struct __attribute__((packed)) gdt_entry {
+struct PACKED gdt_entry {
     uint16_t limit_low;
     uint16_t base_low;
     uint8_t  base_mid;
@@ -29,7 +30,7 @@ struct __attribute__((packed)) gdt_entry {
     uint8_t  base_high;
 };
 
-struct __attribute__((packed)) tss_desc {
+struct PACKED tss_desc {
     uint16_t limit_low;
     uint16_t base_low;
     uint8_t  base_mid;
@@ -40,12 +41,12 @@ struct __attribute__((packed)) tss_desc {
     uint32_t reserved;
 };
 
-struct __attribute__((packed)) gdtr {
+struct PACKED gdtr {
     uint16_t limit;
     uint64_t base;
 };
 
-struct __attribute__((packed)) tss {
+struct PACKED tss {
     uint32_t reserved0;
     uint64_t rsp0;
     uint64_t rsp1;
@@ -85,10 +86,10 @@ _Static_assert(offsetof(struct tss, iomap_base) == 102,
 #define GDT_FIXED_BYTES   (5 * 8)
 #define GDT_TOTAL_BYTES   (GDT_FIXED_BYTES + 16 * MAX_CPUS)
 
-static uint8_t  gdt_table[GDT_TOTAL_BYTES] __attribute__((aligned(8)));
-static struct tss tss_table[MAX_CPUS] __attribute__((aligned(16)));
+static uint8_t  gdt_table[GDT_TOTAL_BYTES] ALIGNED(8);
+static struct tss tss_table[MAX_CPUS] ALIGNED(16);
 static struct gdtr gdtr;
-static uint8_t  bsp_kernel_stack[16384] __attribute__((aligned(16)));
+static uint8_t  bsp_kernel_stack[16384] ALIGNED(16);
 
 /* Dedicated per-CPU double-fault stacks, wired to IST1.
  *
@@ -99,7 +100,7 @@ static uint8_t  bsp_kernel_stack[16384] __attribute__((aligned(16)));
  * printable report. Kept small: the handler logs and halts, it does not
  * return or recurse. */
 #define DF_STACK_BYTES 4096
-static uint8_t df_stacks[MAX_CPUS][DF_STACK_BYTES] __attribute__((aligned(16)));
+static uint8_t df_stacks[MAX_CPUS][DF_STACK_BYTES] ALIGNED(16);
 
 /* Descriptor Access byte */
 //

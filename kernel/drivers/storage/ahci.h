@@ -189,7 +189,7 @@ struct AHCI_CMD_HEADER {
   u32 command_table_base_upper;
   /* DW4-DW7 */
   u32 rsv1[4];
-} __attribute__((packed));
+} PACKED;
 
 _Static_assert(sizeof(struct AHCI_CMD_HEADER) == 32,
                "AHCI command header must be exactly 32 bytes");
@@ -206,7 +206,7 @@ struct AHCI_CMD_TABLE {
   u8 acmd[16];                    // 0x40, ATAPI command
   u8 rsv1[48];                    // 0x50..0x7F reserved
   struct AHCI_PHYS_DESC prdt[AHCI_PRDT_ENTRIES]; // 0x80
-} __attribute__((packed));
+} PACKED;
 
 _Static_assert(sizeof(struct AHCI_CMD_TABLE) == 256,
                "AHCI command table must be exactly 256 bytes");

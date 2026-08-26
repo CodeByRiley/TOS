@@ -9,6 +9,9 @@
 #ifndef MULTIBOOT2_H
 #define MULTIBOOT2_H
 
+
+/* PACKED and friends. */
+#include <utilities/types.h>
 #include <stdint.h>
 
 /* Tag type IDs we care about. */
@@ -28,7 +31,7 @@
 struct MB2_TAG {
     uint32_t type;
     uint32_t size;
-} __attribute__((packed));
+} PACKED;
 
 /* Memory map entry (mmap tag payload). */
 struct MB2_MMAP_ENTRY {
@@ -36,7 +39,7 @@ struct MB2_MMAP_ENTRY {
     uint64_t len;
     uint32_t type;
     uint32_t reserved;
-} __attribute__((packed));
+} PACKED;
 
 struct MB2_TAG_MMAP {
     uint32_t type;
@@ -44,7 +47,7 @@ struct MB2_TAG_MMAP {
     uint32_t entry_size;
     uint32_t entry_version;
     struct MB2_MMAP_ENTRY entries[];
-} __attribute__((packed));
+} PACKED;
 
 /* Module tag (GRUB modules loaded alongside the kernel). */
 struct MB2_TAG_MODULE {
@@ -53,7 +56,7 @@ struct MB2_TAG_MODULE {
     uint32_t mod_start;     /* physical addr of module first byte         */
     uint32_t mod_end;       /* physical addr one past last byte           */
     char     cmdline[];     /* null-terminated string                     */
-} __attribute__((packed));
+} PACKED;
 
 /* Framebuffer description. */
 struct MB2_TAG_FRAMEBUFFER {
@@ -72,7 +75,7 @@ struct MB2_TAG_FRAMEBUFFER {
     uint8_t  green_size;
     uint8_t  blue_pos;
     uint8_t  blue_size;
-} __attribute__((packed));
+} PACKED;
 
 /* ACPI tag: bootloader copies the RSDP into payload[]. ACPI_OLD = 20-byte
  * v1 RSDP; ACPI_NEW = 36-byte v2 XSDP. Either may appear depending on
@@ -81,7 +84,7 @@ struct MB2_TAG_ACPI {
     uint32_t type;
     uint32_t size;
     uint8_t  rsdp[];
-} __attribute__((packed));
+} PACKED;
 
 /* Walk tags looking for one of the given `type`. Returns NULL if absent. */
 struct MB2_TAG        *mb2_find_tag(uint64_t mb2_addr, uint32_t type);

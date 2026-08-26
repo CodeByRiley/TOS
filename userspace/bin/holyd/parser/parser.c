@@ -638,7 +638,6 @@ static ASTNode* ParseStatement(Parser* parser) {
     if (match(parser, TOKEN_FOREACH)) return ParseForeach(parser);
     if (check(parser, TOKEN_LBRACE)) return ParseBlock(parser);
 
-    // Handle 'return' statement
     if (match(parser, TOKEN_RETURN)) {
         ASTNode* expr = NULL;
         if (!check(parser, TOKEN_SEMICOLON) && !check(parser, TOKEN_NEWLINE)) {

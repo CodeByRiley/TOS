@@ -303,7 +303,6 @@ void ttf_draw_text(struct gfx_surface *s, struct ttf_font *font,
         int draw_x = ttf_stb_ifloor((double)pen_x);
         float x_shift = pen_x - (float)draw_x;
 
-        // Get the bitmap for this character
         int w, h, xoff, yoff;
         u8 *bitmap = stbtt_GetCodepointBitmapSubpixel(&font->info, scale, scale,
                                                       x_shift, 0.0f, cp,

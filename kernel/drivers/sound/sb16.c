@@ -346,7 +346,6 @@ void sb16_play_wav(uint8_t *wav_data, uint32_t wav_size) {
         filled += chunk;
         audio_position += chunk;
 
-        // Loop back to the start once we reach the end of the source data.
         if (audio_position >= wav_size)
             audio_position = 0;
     }
@@ -635,7 +634,6 @@ static int sb16_probe(struct device *device) {
                 // Give the DSP a moment to stabilize after reset
                 for (volatile int i = 0; i < 10000; i++);
 
-                // Initialize SB16 hardware in a controlled order.
                 sb16_speaker_on();
                 sb16_set_sample_rate(44100);
                 sb16_reset_mixer();

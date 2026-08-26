@@ -233,7 +233,6 @@ int ahci_read_sector(struct AHCI_DEVICE_DATA *dev, int port, uint64_t lba,
         return -1;
     }
 
-    // Get the Command List and Command Table from our saved struct
     struct AHCI_CMD_HEADER *cmd_list = (struct AHCI_CMD_HEADER *)p->cmd_list_virt;
     struct AHCI_CMD_HEADER *cmd_hdr = &cmd_list[slot];
     memset(cmd_hdr, 0, sizeof(struct AHCI_CMD_HEADER));
@@ -275,8 +274,7 @@ int ahci_read_sector(struct AHCI_DEVICE_DATA *dev, int port, uint64_t lba,
     // Issue the command
     ahci_write32(port_base, AHCI_PORT_PxCI, 1u << slot);
 
-    // Wait for completion, bailing out on a task-file error or a timeout
-    // rather than spinning here forever.
+    /* Bound completion polling and stop on task-file errors. */
     uint32_t spins;
     for (spins = 0; spins < AHCI_SPIN_LIMIT; spins++) {
         if (!(ahci_read32(port_base, AHCI_PORT_PxCI) & (1u << slot)))
@@ -315,13 +313,11 @@ static int ahci_init_port(struct AHCI_DEVICE_DATA *dev, int port) {
     volatile void *port_base = ahci_port_base(abar_virtual, port);
     struct AHCI_PORT *p = &dev->ports[port];
 
-    // Check if a device is actually present (PxSSTS DET == 3)
     uint32_t ssts = ahci_read32(port_base, AHCI_PORT_PxSSTS);
     if ((ssts & AHCI_PxSSTS_DET_MASK) != AHCI_PxSSTS_DET_PRESENT) {
         return -1; // No drive plugged in
     }
 
-    // Check Signature
     p->signature = ahci_read32(port_base, AHCI_PORT_PxSIG);
     log_write_hex("AHCI: Drive found on port", port, KERNEL, LOG_INFO);
     log_write_hex("AHCI: Signature =", p->signature, KERNEL, LOG_INFO);
@@ -414,7 +410,6 @@ static int ahci_probe(struct device *dev) {
   /* Enable Memory Space (MMIO) and Bus Mastering (DMA) */
   pci_enable(pci);
 
-  /* Allocate private driver data */
   struct AHCI_DEVICE_DATA *data = kmalloc(sizeof(struct AHCI_DEVICE_DATA));
   if (!data) {
     log_write("AHCI: Failed to allocate device data", KERNEL, LOG_ERROR);
@@ -424,7 +419,6 @@ static int ahci_probe(struct device *dev) {
   memset(data, 0, sizeof(struct AHCI_DEVICE_DATA));
   dev->driver_data = data;
 
-  /* Get BAR5 (AHCI Base Address Register) */
   struct pci_bar *abar = &pci->bar[5];
   if (!abar->valid || abar->is_io) {
     log_write("AHCI: BAR5 is invalid or not MMIO!", KERNEL, LOG_ERROR);
@@ -470,7 +464,6 @@ static int ahci_probe(struct device *dev) {
     ahci_write32(data->abar_virtual, AHCI_GHC, ghc | AHCI_GHC_AE);
   }
 
-  // Read Ports Implemented (PI) to know which ports to scan
   data->ports_implemented = ahci_read32(data->abar_virtual, AHCI_PI);
 
   log_write_hex("AHCI: Ports Implemented =", data->ports_implemented, KERNEL,

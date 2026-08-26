@@ -61,7 +61,7 @@ typedef struct socket {
     sockaddr_in_t remote;   // Remote IP and Port (for connected sockets)
 
     ring_buffer_t rx_buffer;
-    // spinlock_t lock;      // TODO: Add a spinlock for SMP safety
+    // TODO: Add a spinlock for SMP safety.
 
     struct socket *next;    // Linked list for the global socket table
 } socket_t;
