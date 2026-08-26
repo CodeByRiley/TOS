@@ -48,3 +48,6 @@ ehthumbs.db
 Desktop.ini
 userspace/games/doom/doomgeneric/
 userspace/bin/vim
+
+# QEMU filter-dump target from tools/run.bat: rewritten by every run.
+net.pcap

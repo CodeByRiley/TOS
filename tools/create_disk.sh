@@ -26,7 +26,6 @@ payloads=(
 	"rootfs/holyd/holyc_d_style.hd::holyd/tests/holyc_d_style.hd"
 	"rootfs/holyd/net.hd::holyd/tests/net.hd"
 
-	"rootfs/music/beethoven.wav::music/beethoven.wav"
 
 	"rootfs/system/fonts/SansDisplayStatic.ttf::system/fonts/sansdisplaystatic.ttf"
 	"rootfs/system/fonts/SansDisplayVariable.ttf::system/fonts/sansdisplayvariable.ttf"
@@ -73,9 +72,12 @@ payloads=(
 	"userspace/bin/tree/tree.elf::system/bin/tree.elf"
 )
 
-# Firmware and DOOM are optional: QEMU and non-NVIDIA systems continue to
-# build the same root filesystem without them.
+# Optional payloads: anything gitignored, unbuilt, or hardware-specific.
+# A clean checkout must still produce a bootable image without them,
+# which is the P0 item in TODO.txt.
 optional_payloads=(
+	# *.wav is gitignored, so a fresh clone has no way to produce this.
+	"rootfs/music/beethoven.wav::music/beethoven.wav"
 	"userspace/bin/netsurf/netsurf.elf::usr/bin/netsurf.elf"
 	"userspace/netsurf_compat/generated/Messages::res/netsurf/Messages"
 	"userspace/bin/netsurf/netsurf/frontends/framebuffer/res/adblock.css::res/netsurf/adblock.css"

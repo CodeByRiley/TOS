@@ -1,0 +1,30 @@
+# Shell scripts must keep LF endings.
+#
+# tools/create_disk.sh runs under WSL bash, which is invoked from the
+# Makefile. On a fresh checkout Git's autocrlf turns its line endings into
+# CRLF, and bash then reads the very first line as `set -euo pipefail\r`
+# and dies with "set: pipefail: invalid option name". The working copy in
+# a long-lived clone often still has LF, so this only breaks for someone
+# cloning fresh -- which is exactly the case the P0 item in TODO.txt cares
+# about.
+*.sh text eol=lf
+
+# Same reasoning for anything else consumed by a POSIX shell or WSL.
+*.bash text eol=lf
+configure text eol=lf
+
+# Windows-side scripts genuinely want CRLF.
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary payloads: never touch, never diff as text.
+*.img binary
+*.iso binary
+*.bin binary
+*.elf binary
+*.exe binary
+*.wav binary
+*.bmp binary
+*.png binary
+*.ttf binary
+*.pcap binary
