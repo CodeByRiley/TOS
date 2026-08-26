@@ -1,4 +1,4 @@
-/* userspace/bin/sh/sh.c — tsh: toy interactive shell.
+/* userspace/bin/sh/sh.c , tsh: toy interactive shell.
  *
  * Reads a line, tokenises it, dispatches shell-owned built-ins through a
  * table, and falls through to a filesystem ELF lookup so `btop` runs
@@ -108,7 +108,7 @@ static int apply_path_assignment(const char *word) {
 /* Block until a character arrives for the console.
  *
  * Reads the TTY input ring, which winman fills only while the console has
- * focus. Polling kbd_poll instead would be reading the raw keyboard ring —
+ * focus. Polling kbd_poll instead would be reading the raw keyboard ring ,
  * that is filled for every keystroke no matter which window is focused, so
  * the shell would silently collect everything typed into other windows and
  * find it queued at the prompt the moment they closed.
@@ -697,7 +697,7 @@ static int exec_argv(int argc, char **argv, int bg) {
     return 0;
 }
 
-/* `run PATH[.elf] [ARGS...] [&]` — explicit form. Strips the leading
+/* `run PATH[.elf] [ARGS...] [&]` , explicit form. Strips the leading
  * "run" token and forwards the rest to exec_argv. */
 static int builtin_run(int argc, char **argv) {
     if (argc < 2) { printf("usage: run PATH[.elf] [ARG...] [&]\n"); return 1; }
@@ -802,7 +802,7 @@ int main(int argc, char **argv) {
                 return 0;
             }
         } else {
-            /* No built-in matched — try filesystem lookup. A trailing
+            /* No built-in matched , try filesystem lookup. A trailing
              * `&` token means launch backgrounded via spawn(). */
             int bg = 0;
             int eff_ac = ac;

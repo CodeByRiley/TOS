@@ -1,4 +1,4 @@
-/* kernel/interrupts/idt.h — IDT setup + IRQ install.
+/* kernel/interrupts/idt.h , IDT setup + IRQ install.
  *
  * Long-mode IDT gate descriptors are 16 bytes; the IDTR loaded by lidt
  * is 10 bytes (limit + base). Both layouts are checked at compile time

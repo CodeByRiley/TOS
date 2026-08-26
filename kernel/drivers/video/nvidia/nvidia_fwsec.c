@@ -7,7 +7,7 @@
  *
  * This stage stops at the descriptor's location. Decoding the descriptor
  * body (IMEM/DMEM spans, signature versions, interface offsets) is
- * deliberately not attempted yet — see the note above nvidia_fwsec_locate.
+ * deliberately not attempted yet , see the note above nvidia_fwsec_locate.
  */
 #include <drivers/video/nvidia/nvidia_internal.h>
 #include <utilities/log.h>
@@ -36,7 +36,7 @@ static uint32_t read_le32(const uint8_t *data, uint32_t offset) {
  * layout and the FWSEC application id values below are taken from the
  * published NVIDIA/nouveau definitions but have not been checked against a
  * VBIOS dump from this machine. The descriptor body is therefore left
- * undecoded — everything needed to confirm the layout is logged instead.
+ * undecoded , everything needed to confirm the layout is logged instead.
  */
 int nvidia_fwsec_locate(struct nvidia_device *device) {
     if (!device)

@@ -278,7 +278,7 @@ static void sb16_arm(uint32_t sample_rate) {
     sb16_dsp_write(SB16_MODE_SIGNED_STEREO);
 
     /* Half the buffer in 16-bit samples: bytes / 2 (width) / 2 (halves),
-     * minus one. Sets IRQ cadence, not total length — see sb16.h. */
+     * minus one. Sets IRQ cadence, not total length , see sb16.h. */
     uint16_t count = (uint16_t)((SB16_DMA_BUFFER_SIZE / 4) - 1);
     sb16_dsp_write(count & 0xFF);
     sb16_dsp_write((count >> 8) & 0xFF);

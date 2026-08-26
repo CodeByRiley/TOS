@@ -1,4 +1,4 @@
-/* userspace/lib/stdio.c — FILE* layer on top of raw fd syscalls.
+/* userspace/lib/stdio.c , FILE* layer on top of raw fd syscalls.
  *
  * Each FILE wraps a kernel fd plus an EOF flag. The set is just enough
  * for DOOM's WAD loader and a few small tools: no buffering, no ungetc,

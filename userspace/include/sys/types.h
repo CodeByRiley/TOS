@@ -1,4 +1,4 @@
-/* userspace/include/sys/types.h — typedef bag.
+/* userspace/include/sys/types.h , typedef bag.
  *
  * Collects every alias different bits of the codebase like to use:
  * the POSIX names (ssize_t, off_t, pid_t...), the short ones (u8, u32...),

@@ -1,4 +1,4 @@
-/* userspace/lib/math_stub.c — minimal libm subset for DOOM.
+/* userspace/lib/math_stub.c , minimal libm subset for DOOM.
  *
  * Implements the handful of functions actually called by DOOM's renderer +
  * sound code. Uses small approximations rather than full IEEE-754 libm

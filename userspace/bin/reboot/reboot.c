@@ -1,4 +1,4 @@
-/* userspace/bin/reboot/reboot.c — `reboot` command.
+/* userspace/bin/reboot/reboot.c , `reboot` command.
  *
  * Thin wrapper over SYS_REBOOT. Accepts a delay in seconds; the kernel
  * is responsible for the actual reset (triple-fault / ACPI / 8042). The

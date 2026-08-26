@@ -117,22 +117,22 @@ static void uhci_write16(u16 base, u16 offset, u16 val) {
 
 static u16 uhci_read16(u16 base, u16 offset) { return inw(base + offset); }
 
-/* Single volatile u32 access — see UHCI_TD_STS_* in uhci.h. */
-static inline u32 td_status_read(const struct uhci_td *td) {
+/* Single volatile u32 access , see UHCI_TD_STS_* in uhci.h. */
+SINLINE u32 td_status_read(const struct uhci_td *td) {
   return *(const volatile u32 *)&td->status;
 }
 
-static inline void td_status_write(struct uhci_td *td, u32 val) {
+SINLINE void td_status_write(struct uhci_td *td, u32 val) {
   *(volatile u32 *)&td->status = val;
 }
 
 /* element_ptr is the CPU/controller hand-off point: volatile, or the compiler
  * caches our write and never sees the controller's DMA update. */
-static inline u32 qh_element_read(const struct uhci_qh *qh) {
+SINLINE u32 qh_element_read(const struct uhci_qh *qh) {
   return *(const volatile u32 *)(uptr)&qh->element_ptr;
 }
 
-static inline void qh_element_write(struct uhci_qh *qh, u32 val) {
+SINLINE void qh_element_write(struct uhci_qh *qh, u32 val) {
     *(volatile u32 *)(uptr)&qh->element_ptr = val;
 }
 
@@ -216,12 +216,12 @@ static int uhci_control(struct uhci_hc *hc, u8 addr, int low_speed,
 
   int i = 0;
 
-  /* SETUP — always DATA0. */
+  /* SETUP , always DATA0. */
   uhci_td_init(uhci_td_at(hc, i), uhci_td_phys(hc, i + 1), 0, low_speed,
                USB_PID_SETUP, addr, 0, 0, sizeof(*setup), setup_phys);
   i++;
 
-  /* DATA — starts DATA1, alternates per packet. */
+  /* DATA , starts DATA1, alternates per packet. */
   int toggle = 1;
   u16 remaining = len;
   u32 offset = 0;
@@ -236,7 +236,7 @@ static int uhci_control(struct uhci_hc *hc, u8 addr, int low_speed,
     remaining -= chunk;
   }
 
-  /* STATUS — opposite direction to the data stage, DATA1, zero length. With
+  /* STATUS , opposite direction to the data stage, DATA1, zero length. With
    * no data stage the status is read IN. */
   uhci_td_init(uhci_td_at(hc, i), 0, 1, low_speed,
                dir_in ? USB_PID_OUT : USB_PID_IN, addr, 0, 1, 0, 0);
@@ -255,7 +255,7 @@ static int uhci_control(struct uhci_hc *hc, u8 addr, int low_speed,
      * and leaves everything behind it Active forever, which would otherwise
      * burn the full timeout.
      *
-     * Errors only. A leading TD going inactive is normal — the chain retires
+     * Errors only. A leading TD going inactive is normal , the chain retires
      * in order, so SETUP clears Active while DATA and STATUS are still
      * pending. Treating that as an early halt fails every transfer. */
     for (int t = 0; t <= last_td; t++) {
@@ -387,7 +387,7 @@ static int uhci_hid_set_boot_protocol(struct uhci_hc *hc, u8 addr,
 /* (Re)build the periodic TD and hand it to the controller.
  *
  * IOC is set here and nowhere else: control transfers are polled and want no
- * interrupt, but nothing watches a periodic endpoint — the completion
+ * interrupt, but nothing watches a periodic endpoint , the completion
  * interrupt is the only signal that a report arrived. */
 static void uhci_int_arm(struct uhci_int_ep *ep) {
   struct uhci_td *td = ep->td;
@@ -486,7 +486,7 @@ static void uhci_int_complete(struct uhci_int_ep *ep) {
   if (sts & UHCI_TD_STS_ERRMASK) {
     ep->errors++;
     /* Re-armed below regardless: a transient CRC or timeout is normal on real
-     * hardware and must not stop polling permanently. Toggle stays put — the
+     * hardware and must not stop polling permanently. Toggle stays put , the
      * failed transfer never advanced the device's sequence, and flipping it
      * would desync the endpoint for good. */
     if (ep->errors <= UHCI_INT_LOG_LIMIT)
@@ -503,7 +503,7 @@ static void uhci_int_complete(struct uhci_int_ep *ep) {
       mouse_hid_tablet_report(ep->buf, ep->last_len);
 
     /* Bounded: IRQ context writing to a polled UART. Enough to prove reports
-     * arrive, then silence — uncapped, a moving mouse stalls the handler. */
+     * arrive, then silence , uncapped, a moving mouse stalls the handler. */
     if (ep->reports <= UHCI_INT_LOG_LIMIT) {
       log_write_int("UHCI: report bytes", ep->last_len, KERNEL, LOG_INFO);
       u32 head = 0;
@@ -617,7 +617,7 @@ static int uhci_read_config(struct uhci_hc *hc, u8 addr, int low_speed,
  *
  * The block is a chain of variable-length descriptors, each led by {bLength,
  * bDescriptorType}. Stepping by bLength rather than assuming fixed sizes is
- * what skips class-specific descriptors we do not parse — a HID report
+ * what skips class-specific descriptors we do not parse , a HID report
  * descriptor sits between the interface and its endpoints. */
 struct uhci_hid_pointer {
   u8 interface_number;
@@ -787,7 +787,7 @@ static void uhci_enumerate_port(struct uhci_hc *hc, int port, u16 reg,
   int have_hid_pointer = uhci_find_hid_pointer(uhci_config_buf, cfg_len,
                                                &hid_pointer);
 
-  /* Until this lands the device answers only standard requests on ep0 — its
+  /* Until this lands the device answers only standard requests on ep0 , its
    * other endpoints do not exist, so configure before scheduling anything. */
   if (uhci_set_configuration(hc, addr, low_speed, maxpacket,
                              cfg->bConfigurationValue) < 0) {
@@ -851,13 +851,13 @@ static void uhci_scan_ports(struct uhci_hc *hc) {
 
 /* File scope, not uhci_init's stack: the controller DMAs from the arena and
  * frame list for as long as it runs, and the IRQ handler needs to find them.
- * Sized for several — ICH9 fronts one EHCI with three companion UHCIs. */
+ * Sized for several , ICH9 fronts one EHCI with three companion UHCIs. */
 #define UHCI_MAX_CONTROLLERS 4
 static struct uhci_hc uhci_controllers[UHCI_MAX_CONTROLLERS];
 static int uhci_controller_count;
 
 /* PCI interrupt lines are shared, so this also fires for other devices. Ask
- * every controller, and leave one with a clear USBSTS entirely alone — acking
+ * every controller, and leave one with a clear USBSTS entirely alone , acking
  * a status it never raised would drop someone else's event. The IDT dispatcher
  * sends the EOI. */
 static void uhci_irq_handler(void) {
@@ -913,7 +913,7 @@ int uhci_init(struct pci_device *dev) {
   memset(hc->arena, 0, FRAME_SIZE);
 
   /* Idle control queue: element_ptr TERM, so the controller walks
-   * frame -> QH -> nothing. link_ptr must terminate too — a QH pointing at
+   * frame -> QH -> nothing. link_ptr must terminate too , a QH pointing at
    * itself loops the controller for the rest of the frame. */
   struct uhci_qh *qh = (struct uhci_qh *)(hc->arena + UHCI_ARENA_QH);
   qh->link_ptr = UHCI_PTR_TERM;

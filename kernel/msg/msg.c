@@ -1,4 +1,4 @@
-/* kernel/msg/msg.c — per-task input + IPC ring backends.
+/* kernel/msg/msg.c , per-task input + IPC ring backends.
  *
  * Rings themselves live on the task struct (allocated in sched.c). This
  * module is the API that pushes/pops on them. Single-producer-single-
@@ -76,7 +76,7 @@ int ipc_send(int target_pid, const struct ipc_msg *m, int from_pid) {
     struct task *t = task_find(target_pid);
     if (!t || !t->ipc_ring) return -1;
     int next = (t->ipc_head + 1) & IPC_RING_MASK;
-    if (next == t->ipc_tail) return -1;         /* full — caller can retry */
+    if (next == t->ipc_tail) return -1;         /* full , caller can retry */
     struct ipc_msg copy = *m;
     copy.from_pid = (uint32_t)from_pid;
     t->ipc_ring[t->ipc_head] = copy;

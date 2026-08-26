@@ -1,4 +1,4 @@
-/* kernel/devices/pit.h — 8254 PIT timer surface.
+/* kernel/devices/pit.h , 8254 PIT timer surface.
  *
  * The PIT drives the kernel tick counter at the frequency passed to
  * pit_init(). `pit_ticks()` is monotonically non-decreasing and consumed

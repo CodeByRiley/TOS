@@ -58,7 +58,7 @@ static struct gfx_rect clip_span(const struct gfx_surface *s,
     return out;
 }
 
-static inline uint32_t *row_at(const struct gfx_surface *s, int y) {
+SINLINE uint32_t *row_at(const struct gfx_surface *s, int y) {
     return s->px + (size_t)y * (size_t)s->stride;
 }
 
@@ -69,7 +69,7 @@ void gfx_pixel(struct gfx_surface *s, int x, int y, uint32_t color) {
     row_at(s, y)[x] = color & 0x00FFFFFFu;
 }
 
-static inline void blend_into(uint32_t *dst, uint32_t argb) {
+SINLINE void blend_into(uint32_t *dst, uint32_t argb) {
     uint32_t a = argb >> 24;
     if (a == 0) return;
     if (a == 255) { *dst = argb & 0x00FFFFFFu; return; }

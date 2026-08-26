@@ -1,4 +1,4 @@
-/* kernel/arch/gdt.c — long-mode GDT + per-CPU TSS.
+/* kernel/arch/gdt.c , long-mode GDT + per-CPU TSS.
  *
  * GDT layout:
  *   0x00: null
@@ -93,7 +93,7 @@ static uint8_t  bsp_kernel_stack[16384] ALIGNED(16);
 
 /* Dedicated per-CPU double-fault stacks, wired to IST1.
  *
- * Without these a #DF is delivered on whatever stack was already broken —
+ * Without these a #DF is delivered on whatever stack was already broken ,
  * so the CPU cannot push the exception frame, and a triple fault reboots
  * the machine with no output at all. An IST entry makes the CPU switch to
  * a known-good stack unconditionally, which turns a silent reset into a
@@ -184,7 +184,7 @@ void gdt_init(void) {
 
     memset(tss_table, 0, sizeof(tss_table));
 
-    /* Install BSP TSS at GDT_TSS using a static boot stack — sched will
+    /* Install BSP TSS at GDT_TSS using a static boot stack , sched will
      * overwrite rsp0 once the BSP gets a real per-task syscall stack. */
     gdt_install_tss(0, (uint64_t)(bsp_kernel_stack + sizeof(bsp_kernel_stack)));
 
@@ -217,7 +217,7 @@ void gdt_load_tss_this_cpu(int cpu_id) {
     /* Once a TSS has been loaded into TR, its descriptor's type byte flips
      * from 0x89 (available) to 0x8B (busy). Re-issuing ltr on a busy
      * descriptor triggers #GP. Clear bit 1 (busy) back to 0x89 so this
-     * function is safe to call repeatedly — including the BSP path that
+     * function is safe to call repeatedly , including the BSP path that
      * re-loads its own TSS after percpu_init_bsp wires up the pointer. */
     gdt_table[sel + 5] = 0x89;
     __asm__ volatile ("ltr %0" :: "r"(sel) : "memory");

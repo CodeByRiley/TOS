@@ -1,4 +1,4 @@
-/* kernel/utilities/panic.h — unrecoverable-error surface.
+/* kernel/utilities/panic.h , unrecoverable-error surface.
  *
  * panic() emits a structured serial report with the call site, CPU/task and
  * bounded backtrace, draws a restart-style framebuffer screen when possible,
@@ -34,7 +34,7 @@ void panic_from_exception(const char *name,
  * Callers that sleep, yield, or wait on pit_ticks() belong here: without IRQ0
  * they hang the machine with no output, so fail loudly and name the function
  * instead. Busy-waits driven by polled hardware (see pit_delay_us) are exempt
- * — they are the correct thing to call in that window. */
+ * , they are the correct thing to call in that window. */
 #define REQUIRE_INTERRUPTS()                                                   \
   do {                                                                         \
     if (!interrupts_enabled())                                                 \

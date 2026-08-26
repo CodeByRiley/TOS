@@ -1,4 +1,4 @@
-/* kernel/memory/pmm.h — physical-frame allocator.
+/* kernel/memory/pmm.h , physical-frame allocator.
  *
  * Bitmap-backed PMM. Frames are 4 KiB and identified by their physical
  * base address (always a multiple of FRAME_SIZE). Stats are exposed for

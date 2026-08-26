@@ -1,9 +1,9 @@
-/* kernel/sched/sched.h — task table + scheduler surface.
+/* kernel/sched/sched.h , task table + scheduler surface.
  *
  * Holds:
- *   - struct task        — per-process kernel control block
- *   - enum task_state    — scheduler states
- *   - struct task_snap   — userspace-facing snapshot row (must match
+ *   - struct task        , per-process kernel control block
+ *   - enum task_state    , scheduler states
+ *   - struct task_snap   , userspace-facing snapshot row (must match
  *                          userspace struct proc_info byte-for-byte;
  *                          static_asserts enforce the ABI)
  *   - task spawn / yield / block / exit / sleep helpers
@@ -18,14 +18,14 @@
 #ifndef SCHED_H
 #define SCHED_H
 
-/* Priority levels. NORMAL is 0 so a zeroed task slot defaults to it — no
+/* Priority levels. NORMAL is 0 so a zeroed task slot defaults to it , no
  * path can accidentally inherit HIGH by forgetting to initialise.
  *
  * HIGH exists for the display critical path only: the window manager and
  * the framebuffer flush thread. Every client's pixels reach the screen
  * through those two, so leaving them to compete round-robin with their own
  * clients means one busy app decides the whole desktop's frame rate.
- * Scheduling is weighted, not strict — see SCHED_HIGH_BURST — so a spinning
+ * Scheduling is weighted, not strict , see SCHED_HIGH_BURST , so a spinning
  * HIGH task slows the system down instead of wedging it. */
 #include "utilities/types.h"
 #define SCHED_PRIO_NORMAL 0
@@ -35,7 +35,7 @@
 #define TASK_MAX_FDS 32
 #define TASK_CWD_MAX 256
 
-/* Arena bases come from loader/process.h — see the user address-space map. */
+/* Arena bases come from loader/process.h , see the user address-space map. */
 #define INPUT_RING_SIZE_LOCAL 64
 #define IPC_RING_SIZE_LOCAL   16
 
@@ -51,7 +51,7 @@
 /* Freed mmap ranges, kept for reuse. Small and fixed: the arena is a bump
  * allocator, and this list is what stops a load/unload cycle from walking
  * mmap_next_va to the top of the arena and never coming back. If it fills
- * up, the oldest hole is dropped — that VA is leaked for the life of the
+ * up, the oldest hole is dropped , that VA is leaked for the life of the
  * process, exactly as it was before the list existed. */
 #define TASK_MMAP_HOLES 16
 
@@ -142,7 +142,7 @@ struct task {
 
   /* Pages this task has shared OUT to other tasks. Receivers carry
    * VMM_SHARED so their cleanup skips the frame, which makes the owner
-   * solely responsible for it — so the owner's PML4 must not be freed
+   * solely responsible for it , so the owner's PML4 must not be freed
    * while any receiver still maps it. Nothing decrements this yet: there
    * is no unshare, and receiver exit does not notify the owner. See
    * task_reap_unclaimed. */
@@ -165,7 +165,7 @@ struct task {
 };
 
 /* Snapshot row returned by sched_snapshot. Mirrors the userspace
- * struct proc_info in userspace/lib/syscall.h — keep both in sync. */
+ * struct proc_info in userspace/lib/syscall.h , keep both in sync. */
 struct task_snap {
   uint64_t ticks_run;
   int      pid;
@@ -251,7 +251,7 @@ void task_reap(struct task *t);
 
 /* Reap every zombie nobody is waiting on. Returns how many were freed.
  * Never touches a zombie whose waiter is still blocked on it, and never
- * the caller itself — reaping the running task would free the kstack it
+ * the caller itself , reaping the running task would free the kstack it
  * is executing on. Called from the idle thread and on slot exhaustion. */
 int task_reap_unclaimed(void);
 

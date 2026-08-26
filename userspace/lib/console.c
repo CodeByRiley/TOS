@@ -1,4 +1,4 @@
-/* userspace/lib/console.c — userspace console wrappers.
+/* userspace/lib/console.c , userspace console wrappers.
  *
  * Thin shims over SYS_CON_WRITE / SYS_CON_CLEAR / SYS_CON_PUSH / SYS_CON_POP.
  * Glyph rendering and palette live in the kernel WM; userspace only streams
@@ -28,7 +28,7 @@ void console_zoom_out(void) {
 	con_zoom(-1);
 }
 
-/* Color is a kernel concern — stub kept so apps can call it portably. */
+/* Color is a kernel concern , stub kept so apps can call it portably. */
 void console_set_color(uint32_t fg, uint32_t bg) {
     (void)fg;
     (void)bg;

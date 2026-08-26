@@ -1,4 +1,4 @@
-/* userspace/bin/shutdown/shutdown.c — `shutdown` command.
+/* userspace/bin/shutdown/shutdown.c , `shutdown` command.
  *
  * Thin wrapper over SYS_SHUTDOWN. Accepts a delay and a free-form reason
  * string the kernel logs before powering off. Doesn't return on success.

@@ -1,4 +1,4 @@
-/* kernel/devices/serial.c — COM1 UART driver.
+/* kernel/devices/serial.c , COM1 UART driver.
  *
  * 38400 8N1, polled output. Used for kernel printf + early-boot logs
  * (visible in QEMU's serial window). Loopback self-test on init catches
@@ -36,7 +36,7 @@ int serial_init(void) {
 /* Bit 5 of LSR = transmitter holding-register empty. */
 static int tx_empty(void) { return inb(COM1 + 5) & 0x20; }
 
-/* Polled char write — busy-waits for THR-empty. */
+/* Polled char write , busy-waits for THR-empty. */
 void serial_write_char(char c) {
     while (!tx_empty()) {
     }

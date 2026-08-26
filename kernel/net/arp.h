@@ -1,9 +1,9 @@
-/* kernel/net/arp.h — ARP cache, resolution, and the pending-frame queue.
+/* kernel/net/arp.h , ARP cache, resolution, and the pending-frame queue.
  *
  * This is the piece that lets TOS speak first. The old driver-resident ARP
  * only ever answered: it read the requester's MAC out of the request it was
  * replying to, so it never needed a cache and could never originate a
- * packet. Everything above IP depends on the opposite — being handed a
+ * packet. Everything above IP depends on the opposite , being handed a
  * destination IP and having to find the MAC.
  *
  * On a cache miss the frame is *queued*, not dropped. Dropping is simpler
@@ -46,7 +46,7 @@ struct arp_ipv4 {
 void arp_input(const struct eth_hdr *eth, const uint8_t *payload, uint16_t len);
 
 /* Cache lookup only. 0 and mac_out filled on a hit, -1 on a miss. Sends
- * nothing — use arp_send_or_queue() when there is a frame to deliver. */
+ * nothing , use arp_send_or_queue() when there is a frame to deliver. */
 int arp_lookup(const uint8_t ip[IPV4_ALEN], uint8_t mac_out[ETH_ALEN]);
 
 /* Deliver `frame` (ETH_HDR_LEN of headroom + payload_len of payload) to
@@ -84,7 +84,7 @@ void arp_prime_gateway(void);
  * enough to call every pass and does nothing when the cache is idle. */
 void arp_tick(void);
 
-/* Drop every entry — DHCP calls this when the address changes, because a
+/* Drop every entry , DHCP calls this when the address changes, because a
  * cache learned under the old address is answering for a different host. */
 void arp_flush(void);
 

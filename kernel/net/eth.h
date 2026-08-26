@@ -1,4 +1,4 @@
-/* kernel/net/eth.h — Ethernet framing and receive demultiplexing.
+/* kernel/net/eth.h , Ethernet framing and receive demultiplexing.
  *
  * The NIC runs promiscuous (e1000 sets RCTL_UPE|RCTL_MPE) so netmon can
  * capture the whole segment. That is the right setting for a monitor and

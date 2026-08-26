@@ -1,4 +1,4 @@
-/* userspace/bin/uidemo/uidemo.c — live reference for lib/gfx and lib/ui.
+/* userspace/bin/uidemo/uidemo.c , live reference for lib/gfx and lib/ui.
  *
  * A libwm client that draws every widget lib/ui offers and reacts to the
  * pointer, so the API can be seen working rather than only read about.
@@ -7,7 +7,7 @@
  * surface from that state, invalidate, yield.
  *
  * Because lib/ui is immediate mode, there is no widget setup and no
- * teardown — the window's appearance is a pure function of the handful of
+ * teardown , the window's appearance is a pure function of the handful of
  * variables in main(), recomputed every frame.
  */
 #include <lib/syscall.h>

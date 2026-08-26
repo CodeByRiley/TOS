@@ -1,4 +1,4 @@
-/* userspace/lib/time_stub.c — wall-clock time from the kernel's RTC.
+/* userspace/lib/time_stub.c , wall-clock time from the kernel's RTC.
  *
  * `time()` used to return uptime because there was no RTC at all. The kernel
  * reads the CMOS now, so CLOCK_REALTIME is a real Unix timestamp and this is

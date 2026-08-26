@@ -1,4 +1,4 @@
-/* kernel/boot/multiboot2.h — Multiboot2 info struct + tag layouts.
+/* kernel/boot/multiboot2.h , Multiboot2 info struct + tag layouts.
  *
  * The bootloader (GRUB) hands us a chain of tags describing memory map,
  * framebuffer, modules, ACPI RSDP, etc. This header declares just the
@@ -19,8 +19,8 @@
 #define MULTIBOOT_TAG_MODULE        3
 #define MULTIBOOT_TAG_MMAP          6
 #define MULTIBOOT_TAG_FRAMEBUFFER   8
-#define MULTIBOOT_TAG_ACPI_OLD     14   /* RSDP v1 (ACPI 1.0) — 20-byte header */
-#define MULTIBOOT_TAG_ACPI_NEW     15   /* XSDP v2+ — 36-byte header           */
+#define MULTIBOOT_TAG_ACPI_OLD     14   /* RSDP v1 (ACPI 1.0) , 20-byte header */
+#define MULTIBOOT_TAG_ACPI_NEW     15   /* XSDP v2+ , 36-byte header           */
 
 /* Framebuffer color encodings reported by tag 8. */
 #define FB_TYPE_INDEXED 0
@@ -79,7 +79,7 @@ struct MB2_TAG_FRAMEBUFFER {
 
 /* ACPI tag: bootloader copies the RSDP into payload[]. ACPI_OLD = 20-byte
  * v1 RSDP; ACPI_NEW = 36-byte v2 XSDP. Either may appear depending on
- * firmware — try ACPI_NEW first, fall back to ACPI_OLD. */
+ * firmware , try ACPI_NEW first, fall back to ACPI_OLD. */
 struct MB2_TAG_ACPI {
     uint32_t type;
     uint32_t size;

@@ -1,9 +1,9 @@
-/* kernel/display/framebuffer.c — framebuffer abstraction.
+/* kernel/display/framebuffer.c , framebuffer abstraction.
  *
  * Two backends behind a single API:
- *   MB2 mode    — the contiguous run of physical pages GRUB handed us.
+ *   MB2 mode    , the contiguous run of physical pages GRUB handed us.
  *                  Direct writes are visible on the scanout.
- *   virtio-gpu  — a scatter-gather pixel buffer attached to the host
+ *   virtio-gpu  , a scatter-gather pixel buffer attached to the host
  *                  resource. Damage tracking + framebuffer_present()
  *                  flush touched rects over the virtqueue.
  *
@@ -32,7 +32,7 @@
 #include <utilities/string.h>
 
 #define FB_VIRT_BASE 0xFFFFE00000000000ULL
-/* Upper bound on FB size — 64 MiB. Covers 4K@32bpp (33 MiB) with headroom.
+/* Upper bound on FB size , 64 MiB. Covers 4K@32bpp (33 MiB) with headroom.
  * Anything bigger fails attach_virtio cleanly rather than corrupting state. */
 #define FB_MAX_BYTES (64ULL * 1024 * 1024)
 #define FB_MAX_PAGES (FB_MAX_BYTES / 4096)
@@ -63,10 +63,10 @@ static uint32_t fb_resize_generation = 0;
  * damage still merges so normal drawing does not burn a slot per pixel. */
 static struct fb_damage_rect dmg[FB_MAX_DAMAGE];
 static int dmg_count = 0;
-static spinlock_t damage_lock = SPINLOCK_INIT;
+static struct spinlock damage_lock = SPINLOCK_INIT;
 /* Serializes writes to the guest backing store against VirtIO transfers.
  * Userspace overlays must enter through framebuffer_present_user to take it. */
-static spinlock_t scanout_lock = SPINLOCK_INIT;
+static struct spinlock scanout_lock = SPINLOCK_INIT;
 
 static uint64_t damage_area(const struct fb_damage_rect *r) {
   return (uint64_t)r->w * (uint64_t)r->h;
@@ -235,7 +235,7 @@ struct fb_user_registration {
 };
 
 static struct fb_user_registration user_registration;
-static spinlock_t user_registration_lock = SPINLOCK_INIT;
+static struct spinlock user_registration_lock = SPINLOCK_INIT;
 
 static int registration_matches(const struct fb_user_registration *registration,
                                 uint64_t *user_pml4, int owner_pid,

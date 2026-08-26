@@ -27,7 +27,7 @@ struct hcd {
                              void *buffer, uint16_t length);
 };
 
-/* Setup packet — the 8 bytes opening every control transfer. USB is
+/* Setup packet , the 8 bytes opening every control transfer. USB is
  * little-endian like x86, so this maps straight onto the wire. */
 struct usb_setup_packet {
 	u8  bmRequestType;
@@ -58,7 +58,7 @@ struct usb_setup_packet {
 #define USB_REQ_SET_IDLE            0x0A
 #define USB_REQ_SET_PROTOCOL        0x0B
 
-/* Descriptor types — high byte of wValue in GET_DESCRIPTOR. INTERFACE and
+/* Descriptor types , high byte of wValue in GET_DESCRIPTOR. INTERFACE and
  * ENDPOINT are never requested directly; they arrive inline in the
  * configuration block. */
 #define USB_DESC_DEVICE             0x01
@@ -119,7 +119,7 @@ struct usb_descriptor {
 
 /* Configuration Descriptor (9 bytes). wTotalLength covers this descriptor plus
  * every interface and endpoint descriptor after it, returned as one contiguous
- * block — hence the two-request read: 9 bytes for the total, then the rest. */
+ * block , hence the two-request read: 9 bytes for the total, then the rest. */
 struct usb_config_descriptor {
 	u8  bLength;
 	u8  bDescriptorType;

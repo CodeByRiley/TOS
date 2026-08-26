@@ -1,4 +1,4 @@
-/* kernel/arch/syscall.h — kernel-side syscall ABI.
+/* kernel/arch/syscall.h , kernel-side syscall ABI.
  *
  * Defines every SYS_* number, the saved-register frame produced by
  * SYSCALL entry (kernel/arch/x86_64/cpu/syscall.asm), and the C dispatcher
@@ -45,7 +45,7 @@
 #define SYS_RMDIR           84
 #define SYS_UNLINK  		 87
 #define SYS_GETTIMEOFDAY    96
-#define SYS_READDIR        217   /* Linux getdents64 — that ABI only */
+#define SYS_READDIR        217   /* Linux getdents64 , that ABI only */
 #define SYS_READDIR_INDEX  1125  /* TOS index-based directory walk */
 #define SYS_SET_TID_ADDRESS 218
 #define SYS_EXIT_GROUP     231
@@ -189,8 +189,9 @@ _Static_assert(sizeof(struct audio_status_user) == 48,
  * kernel/net/netmon.h; no protocol state is reachable through these. */
 #define SYS_NET_STATS    1140
 #define SYS_NET_CAPTURE  1141
+#define SYS_NET_PING     1142
 /* Saved register frame produced by SYSCALL entry. Order matches the
- * pushes in syscall.asm — DO NOT reorder without updating both sides.
+ * pushes in syscall.asm , DO NOT reorder without updating both sides.
  * The C dispatcher reads syscall number from rax and args from rdi/rsi/
  * rdx/r10/r8/r9 (SysV minus rcx, which holds the saved RIP). */
 struct syscall_frame {

@@ -1,10 +1,10 @@
-/* kernel/virtio/virtio_gpu.c — virtio-gpu (2D scanout) driver.
+/* kernel/virtio/virtio_gpu.c , virtio-gpu (2D scanout) driver.
  *
  * Owns the host-side resource id + scanout. framebuffer.c owns the
  * kernel-side pixel buffer; they cooperate via create_scanout_2d (attach
  * backing), resize_scanout_2d, and flush_rect (push pixels).
  *
- * Single global instance — the kernel only ever drives one GPU. Submits
+ * Single global instance , the kernel only ever drives one GPU. Submits
  * commands on the controlq, polls for responses synchronously (no
  * interrupt path yet), and exposes display-resize events through
  * virtio_gpu_poll_display_event() so the kernel TTY can rebind on host
@@ -26,7 +26,7 @@ static struct virtq      controlq;
 static struct virtio_gpu gpu_state;
 
 /* Scratch request/response buffers. We do all I/O synchronously, so a single
- * page each is plenty — the largest commands are ATTACH_BACKING with a tail
+ * page each is plenty , the largest commands are ATTACH_BACKING with a tail
  * of mem_entry records, which still fit in 4 KiB up to ~340 entries (each is
  * 16 bytes). For framebuffers larger than 1.3 MiB we'll split the attach
  * across multiple commands. */
@@ -298,7 +298,7 @@ int virtio_gpu_init(void) {
     if (virtio_negotiate(&vdev, 0) != 0) return -1;
 
     if (virtio_queue_setup(&vdev, 0, &controlq) != 0) return -1;
-    /* Queue 1 (cursorq) is optional — we leave it unconfigured. */
+    /* Queue 1 (cursorq) is optional , we leave it unconfigured. */
     virtio_queue_enable(&vdev, &controlq);
 
     /* Allocate physical scratch pages and access them through the HHDM. */

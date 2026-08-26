@@ -28,7 +28,7 @@
 // 1    | Hidden     |
 // 0    | Read Only  |
 //
-// FAT_ATTR_LFN is not a bit but the value 0x0F — all four of the low bits at
+// FAT_ATTR_LFN is not a bit but the value 0x0F , all four of the low bits at
 // once. That combination is meaningless for a real file, which is exactly why
 // it was chosen: an old 8.3-only driver sees read-only+hidden+system+volume-id
 // and skips the entry, so long-name slots stay invisible to it.
@@ -591,7 +591,7 @@ static struct dir_entry *cursor_next(struct dir_cursor *cursor) {
 }
 
 /* Push one sector of the RAM array at whatever is backing it. A no-op when
- * no backend is installed — the image is then RAM-only and already current. */
+ * no backend is installed , the image is then RAM-only and already current. */
 static void fat_flush_sector(uint32_t lba) {
     if (!fs_image || !sector_writer) return;
 
@@ -653,7 +653,7 @@ static void fat_set(uint32_t cluster, uint32_t value) {
     fat_put(table, cluster, value);
 
     /* Flush the sector holding this cluster's entry, not the first sector of
-     * the table — those are the same thing only for cluster numbers inside
+     * the table , those are the same thing only for cluster numbers inside
      * the first sector. */
     fat_flush_bytes(table + (size_t)cluster * entry_width, entry_width);
   }
@@ -1241,7 +1241,7 @@ static int create_entry(struct fat_dir parent, const char *leaf, uint8_t attr,
 }
 
 /* Drop an open file's contents while keeping its directory entry. The
- * alternative — unlink then create — destroys the entry before knowing a
+ * alternative , unlink then create , destroys the entry before knowing a
  * replacement can be allocated, so a failure halfway leaves no file at
  * all. This cannot fail: freeing a chain never allocates. */
 int fat_truncate(struct fat_file *file) {
@@ -1406,7 +1406,7 @@ static void set_dot_entry(struct dir_entry *entry, int parent,
     entry->name[1] = '.';
   entry->attr = FAT_ATTR_DIRECTORY;
   entry_set_cluster(entry, cluster);
-  /* Stamp these too — a freshly created directory whose own '.' and '..'
+  /* Stamp these too , a freshly created directory whose own '.' and '..'
    * read 1980-00-00 looks like a damaged entry next to the dated one the
    * parent holds. */
   fat_set_timestamp(entry);
@@ -1444,7 +1444,7 @@ int fat_mkdir(const char *path) {
     return -1;
   }
 
-  /* Only after create_entry succeeds — flushing first would put a directory
+  /* Only after create_entry succeeds , flushing first would put a directory
    * on disk that nothing references if the entry allocation then failed. */
   fat_flush_bytes(children, cluster_bytes());
   return 0;
@@ -1506,7 +1506,7 @@ int fat_rmdir(const char *path) {
 }
 
 /* FAT packs a date into 16 bits as year-since-1980:7 | month:4 | day:5, and a
- * time as hour:5 | minute:6 | (second/2):5 — two-second resolution is the
+ * time as hour:5 | minute:6 | (second/2):5 , two-second resolution is the
  * format's, not ours. */
 static uint16_t fat_encode_date(const struct rtc_time *t) {
   uint16_t year = (uint16_t)(t->year - 1980);

@@ -1,13 +1,13 @@
-/* kernel/loader/process.c — process create / exec / spawn.
+/* kernel/loader/process.c , process create / exec / spawn.
  *
  * Orchestrates the steps to launch a user-mode task:
- *   1. process_pml4_create()    — fresh PML4 sharing kernel-low identity
- *   2. elf_load()               — load the ELF into the PML4
- *   3. user_stack_alloc_in()    — populate the user stack pages
- *   4. argv marshal             — copy argv strings and Linux-style
+ *   1. process_pml4_create()    , fresh PML4 sharing kernel-low identity
+ *   2. elf_load()               , load the ELF into the PML4
+ *   3. user_stack_alloc_in()    , populate the user stack pages
+ *   4. argv marshal             , copy argv strings and Linux-style
  *                                  argc/argv/envp/auxv terminators onto the
  *                                  user stack
- *   5. task activation          — publish the reserved task as runnable
+ *   5. task activation          , publish the reserved task as runnable
  *
  * process_exec blocks until the child exits and returns its code.
  * process_spawn_async snapshots the request, reserves the child's final pid,

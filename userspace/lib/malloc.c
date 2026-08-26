@@ -1,4 +1,4 @@
-/* userspace/lib/malloc.c — process-local heap allocator.
+/* userspace/lib/malloc.c , process-local heap allocator.
  *
  * First-fit free list over `mmap`-backed 64 KiB chunks. Blocks carry a
  * doubly-linked header (size / free flag / prev / next) and grow the heap
@@ -7,7 +7,7 @@
  *
  * Trade-offs:
  *   - 16-byte alignment for all returned pointers.
- *   - No size classes, no slab — fragmentation is acceptable at the scale
+ *   - No size classes, no slab , fragmentation is acceptable at the scale
  *     userspace apps currently run at (shell, btop, DOOM).
  *   - Not thread-safe (no userspace threads yet).
  */

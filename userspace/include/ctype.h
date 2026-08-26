@@ -1,6 +1,6 @@
-/* userspace/include/ctype.h — ASCII-only character classifiers.
+/* userspace/include/ctype.h , ASCII-only character classifiers.
  *
- * All routines are static inlines; no .c file needed. Locale is ignored —
+ * All routines are static inlines; no .c file needed. Locale is ignored ,
  * everything treats input as 7-bit ASCII.
  */
 #ifndef CTYPE_H

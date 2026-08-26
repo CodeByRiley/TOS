@@ -1,4 +1,4 @@
-/* kernel/loader/process.h — process spawn surface.
+/* kernel/loader/process.h , process spawn surface.
  *
  * Wraps PML4 creation, user-stack allocation, ELF load, and task spawn
  * into one entry point. exec() blocks the caller until the child exits;

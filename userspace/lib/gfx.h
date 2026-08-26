@@ -1,4 +1,4 @@
-/* userspace/lib/gfx.h — 2D drawing over a pixel buffer.
+/* userspace/lib/gfx.h , 2D drawing over a pixel buffer.
  *
  * The primitives winman and its clients both need: rectangles, fills,
  * blits, font8x8 text, mask stamping and BMP drawing, all clipped so a
@@ -11,7 +11,7 @@
  * everything else ignores it and writes the low 24 bits, so the existing
  * 0x00RRGGBB palette constants keep working unchanged.
  *
- * Coordinates are pixels, and `stride` is in pixels rather than bytes —
+ * Coordinates are pixels, and `stride` is in pixels rather than bytes ,
  * a surface over a wm window is (pitch / 4).
  *
  * Implementation: userspace/lib/gfx.c.
@@ -129,7 +129,7 @@ void gfx_glyph_bg(struct gfx_surface *s, int x, int y, char c,
                   uint32_t fg, uint32_t bg, int scale);
 
 /* Draw a NUL-terminated string left to right. No wrapping and no newline
- * handling — a caller wanting either owns the line breaking. */
+ * handling , a caller wanting either owns the line breaking. */
 void gfx_text(struct gfx_surface *s, int x, int y, const char *str,
               uint32_t fg, int scale);
 void gfx_text_bg(struct gfx_surface *s, int x, int y, const char *str,

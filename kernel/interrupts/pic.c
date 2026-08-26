@@ -1,4 +1,4 @@
-/* kernel/interrupts/pic.c — 8259A PIC driver.
+/* kernel/interrupts/pic.c , 8259A PIC driver.
  *
  * Remaps legacy IRQs 0..15 to CPU vectors 0x20..0x2F so they don't
  * collide with the architectural exception range (0..31). Once the
@@ -16,10 +16,10 @@
 /* OCW2, non-specific End Of Interrupt (bits 7-5 = 001). */
 #define PIC_EOI   0x20
 
-/* ICW1 — written to the command port, starts the init sequence */
+/* ICW1 , written to the command port, starts the init sequence */
 //
 // Bits | Name | Description
-// 7-5  | —    | Must be 0 in 8086 mode
+// 7-5  | ,    | Must be 0 in 8086 mode
 // 4    | INIT | 1 = Begin initialisation; the next writes are ICW2..ICW4
 // 3    | LTIM | 0 = Edge triggered, 1 = Level triggered
 // 2    | ADI  | Ignored in 8086 mode
@@ -28,13 +28,13 @@
 #define ICW1_INIT  0x10
 #define ICW1_ICW4  0x01
 
-/* ICW2 — vector base. The PIC ORs the IRQ number into the low 3 bits, so
+/* ICW2 , vector base. The PIC ORs the IRQ number into the low 3 bits, so
  * the base must be 8-aligned. 0x20/0x28 move IRQ0-15 to vectors 32-47,
  * clear of the architectural exception range 0-31. */
 #define ICW2_PIC1_VECTOR 0x20
 #define ICW2_PIC2_VECTOR 0x28
 
-/* ICW3 — cascade wiring. Asymmetric by design: the master takes a bitmask
+/* ICW3 , cascade wiring. Asymmetric by design: the master takes a bitmask
  * of which IRQ lines have a slave attached, the slave takes the line number
  * it is attached to. Both therefore describe the same wire, IRQ2. */
 #define ICW3_MASTER_SLAVE_MASK 0x04  /* bit 2 set = slave on IRQ2 */
@@ -43,7 +43,7 @@
 /* ICW4 */
 //
 // Bits | Name  | Description
-// 7-5  | —     | Must be 0
+// 7-5  | ,     | Must be 0
 // 4    | SFNM  | 1 = Special fully nested mode
 // 3    | BUF   | 1 = Buffered mode
 // 2    | M/S   | Buffered master (1) or slave (0)
@@ -72,7 +72,7 @@ void pic_remap(void) {
 }
 
 void pic_send_eoi(uint8_t irq) {
-    /* A slave IRQ reaches the CPU through the master, so both need the EOI —
+    /* A slave IRQ reaches the CPU through the master, so both need the EOI ,
      * slave first, or the master unblocks before the slave has cleared. */
     if (irq >= 8) outb(PIC2_CMD, PIC_EOI);
     outb(PIC1_CMD, PIC_EOI);

@@ -1,4 +1,4 @@
-/* kernel/utilities/string.c — kernel mem... / str... primitives.
+/* kernel/utilities/string.c , kernel mem... / str... primitives.
  *
  * mem* routines use rep movsq/stosq for the bulk path and a byte tail.
  * str* routines are straightforward byte loops. strdup lives here (vs.
@@ -150,7 +150,7 @@ char *strrchr(const char *s, int c) {
     return (char *)last;
 }
 
-/* strstr(3) — naive O(n*m) substring search. */
+/* strstr(3) , naive O(n*m) substring search. */
 char *strstr(const char *h, const char *n) {
     if (!*n) return (char *)h;
     for (; *h; h++) {
@@ -171,7 +171,7 @@ char *strdup(const char *s) {
     return p;
 }
 
-/* strerror(3) stub — no errno strings in the kernel. */
+/* strerror(3) stub , no errno strings in the kernel. */
 char *strerror(int e) {
     (void)e;
     return "error";

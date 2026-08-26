@@ -48,10 +48,10 @@ musl is the default libc for userspace. Every program under `bin/` links
 `crt1.o` + `libc.a` plus `lib/libtos.a` (the TOS-only half: winman IPC, the
 framebuffer, the console, audio, the drawing and font helpers), except:
 
-- `bin/thread` — drives TOS's own `SYS_THREAD_CREATE`/`EXIT`/`JOIN`, while
+- `bin/thread` , drives TOS's own `SYS_THREAD_CREATE`/`EXIT`/`JOIN`, while
   musl's pthreads issue Linux `clone(2)`, which the kernel does not implement.
-- `games/doom` — a vendored tree that has not been re-ported.
-- the PE builds (`*.exe`) — mingw targets, a separate toolchain entirely.
+- `games/doom` , a vendored tree that has not been re-ported.
+- the PE builds (`*.exe`) , mingw targets, a separate toolchain entirely.
 
 Those still link the hand-rolled `userspace/lib` objects. Everything else
 should use standard headers; reach for `<lib/syscall.h>` only for calls musl

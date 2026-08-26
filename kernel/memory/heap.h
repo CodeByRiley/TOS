@@ -1,4 +1,4 @@
-/* kernel/memory/heap.h — kernel heap (kmalloc/kfree).
+/* kernel/memory/heap.h , kernel heap (kmalloc/kfree).
  *
  * First-fit free list over pmm-backed pages. Initialised after pmm_init.
  * Userspace mmap is unrelated; this surface is kernel-internal only.

@@ -1,4 +1,6 @@
-/* kernel/net/ipv4.c — see ipv4.h. */
+/* kernel/net/ipv4.c , see ipv4.h. */
+#include "net/udp.h"
+#include "utilities/log.h"
 #include <net/arp.h>
 #include <net/eth.h>
 #include <net/icmp.h>
@@ -57,6 +59,9 @@ int ipv4_output_framed(uint8_t *frame, const uint8_t dst[IPV4_ALEN],
   if (ipv4_dst_is_broadcast(nif, dst))
     return eth_output_framed(frame, eth_broadcast, ETH_TYPE_IPV4, total_len);
 
+  // uint8_t qemu_mac[6] = {0x52, 0x54, 0x00, 0x12, 0x34, 0x56};
+  // return eth_output_framed(frame, qemu_mac, ETH_TYPE_IPV4, total_len);
+
   uint8_t hop[IPV4_ALEN];
   if (ipv4_next_hop(nif, dst, hop) != 0)
     return -1;
@@ -90,7 +95,7 @@ void ipv4_input(const struct eth_hdr *eth, const uint8_t *packet,
   uint16_t ihl = (uint16_t)((ip->version_ihl & 0x0F) * 4);
   uint16_t total_len = from_be16(ip->total_length);
 
-  /* total_len may be shorter than len — Ethernet pads to 60 bytes, so a
+  /* total_len may be shorter than len , Ethernet pads to 60 bytes, so a
    * small packet always arrives with trailing filler. Trust the header,
    * but only after checking it fits inside what was actually received. */
   if (ihl < IPV4_HDR_LEN || total_len < ihl || total_len > len)
@@ -104,6 +109,11 @@ void ipv4_input(const struct eth_hdr *eth, const uint8_t *packet,
   if (from_be16(ip->flags_fragment) & 0x3FFF)
     return;
 
+  log_write_fmt(KERNEL, LOG_DEBUG,
+                "RX IP packet for %d.%d.%d.%d. My IP is %d.%d.%d.%d\n",
+                ip->dst[0], ip->dst[1], ip->dst[2], ip->dst[3], nif->ipv4[0],
+                nif->ipv4[1], nif->ipv4[2], nif->ipv4[3]);
+
   if (!ipv4_addr_equal(ip->dst, nif->ipv4) &&
       !ipv4_dst_is_broadcast(nif, ip->dst))
     return;
@@ -114,6 +124,29 @@ void ipv4_input(const struct eth_hdr *eth, const uint8_t *packet,
   switch (ip->protocol) {
   case IPPROTO_ICMP:
     icmp_input(ip, payload, payload_len);
+    break;
+  case IPPROTO_UDP: {
+    log_write("net: UDP packet received", KERNEL, LOG_INFO);
+
+    const struct udp_header *udp = (const struct udp_header *)payload;
+    const uint8_t *udp_payload = payload + UDP_HEADER_SIZE;
+    uint16_t udp_payload_len = payload_len - UDP_HEADER_SIZE;
+
+    struct ipv4_addr src = *(struct ipv4_addr *)ip->src;
+    struct ipv4_addr dst = *(struct ipv4_addr *)ip->dst;
+
+    socket_handle_incoming(src,                 // src_ip
+                           udp->src_port,       // src_port
+                           dst,                 // dest_ip
+                           udp->dst_port,       // dest_port
+                           IPPROTO_UDP,         // protocol
+                           (void *)udp_payload, // payload
+                           udp_payload_len      // length
+    );
+    break;
+  }
+  case IPPROTO_TCP:
+    log_write("net: UDP packet received", KERNEL, LOG_INFO);
     break;
   default:
     /* UDP and TCP land here once the socket layer is honest. */

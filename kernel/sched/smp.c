@@ -1,4 +1,4 @@
-/* kernel/sched/smp.c — SMP boot orchestration.
+/* kernel/sched/smp.c , SMP boot orchestration.
  *
  * The BSP walks the ACPI cpu list, prepares per-CPU state (kstack, TSS
  * descriptor, percpu slot), copies the AP real-mode trampoline to
@@ -51,7 +51,7 @@ struct smp_work_item {
 static struct smp_work_item work_queue[SMP_WORK_CAPACITY];
 static uint32_t work_head;
 static uint32_t work_tail;
-static spinlock_t work_lock = SPINLOCK_INIT;
+static struct spinlock work_lock = SPINLOCK_INIT;
 static volatile int online_workers;
 static volatile uint64_t completed_jobs;
 
@@ -131,9 +131,9 @@ static void smp_probe_job(void *arg) {
 #define AP_PATCH_TARGET_OFF   8
 
 /* Spin for roughly `us` microseconds using PIT ticks (100 Hz = 10 ms each).
- * Granularity is 10 ms — we round up to at least one tick. Good enough for
+ * Granularity is 10 ms , we round up to at least one tick. Good enough for
  * the Intel-spec 10 ms inter-INIT delay and the 200 µs inter-SIPI delay
- * (which we just round up to one 10 ms PIT tick — well within spec). */
+ * (which we just round up to one 10 ms PIT tick , well within spec). */
 static void smp_delay_us(uint64_t us) {
     uint64_t ticks = (us + 9999) / 10000;
     if (ticks == 0) ticks = 1;
@@ -217,7 +217,7 @@ void smp_boot_aps(void) {
                   LOG_INFO);
     log_write_hex("SMP: AP target CR3    =", target_cr3, KERNEL, LOG_INFO);
 
-    /* CPU 0 is the BSP — already running. Bring up 1..n-1. */
+    /* CPU 0 is the BSP , already running. Bring up 1..n-1. */
     for (int i = 1; i < n; i++) {
         boot_one_ap(i, acpi_cpu_apic_id(i), (uint32_t)bootstrap_phys,
                     target_cr3);

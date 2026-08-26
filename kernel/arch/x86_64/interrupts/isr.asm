@@ -1,4 +1,4 @@
-; kernel/arch/x86_64/interrupts/isr.asm — IDT entry stubs + common dispatcher.
+; kernel/arch/x86_64/interrupts/isr.asm , IDT entry stubs + common dispatcher.
 ;
 ; 48 vectors (0..31 = CPU exceptions, 32..47 = PIC-remapped IRQs), each
 ; entered via its own tiny stub so we know which vector fired and so
@@ -75,7 +75,7 @@ ISR_NOERR 47
 ISR_NOERR 240       ; SMP work-queue wake IPI
 ISR_NOERR 255       ; LAPIC spurious vector
 
-; Save every general-purpose register. Interrupts are asynchronous — there is
+; Save every general-purpose register. Interrupts are asynchronous , there is
 ; no calling convention to lean on, no caller-saved/callee-saved distinction
 ; we get to honour. Skipping any of these is a bug, full stop.
 isr_common:

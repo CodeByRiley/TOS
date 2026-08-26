@@ -100,7 +100,7 @@ static void mark_modified(void) {
   update_status();
 }
 
-/* Read `path` into text_buf. A missing file is not an error — it just means
+/* Read `path` into text_buf. A missing file is not an error , it just means
  * this is a new document that save will create. */
 static void load_text_file(const char *path) {
   FILE *f = fopen(path, "r");
@@ -112,7 +112,7 @@ static void load_text_file(const char *path) {
   /* One bulk read rather than a getc loop: fgetc lives in lib/stdio_extra.o,
    * which only the DOOM build links, and reading byte-at-a-time through an
    * unbuffered FILE is a syscall per character regardless. The MAX_CHARS
-   * cap is the buffer bound — a longer file loads its head and says so. */
+   * cap is the buffer bound , a longer file loads its head and says so. */
   size_t got = fread(text_buf, 1, MAX_CHARS, f);
   fclose(f);
 
@@ -165,7 +165,7 @@ static void save_text(int save_as) {
   fclose(f);
 
   if (written != (size_t)text_len) {
-    wm_prompt(win_handle, WM_PROMPT_MESSAGE, "Short write — disk full?", 0, 0);
+    wm_prompt(win_handle, WM_PROMPT_MESSAGE, "Short write , disk full?", 0, 0);
     set_status("Save failed");
     printf("notepad: short write to %s (%d of %d bytes)\n", file_path,
            (int)written, text_len);
@@ -185,7 +185,7 @@ static void save_text(int save_as) {
  * Returns 1 when the caller may proceed. Shared by close and new so the two
  * cannot answer the question differently.
  *
- * Yes saves first and only proceeds if that worked — a save that failed or
+ * Yes saves first and only proceeds if that worked , a save that failed or
  * whose Save As prompt was cancelled must not then discard the text it was
  * trying to preserve. */
 static int confirm_discard(const char *question) {
@@ -199,7 +199,7 @@ static int confirm_discard(const char *question) {
     save_text(0);
     return !dirty;
   }
-  return 1; /* No — discard the edits */
+  return 1; /* No , discard the edits */
 }
 
 /* Ctrl+N. Empties the buffer and detaches it from any file, so the next
@@ -323,7 +323,7 @@ int main(int argc, char **argv) {
   int running = 1;
   while (running) {
     /* wm_poll_event returns 1 when it filled `event`, 0 when the queue was
-     * empty — the raw ipc_recv this used to call has the same polarity. */
+     * empty , the raw ipc_recv this used to call has the same polarity. */
     if (wm_poll_event(&event)) {
       /* The owner must destroy its window after WM_EV_QUIT. */
       if (event.type == WM_EV_QUIT) {
@@ -371,7 +371,7 @@ int main(int argc, char **argv) {
                   update_status();
                   needs_redraw = 1;
                 } else {
-                  printf("notepad: nothing to reload — launch as "
+                  printf("notepad: nothing to reload , launch as "
                          "'notepad <path>'\n");
                 }
               } else if (keycode == KEY_N) {

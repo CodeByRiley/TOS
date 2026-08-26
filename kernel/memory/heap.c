@@ -1,10 +1,10 @@
-/* kernel/memory/heap.c — kernel heap (kmalloc/kfree).
+/* kernel/memory/heap.c , kernel heap (kmalloc/kfree).
  *
  * Doubly-linked first-fit allocator. The doubly-linked invariant means
  * kfree can coalesce in both directions in O(1), so the free list never
  * holds adjacent free blocks. That kills the need for a forward-sweep
- * pass inside kmalloc and bounds fragmentation tightly. Still a toy —
- * no buddy, no slab — but a well-behaved one.
+ * pass inside kmalloc and bounds fragmentation tightly. Still a toy ,
+ * no buddy, no slab , but a well-behaved one.
  *
  * The heap lives at a high-canonical kernel VA (HEAP_BASE) and grows on
  * demand by paging in fresh frames from the PMM. heap_grow + list_append
@@ -73,7 +73,7 @@ void heap_init(void) {
 }
 
 /* Append a freshly-grown region. If the existing tail is free, absorb
- * the new bytes into it instead of creating a new node — keeps the
+ * the new bytes into it instead of creating a new node , keeps the
  * no-adjacent-free-blocks invariant across heap_grow. */
 static void list_append(uint64_t region_start, size_t region_bytes) {
     if (tail && tail->free) {
@@ -126,7 +126,7 @@ void *kmalloc(size_t size) {
 
 /* Page-granular allocator for buffers too big to want a heap block, living in
  * its own VA range. The offset only ever moves forward and there is no
- * large_free, so every allocation is effectively permanent — fine for the
+ * large_free, so every allocation is effectively permanent , fine for the
  * boot-time buffers using it, wrong for anything with a lifecycle. */
 void* large_alloc(size_t size) {
     if (size == 0) return 0;

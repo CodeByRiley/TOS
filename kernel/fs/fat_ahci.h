@@ -1,4 +1,4 @@
-/* kernel/fs/fat_ahci.h — AHCI storage backend for the FAT driver.
+/* kernel/fs/fat_ahci.h , AHCI storage backend for the FAT driver.
  *
  * fat.c operates on a RAM image and knows nothing about disks. This is the
  * half that does: it loads the image off an AHCI port at mount time and

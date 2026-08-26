@@ -1,4 +1,4 @@
-/* kernel/fs/fat.h — minimal FAT filesystem driver.
+/* kernel/fs/fat.h , minimal FAT filesystem driver.
  *
  * Read/write FAT16 and FAT32 over an in-memory image (loaded from the GRUB
  * module payload). The on-disk type is detected from the cluster count at
@@ -33,7 +33,7 @@
  * name, an optional trailing '/', and the NUL. */
 #define FAT_DIRENT_MAX (FAT_LFN_MAX + 2)
 
-/* Opaque on-disk dir entry — real layout in fat.c. */
+/* Opaque on-disk dir entry , real layout in fat.c. */
 struct dir_entry;
 
 /* Open-file handle. `pos` is the byte cursor; `cur_cluster` is the
@@ -48,7 +48,7 @@ struct fat_file {
 
 /* Metadata for one path, without opening it. `attr` is the raw FAT
  * attribute byte; is_dir is broken out because that is the only bit every
- * caller wants. Directories report size 0 — FAT does not store a size for
+ * caller wants. Directories report size 0 , FAT does not store a size for
  * them, and walking the cluster chain to synthesise one would be a lie
  * with extra steps. */
 struct fat_stat {
@@ -61,7 +61,7 @@ struct fat_stat {
 /* Bind the driver to an in-memory FAT16 or FAT32 image. */
 int    fat_init(uint8_t *image, size_t size);
 
-/* 16 or 32 — which flavour fat_init detected. 0 before a successful mount. */
+/* 16 or 32 , which flavour fat_init detected. 0 before a successful mount. */
 int    fat_type_bits(void);
 
 /* Stat a root-relative path. Returns 0 on success, -1 if not found. */
@@ -73,7 +73,7 @@ int    fat_open(const char *path, struct fat_file *f);
 int    fat_create(const char *path, struct fat_file *f);
 
 /* Discard an open file's contents, keeping its directory entry and this
- * handle valid. Allocates nothing, so it cannot fail on a good handle —
+ * handle valid. Allocates nothing, so it cannot fail on a good handle ,
  * which is what makes it safe where unlink-then-create is not. */
 int    fat_truncate(struct fat_file *f);
 
@@ -99,7 +99,7 @@ long   fat_read_dir_one(const char *path, uint32_t *index, char *buf,
  * hold it past the call. */
 typedef void (*fat_sector_writer)(uint32_t lba, void *sector_data);
 
-/* Install the write-through backend, or NULL to drop back to RAM-only —
+/* Install the write-through backend, or NULL to drop back to RAM-only ,
  * which is the state a host test runs in, and the reason fat.c never names
  * a storage driver itself. */
 void   fat_set_sector_writer(fat_sector_writer writer);

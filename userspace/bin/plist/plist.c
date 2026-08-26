@@ -1,4 +1,4 @@
-/* userspace/bin/plist/plist.c — list the kernel task table.
+/* userspace/bin/plist/plist.c , list the kernel task table.
  *
  * usage: plist [pattern]
  *
@@ -27,7 +27,7 @@ static const char *state_str(int s) {
     }
 }
 
-/* Kernel threads spawned without task_set_name carry an empty name — the
+/* Kernel threads spawned without task_set_name carry an empty name , the
  * tty and framebuffer-flush threads both land there. A blank column reads
  * as a bug, so say what they are instead. */
 static const char *display_name(const char *name) {
@@ -49,7 +49,7 @@ int main(int argc, char **argv) {
     long shown = 0;
     for (long i = 0; i < n; i++) {
         /* task_set_name always terminates, but this buffer crossed a
-         * syscall boundary — bound it before any str* call trusts it. */
+         * syscall boundary , bound it before any str* call trusts it. */
         procs[i].name[PROC_NAME_MAX - 1] = '\0';
 
         if (pattern && !strstr(procs[i].name, pattern))

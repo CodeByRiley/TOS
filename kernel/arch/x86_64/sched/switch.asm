@@ -1,4 +1,4 @@
-; kernel/arch/x86_64/sched/switch.asm — context switch.
+; kernel/arch/x86_64/sched/switch.asm , context switch.
 ;
 ; void context_switch(uint64_t *old_rsp_ptr, uint64_t new_rsp,
 ;                     uint64_t new_cr3,
@@ -13,7 +13,7 @@
 ;
 ; The CR3 compare skips the (expensive) TLB-flushing mov when switching
 ; between two tasks that share an address space. fxsave/fxrstor are
-; unconditional — XMM state must move with the task or memcpy-heavy
+; unconditional , XMM state must move with the task or memcpy-heavy
 ; threads will silently clobber each other's register file.
 
 global context_switch

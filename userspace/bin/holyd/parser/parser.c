@@ -499,7 +499,7 @@ static ASTNode* ParseForeach(Parser* parser) {
 static ASTNode* ParseBlock(Parser* parser) {
     if (!match(parser, TOKEN_LBRACE)) {
         if (match(parser, TOKEN_SEMICOLON)) {
-            return ASTNewBlock(NULL, 0); // `if (c) ;` — an empty body.
+            return ASTNewBlock(NULL, 0); // `if (c) ;` , an empty body.
         }
 
         ASTNode* stmt = ParseStatement(parser);

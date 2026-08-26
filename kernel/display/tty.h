@@ -1,4 +1,4 @@
-/* kernel/display/tty.h — framebuffer-backed text terminal.
+/* kernel/display/tty.h , framebuffer-backed text terminal.
  *
  * Kernel-side fallback console. When the userspace winman registers it
  * calls tty_set_active(0), stops the kernel from touching the
@@ -49,7 +49,7 @@ int  tty_is_active(void);
  * console window. */
 size_t tty_drain(char *out, size_t max);
 
-/* Alt-screen save/restore — single level. push snapshots the grid +
+/* Alt-screen save/restore , single level. push snapshots the grid +
  * cursor into a backing buffer then clears the live grid so a fullscreen
  * app draws on a fresh canvas; pop restores. No-op if push wasn't called
  * or restore already happened. */

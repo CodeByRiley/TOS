@@ -1,4 +1,4 @@
-/* kernel/input/mouse.c — mouse input driver.
+/* kernel/input/mouse.c , mouse input driver.
  *
  * IRQ12 handler reads 3-byte (or 4-byte if intelliMouse) packets from
  * the AUX channel, converts them into relative motion + button mask,
@@ -51,7 +51,7 @@
 // 0xD4 | Write to AUX device                 | Next 0x60 write goes to the mouse
 //
 // Without the 0xD4 prefix a byte written to 0x60 goes to the keyboard, so
-// every mouse command needs it — one prefix per byte, not per sequence.
+// every mouse command needs it , one prefix per byte, not per sequence.
 #define CTRL_READ_CCB    0x20
 #define CTRL_WRITE_CCB   0x60
 #define CTRL_ENABLE_AUX  0xA8
@@ -100,7 +100,7 @@
 // 6    | X Overflow    | 1 = X movement exceeded the 9-bit range
 // 5    | Y Sign        | Sign bit for byte 2
 // 4    | X Sign        | Sign bit for byte 1
-// 3    | Always One    | Reads 1 on a valid first byte — the only framing marker
+// 3    | Always One    | Reads 1 on a valid first byte , the only framing marker
 // 2    | Middle Button |
 // 1    | Right Button  |
 // 0    | Left Button   |
@@ -258,7 +258,7 @@ static void submit_absolute(int32_t nx, int32_t ny, uint8_t buttons) {
 
 static void parse_packet(void) {
     uint8_t b0 = pkt[0];
-    /* Lost sync — drop and let the state machine recover. */
+    /* Lost sync , drop and let the state machine recover. */
     if (!(b0 & MOUSE_PKT_ALWAYS_ONE)) {
         pkt_idx = 0;
         return;

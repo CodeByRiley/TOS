@@ -180,7 +180,7 @@ static void e1000_setup_tx_registers(struct e1000_dev *nic) {
 
 static void e1000_enable_bus_master(const struct pci_device *pci) {
   uint16_t cmd = pci_read16(pci->addr, PCI_CFG_COMMAND);
-  cmd |= PCI_CMD_MEM | PCI_CMD_BUS_MASTER | PCI_CMD_INT_DISABLE;
+  cmd |= PCI_CMD_MEM | PCI_CMD_BUS_MASTER;
   pci_write16(pci->addr, PCI_CFG_COMMAND, cmd);
 }
 
@@ -194,9 +194,11 @@ static int e1000_tx(void *driver_data, const void *frame, uint16_t len) {
 
   uint32_t idx = nic->tx_current;
   struct e1000_tx_desc *desc = &nic->tx_ring_virt[idx];
-  if (!(desc->status & TSTA_DD))
+  if (!(desc->status & TSTA_DD)) {
+    log_write("e1000: TX ring full! Cannot send reply", KERNEL, LOG_ERROR);
     return -1;
-
+  }
+  log_write("e1000: Forwarding TX packet!", KERNEL, LOG_INFO);
   uint16_t wire_len = len < E1000_FRAME_MIN ? E1000_FRAME_MIN : len;
   memcpy(nic->tx_buffers[idx], frame, len);
   if (wire_len > len) {
@@ -236,7 +238,7 @@ static int e1000_init_hardware(struct e1000_dev *nic) {
     return -1;
   }
 
-  E1000_WRITE(nic, REG_IMC, 0xFFFFFFFF);
+  E1000_WRITE(nic, REG_IMS, 0x01); // Unmask ICR_RXDMT0 (Receive Interrupt)
   (void)E1000_READ(nic, REG_ICR);
 
   ctrl = E1000_READ(nic, REG_CTRL);
@@ -299,12 +301,16 @@ static void e1000_report_link(struct e1000_dev *nic) {
   netmon_set_link((status & 0x2u) != 0, speeds[(status >> 6) & 0x3u]);
 }
 
-static void e1000_poll_rx(struct device *dev) {
+static int e1000_poll_rx(struct device *dev) {
   struct e1000_dev *nic = (struct e1000_dev *)dev->driver_data;
   if (!nic)
-    return;
+    return 0;
 
+  /* Link state and ARP timers run every pass and are not "work": counting
+   * them would keep the poll task spinning on a completely idle link. */
   e1000_report_link(nic);
+
+  int handled = 0;
 
   for (int budget = 0; budget < E1000_NUM_RX_DESC; budget++) {
     struct e1000_rx_desc *desc = &nic->rx_ring_virt[nic->rx_current];
@@ -316,15 +322,23 @@ static void e1000_poll_rx(struct device *dev) {
     // We have a valid packet!
     uint16_t packet_len = desc->len;
 
+    /* tests/netmon_test.py counts this line to check the RX ring keeps
+     * receiving past the first frame. One line per frame, not a flood -
+     * silence it and that test reports a wedged ring that is fine. */
     log_write_fmt(KERNEL, LOG_INFO, "[e1000] Received packet! Length: %d bytes\n", packet_len);
+    // log_write_fmt(KERNEL, LOG_INFO, "        rx_current: %d, rx_ring_phys: %p, rx_buffers[rx_current]: %p\n", nic->rx_current, nic->rx_ring_phys, nic->rx_buffers[nic->rx_current]);
 
     netmon_record(NETMON_DIR_RX, nic->rx_buffers[nic->rx_current],
                   packet_len);
 
     // Hand the frame to the stack. netmon above saw it either way; the
     // address filter and protocol demux live in eth_input now.
+    log_write_fmt(KERNEL, LOG_INFO, "[e1000] Packet length: %d expecting 1514", packet_len);
     if (packet_len <= E1000_FRAME_MAX) {
+      log_write_fmt(KERNEL, LOG_INFO, "[e1000] Packet length is less than max, we accept", packet_len);
       eth_input((const uint8_t *)nic->rx_buffers[nic->rx_current], packet_len);
+    } else {
+      log_write_fmt(KERNEL, LOG_WARN, "[e1000] Dropping oversized frame of length %d", packet_len);
     }
 
     // Give the buffer back to the hardware.
@@ -340,11 +354,14 @@ static void e1000_poll_rx(struct device *dev) {
     uint32_t consumed = nic->rx_current;
     nic->rx_current = (nic->rx_current + 1) % E1000_NUM_RX_DESC;
     E1000_WRITE(nic, REG_RXDESCTAIL, consumed);
+    handled++;
   }
 
   /* ARP timeouts ride the poll task instead of earning a timer of their
    * own; the cache is empty and this returns immediately on most passes. */
   arp_tick();
+
+  return handled;
 }
 
 static int e1000_probe(struct device *dev) {

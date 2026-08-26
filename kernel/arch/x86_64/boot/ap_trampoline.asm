@@ -1,4 +1,4 @@
-; kernel/arch/x86_64/boot/ap_trampoline.asm — AP startup trampoline.
+; kernel/arch/x86_64/boot/ap_trampoline.asm , AP startup trampoline.
 ;
 ; Copied verbatim to physical address 0x8000 by the BSP before sending
 ; SIPI. The AP wakes in 16-bit real mode at CS=0x0800, IP=0x0000 (linear
@@ -13,11 +13,11 @@
 ; need once we land in C.
 ;
 ; Patch layout (offsets from 0x8000):
-;   ap_pml4_phys  : dword — kernel PML4 physical address (32-bit fits, we're
+;   ap_pml4_phys  : dword , kernel PML4 physical address (32-bit fits, we're
 ;                            below 4 GiB at this point in boot)
-;   ap_stack_top  : qword — ABI-adjusted AP kernel stack
-;   ap_handoff    : qword — virtual address of ap_long_mode_handoff()
-;   ap_target_cr3 : qword — final kernel PML4 physical address
+;   ap_stack_top  : qword , ABI-adjusted AP kernel stack
+;   ap_handoff    : qword , virtual address of ap_long_mode_handoff()
+;   ap_target_cr3 : qword , final kernel PML4 physical address
 ;
 ; Assembled with `nasm -f bin` so addresses are 0x8000-relative.
 
@@ -132,7 +132,7 @@ ap_target_cr3:  dq 0
 
 ; Export the patch-slot offsets so C can poke them via well-known constants.
 ; nasm doesn't expose these names to ld in -f bin, so we publish them via
-; equate comments — the C side hardcodes the same offsets, computed from
+; equate comments , the C side hardcodes the same offsets, computed from
 ; this file's layout. See `smp.c` and `AP_TRAMPOLINE_*_OFF`.
 
 ap_trampoline_end:

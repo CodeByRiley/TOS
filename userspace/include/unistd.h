@@ -1,4 +1,4 @@
-/* userspace/include/unistd.h — POSIX unistd surface.
+/* userspace/include/unistd.h , POSIX unistd surface.
  *
  * The big four (read/write/open/close/lseek/unlink) live in syscall.h so
  * the syscall wrappers and the public POSIX prototype stay in lockstep.
@@ -10,7 +10,7 @@
 #include <stddef.h>
 #include <lib/syscall.h>
 
-/* TTY detection — currently always returns 0 (no isatty support). */
+/* TTY detection , currently always returns 0 (no isatty support). */
 int    isatty(int fd);
 
 /* Busy-wait sleeps against the tick counter. */

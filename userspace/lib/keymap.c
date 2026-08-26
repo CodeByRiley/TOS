@@ -1,7 +1,7 @@
-/* userspace/lib/keymap.c — US-QWERTY KEY_* → ASCII map.
+/* userspace/lib/keymap.c , US-QWERTY KEY_* → ASCII map.
  *
  * Only printable keys + a few control characters (Tab, Enter, Backspace)
- * are mapped. Function keys, arrows, and modifiers return 0 — callers that
+ * are mapped. Function keys, arrows, and modifiers return 0 , callers that
  * care about them inspect the raw KEY_* code themselves.
  */
 #include <include/key_codes.h>

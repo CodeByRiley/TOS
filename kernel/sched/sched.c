@@ -1,4 +1,4 @@
-/* kernel/sched/sched.c — task table + scheduler.
+/* kernel/sched/sched.c , task table + scheduler.
  *
  * Round-robin BSP ready queue. Tasks have explicit states
  * (RUNNING/READY/BLOCKED/SLEEPING/ZOMBIE/DEAD); sleeping tasks sit off the
@@ -7,10 +7,10 @@
  * cooperative. APs run the separate SMP-safe kernel work queue.
  *
  * Task lifecycle:
- *   - task_spawn         — kernel thread, runs `entry` until task_exit
- *   - task_spawn_user    — user task on top of a prepared PML4 + stack
- *   - task_exit          — sets ZOMBIE; waiter or reaper frees the slot
- *   - task_reap          — releases kstack, owned PML4, slot
+ *   - task_spawn         , kernel thread, runs `entry` until task_exit
+ *   - task_spawn_user    , user task on top of a prepared PML4 + stack
+ *   - task_exit          , sets ZOMBIE; waiter or reaper frees the slot
+ *   - task_reap          , releases kstack, owned PML4, slot
  *
  * Per-task input + IPC rings, shmem bump allocator, and the FPU state
  * (fxsave area) all hang off struct task; the actual ring backends live
@@ -74,7 +74,7 @@ extern uint64_t *kernel_pml4;
 extern uint64_t kernel_rsp_top;     /* syscall.asm */
 extern uint64_t user_rsp_save;      /* syscall.asm */
 
-/* Free a process PML4 — defined in loader/process.c. */
+/* Free a process PML4 , defined in loader/process.c. */
 extern void free_user_pml4(uint64_t *pml4);
 
 #define MSR_FS_BASE 0xC0000100u
@@ -101,7 +101,7 @@ static struct task *ready_tail[SCHED_PRIO_LEVELS] = { 0 };
 static uint32_t slice_ticks = 0;
 /* Count of tasks in TASK_SLEEPING. Maintained by task_sleep_ticks /
  * sched_wake_sleepers so the PIT IRQ can skip a full task-table walk on
- * every tick when nothing is asleep — which is the common case. */
+ * every tick when nothing is asleep , which is the common case. */
 static int n_sleeping = 0;
 
 
@@ -156,8 +156,8 @@ static void irq_restore(uint64_t rflags) {
 
 /* Consecutive dispatches served from HIGH before a runnable NORMAL task is
  * guaranteed a turn. This is what keeps the scheduling weighted instead of
- * strict: winman never blocks — it yields at the bottom of its loop and is
- * immediately runnable again — so strict priority would hand it the CPU
+ * strict: winman never blocks , it yields at the bottom of its loop and is
+ * immediately runnable again , so strict priority would hand it the CPU
  * forever and starve its own clients. At 4, a ready NORMAL task waits at
  * most 4 dispatches, while the display path still gets the large share of
  * wake-ups that keeps the desktop responsive. */
@@ -264,7 +264,7 @@ static struct task *alloc_slot(void) {
   }
 
   /* Table full. Unclaimed zombies are holding slots nobody will ever come
-   * back for — reclaim them and retry once. This is the path that makes
+   * back for , reclaim them and retry once. This is the path that makes
    * reaping correct under load: a system busy enough never to reach the
    * idle thread still frees exactly when it needs to. */
   if (task_reap_unclaimed() > 0) {
@@ -310,7 +310,7 @@ static uint64_t build_initial_frame(void *kstack_base, void (*trampoline)(void))
 void sched_init(void) {
   memset(tasks, 0, sizeof(tasks));
   /* Bootstrap: caller of sched_init becomes init task. No fake frame
-   * needed — its rsp gets captured at the first context_switch. */
+   * needed , its rsp gets captured at the first context_switch. */
   struct task *t = alloc_slot();
   t->pid = next_pid++;
   t->state = TASK_RUNNING;
@@ -567,7 +567,7 @@ struct task *task_spawn_thread(uint64_t entry, uint64_t user_stack) {
     t->saved_rsp = build_initial_frame(stack_base, user_task_trampoline);
 
     /* A thread shares its parent's address space rather than owning one, so
-     * take a reference — whoever exits last frees the PML4. */
+     * take a reference , whoever exits last frees the PML4. */
     t->cr3 = parent->cr3;
     t->user_pml4 = parent->user_pml4;
     t->pml4_ref_count = parent->pml4_ref_count;
@@ -725,7 +725,7 @@ void task_sleep_ticks(uint64_t ticks) {
 
   struct task *next = ready_pop();
   if (!next) {
-    /* Nothing else runnable — fall back to halting until the next IRQ.
+    /* Nothing else runnable , fall back to halting until the next IRQ.
      * The PIT IRQ that does eventually fire will run sched_wake_sleepers
      * and put us back on the ready queue; we re-poll on the next loop. */
     current->state = TASK_RUNNING;
@@ -868,7 +868,7 @@ static void mark_task_exited(struct task *task, long code) {
    *
    * The same sweep answers whether anyone can still claim our exit code. A
    * woken waiter reaps us itself; if nobody was waiting, nobody ever will
-   * — process_spawn_async children and task_kill victims both land here —
+   * , process_spawn_async children and task_kill victims both land here ,
    * so the slot is up for grabs. Without this the slot, the kstack and the
    * whole user PML4 leak, which at MAX_TASKS = 16 is a short road. */
   int claimed = 0;

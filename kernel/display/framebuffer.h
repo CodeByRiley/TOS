@@ -1,4 +1,4 @@
-/* kernel/display/framebuffer.h — framebuffer abstraction.
+/* kernel/display/framebuffer.h , framebuffer abstraction.
  *
  * Two backends sit behind this surface:
  *   - MB2 mode (boot default): a contiguous run of physical pages handed
@@ -76,8 +76,8 @@ void      framebuffer_mark_damage(uint32_t x, uint32_t y,
                                    uint32_t w, uint32_t h);
 
 /* Force the damage and scanout locks unlocked so the panic renderer can
- * draw. A fault can land anywhere — including inside framebuffer_present
- * with scanout_lock already held on this very CPU — and the panic screen
+ * draw. A fault can land anywhere , including inside framebuffer_present
+ * with scanout_lock already held on this very CPU , and the panic screen
  * then deadlocks against the code it interrupted. Stealing the locks is
  * safe only because the caller is on its way to panic_halt(): no other
  * thread will ever observe the framebuffer again. Never call this from

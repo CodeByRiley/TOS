@@ -1,7 +1,7 @@
-/* kernel/utilities/log.c — kernel logging implementation.
+/* kernel/utilities/log.c , kernel logging implementation.
  *
  * Each log_write_* wrapper builds a struct log_entry and routes it to
- * both COM1 (serial_*) and the VGA text-mode print writers — that way
+ * both COM1 (serial_*) and the VGA text-mode print writers , that way
  * boot logs are visible to QEMU's serial monitor AND to anyone looking
  * at the display, even before the framebuffer/TTY stack is up.
  *
@@ -137,7 +137,7 @@ void log_write_entry(struct log_entry *entry) {
     print_write_str("\n");
 }
 
-/* Plain message — no payload. */
+/* Plain message , no payload. */
 void log_write(const char *message, uint8_t raw_type, uint8_t raw_level) {
     struct log_entry entry;
     log_init_entry(&entry, message, raw_type, raw_level);

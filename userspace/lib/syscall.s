@@ -35,7 +35,7 @@ syscall3:
     ret
 
 ; long syscall4(long n, long a, long b, long c, long d)
-; SysV passes 4th arg in rcx, but `syscall` clobbers rcx with RIP — stage 4th in r10
+; SysV passes 4th arg in rcx, but `syscall` clobbers rcx with RIP , stage 4th in r10
 ; (which the kernel handler reads as a4).
 global syscall4
 syscall4:

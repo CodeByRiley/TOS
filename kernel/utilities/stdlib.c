@@ -1,4 +1,4 @@
-/* kernel/utilities/stdlib.c — kernel stdlib subset.
+/* kernel/utilities/stdlib.c , kernel stdlib subset.
  *
  * atoi / strtol number parsers, abs / labs, and a Shellsort-grade qsort.
  * strdup lives in string.c so it sits next to the rest of the str* code.

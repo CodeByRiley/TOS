@@ -1,4 +1,4 @@
-/* kernel/virtio/virtio_gpu.h — virtio-gpu (2D scanout) driver.
+/* kernel/virtio/virtio_gpu.h , virtio-gpu (2D scanout) driver.
  *
  * QEMU exposes virtio-gpu as PCI vendor 0x1AF4 device 0x1050. This driver
  * owns the host-side resource; framebuffer.c owns the kernel-side pixel

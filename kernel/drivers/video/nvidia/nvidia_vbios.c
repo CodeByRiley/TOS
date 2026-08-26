@@ -18,7 +18,7 @@
  *
  *   0xAA55     | "\x55\xAA" | Standard PCI option ROM header
  *   0x4E56     | "VN"       | NVIDIA-specific ROM header variant
- *   0xBB77     | —          | NVIDIA extended ROM header variant
+ *   0xBB77     | ,          | NVIDIA extended ROM header variant
  *   0x52494350 | "PCIR"     | PCI Data Structure
  *   0x5344504E | "NPDS"     | NVIDIA Data Structure
  *   0x53494752 | "RGIS"     | NVIDIA signed-image Data Structure
@@ -44,7 +44,7 @@
 
 #define BIT_HEADER_ID        0xB8FFu
 #define BIT_HEADER_SIGNATURE 0x00544942u
-/* BIT_TOKEN_* ids live in nvidia_internal.h — later stages need them too. */
+/* BIT_TOKEN_* ids live in nvidia_internal.h , later stages need them too. */
 
 struct vbios_layout {
     uint32_t size;

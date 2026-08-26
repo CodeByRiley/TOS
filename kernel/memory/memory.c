@@ -1,4 +1,4 @@
-/* kernel/memory/memory.c — placeholder TU.
+/* kernel/memory/memory.c , placeholder TU.
  *
  * Intentionally empty. memory.h is the umbrella header reserved for
  * future cross-module memory helpers; today every memory caller pulls in

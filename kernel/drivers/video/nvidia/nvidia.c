@@ -68,7 +68,7 @@ static uint32_t nvidia_boot0_architecture(uint32_t boot0) {
 }
 
 static uint32_t nvidia_boot42_chip_id(uint32_t boot42) {
-    /* NV_PMC_BOOT_42_CHIP_ID is bits 28:20 — nine bits (architecture in
+    /* NV_PMC_BOOT_42_CHIP_ID is bits 28:20 , nine bits (architecture in
      * 28:24, implementation in 23:20). A wider mask would leak reserved
      * bit 29 into the id. */
     return (boot42 >> 20) & 0x1FFu;

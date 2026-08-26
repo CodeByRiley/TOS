@@ -1,4 +1,4 @@
-/* kernel/acpi/acpi.h — ACPI table parsing surface.
+/* kernel/acpi/acpi.h , ACPI table parsing surface.
  *
  * RSDP discovery establishes a reusable RSDT/XSDT table directory.
  * Subsystems can then find validated SDTs by signature. ACPI itself parses
@@ -50,7 +50,7 @@ struct PACKED acpi_sdt_header {
     uint32_t creator_revision;
 };
 
-/* Multiple APIC Description Table — enumerates LAPICs / IOAPICs. */
+/* Multiple APIC Description Table , enumerates LAPICs / IOAPICs. */
 struct PACKED acpi_madt {
     struct acpi_sdt_header h;
     uint32_t lapic_phys;                /* default LAPIC MMIO base */

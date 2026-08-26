@@ -1,4 +1,4 @@
-/* kernel/display/fonts/ttf.h — minimal truetype font.
+/* kernel/display/fonts/ttf.h , minimal truetype font.
  *
  *
  * Implementation: kernel/display/fonts/ttf.c.
@@ -40,7 +40,7 @@ void ttf_draw_text(struct gfx_surface *s, struct ttf_font *font,
                    int px_size, u32 color);
 
 /* Cell width for laying this font out on a fixed grid (a console). Based on
- * the digit advance, not the widest glyph — see the note in ttf.c. */
+ * the digit advance, not the widest glyph , see the note in ttf.c. */
 int  ttf_cell_width(struct ttf_font *font, int px_size);
 
 /* Draw one codepoint centred in a cell_w-wide cell, condensing it if it is

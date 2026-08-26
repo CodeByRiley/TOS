@@ -1,4 +1,4 @@
-/* kernel/devices/pit.c — 8254 PIT driver.
+/* kernel/devices/pit.c , 8254 PIT driver.
  *
  * Channel 0 fires IRQ0 at the requested frequency. The handler bumps the
  * global tick counter, charges the current task for the slice, and walks
@@ -15,7 +15,7 @@
 #define PIT_CH2 0x42
 #define PIT_CMD 0x43
 #define PIT_GATE2 0x61   /* NMI/keyboard ctrl port: bit0 = ch2 gate, bit5 = OUT2 */
-#define PIT_FREQ 1193182 /* 8254 input clock — divides down */
+#define PIT_FREQ 1193182 /* 8254 input clock , divides down */
 
 static volatile uint64_t ticks = 0;
 static uint32_t current_freq_hz = 0;
@@ -47,7 +47,7 @@ uint32_t pit_get_freq(void) { return current_freq_hz; }
  * The tick counter is useless before the boot-time sti: IRQ0 never fires, so
  * anything waiting on pit_ticks() to advance waits forever. Device bring-up
  * (PCI, USB controller resets) all runs in that window and still needs real
- * wall-clock delays, so time them off channel 2 instead — it drives no
+ * wall-clock delays, so time them off channel 2 instead , it drives no
  * interrupt, only the OUT2 status bit, which we can poll with IF=0.
  *
  * Channel 2 is otherwise only wired to the PC speaker, which we never use;

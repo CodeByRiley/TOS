@@ -1,4 +1,4 @@
-; kernel/arch/x86_64/boot/header.asm — Multiboot2 header.
+; kernel/arch/x86_64/boot/header.asm , Multiboot2 header.
 ;
 ; Magic, checksum, and an advisory 1920x1080x32 framebuffer request.
 

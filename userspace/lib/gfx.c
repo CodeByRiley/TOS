@@ -1,4 +1,4 @@
-/* userspace/lib/gfx.c — 2D drawing over a pixel buffer.
+/* userspace/lib/gfx.c , 2D drawing over a pixel buffer.
  *
  * Every entry point clips before it writes, so callers can pass negative
  * origins, oversized rectangles or off-surface coordinates without
@@ -178,7 +178,7 @@ void gfx_bevel(struct gfx_surface *s, struct gfx_rect r,
 
 /* ---------------- Blitting ------------------------------------------------ */
 
-/* An empty source rect means "all of it" — the common case, and it keeps
+/* An empty source rect means "all of it" , the common case, and it keeps
  * callers from having to spell out the full bounds. */
 static struct gfx_rect src_or_all(const struct gfx_surface *src,
                                   struct gfx_rect r) {

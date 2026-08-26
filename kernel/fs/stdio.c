@@ -1,4 +1,4 @@
-/* kernel/fs/stdio.c — kernel-internal FILE* over FAT.
+/* kernel/fs/stdio.c , kernel-internal FILE* over FAT.
  *
  * Thin wrapper that maps fopen/fread/etc. onto the FAT driver. Used by
  * kernel callers (logger, ELF and PE loaders); userspace gets its own
@@ -6,7 +6,7 @@
  *
  * Mode strings follow C: mode[0] picks the base mode (r/w/a) and the rest
  * may only be '+' or 'b'. fread/fwrite return a count of complete items,
- * not bytes — the loaders read headers as `fread(&hdr, sizeof hdr, 1, fp)`
+ * not bytes , the loaders read headers as `fread(&hdr, sizeof hdr, 1, fp)`
  * and test the result against 1.
  *
  * The FAT image lives in memory (it arrives as a GRUB module), so nothing
@@ -23,7 +23,7 @@ FILE *fopen(const char *name, const char *mode) {
     int read = 0, write = 0, append = 0, truncate = 0, create = 0;
 
     /* Only mode[0] selects the base mode. Treating every character as a
-     * flag makes "rw" — the common typo for "r+" — silently truncate a
+     * flag makes "rw" , the common typo for "r+" , silently truncate a
      * file the caller asked to read.
      *
      * `create` tracks the base mode rather than `write`, because "r+"
@@ -107,7 +107,7 @@ size_t fwrite(const void *buf, size_t size, size_t count, FILE *fp) {
     if (!span_ok(size, count)) return 0;
 
     /* Append means every write lands at EOF, not just the first one after
-     * open — an intervening fseek must not move where data goes. */
+     * open , an intervening fseek must not move where data goes. */
     if (fp->append)
         fat_seek(&fp->f, fp->f.size);
 

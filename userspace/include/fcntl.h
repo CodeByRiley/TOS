@@ -1,4 +1,4 @@
-/* userspace/include/fcntl.h — open() flag constants.
+/* userspace/include/fcntl.h , open() flag constants.
  *
  * The open() prototype itself is declared in syscall.h so the same
  * signature is shared with the syscall wrapper. We only expose flag

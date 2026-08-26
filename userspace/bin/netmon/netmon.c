@@ -1,10 +1,10 @@
-/* userspace/bin/netmon/netmon.c — live view of the NIC.
+/* userspace/bin/netmon/netmon.c , live view of the NIC.
  *
  * TOS has a driver and no stack: the e1000 answers ARP and ICMP echo and
  * nothing above that exists yet. That makes `ping` from the host the only
  * end-to-end test there is, and reading the result off the serial log
  * means picking the interesting bytes out of unrelated kernel output.
- * This shows them instead — counters, a decoded frame list, and a hex
+ * This shows them instead , counters, a decoded frame list, and a hex
  * dump of whichever frame is selected.
  *
  * Everything here is read-only. The two syscalls behind it (SYS_NET_STATS

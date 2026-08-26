@@ -1,4 +1,4 @@
-/* kernel/pci/pci.h — PCI/PCIe enumeration + config-space access.
+/* kernel/pci/pci.h , PCI/PCIe enumeration + config-space access.
  *
  * Brute-force scan on init (256 busses x 32 devs x 8 fns). Devices land
  * in an internal table; lookup helpers find by vendor/device or class/
@@ -59,7 +59,7 @@
 //
 // Space bits gate decoding entirely: with I/O Space clear, every inb/outb to
 // an I/O BAR reads 0xFF and drops writes, silently. Bus Master gates DMA the
-// same way — a device with descriptors queued simply never fetches them.
+// same way , a device with descriptors queued simply never fetches them.
 #define PCI_CMD_IO              (1u << 0)
 #define PCI_CMD_MEM             (1u << 1)
 #define PCI_CMD_BUS_MASTER      (1u << 2)
@@ -79,7 +79,7 @@
  *
  * A 64-bit MMIO BAR consumes the following slot as its high dword, so BAR
  * indices are not always contiguous. Size is discovered by writing all ones
- * and reading back the mask — which is why a BAR must be saved and restored,
+ * and reading back the mask , which is why a BAR must be saved and restored,
  * and why decoding should be off while probing. */
 #define PCI_BAR_IO              (1u << 0)
 #define PCI_BAR_TYPE_MASK       (3u << 1)

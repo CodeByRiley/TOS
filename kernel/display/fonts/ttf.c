@@ -218,7 +218,7 @@ static void ttf_blit_glyph(struct gfx_surface *s, const u8 *bitmap,
 /* Cell width for laying this font out on a fixed grid (the tty). Based on the
  * digit advance, not the widest glyph: digits share one advance in nearly
  * every font and sit close to the typical letter, whereas sizing off 'M'/'W'
- * pads every narrow glyph with the difference — which reads as a space after
+ * pads every narrow glyph with the difference , which reads as a space after
  * every character. +1 for inter-character breathing room. */
 int ttf_cell_width(struct ttf_font *font, int px_size) {
     if (!font || !font->file_buffer || px_size <= 0) return 0;
@@ -239,7 +239,7 @@ int ttf_cell_width(struct ttf_font *font, int px_size) {
 }
 
 /* Draw one codepoint centred in a cell_w-wide cell. Glyphs wider than the cell
- * are condensed horizontally rather than clipped — a squeezed 'M' still reads
+ * are condensed horizontally rather than clipped , a squeezed 'M' still reads
  * as an 'M', a cropped one doesn't. */
 void ttf_draw_glyph_cell(struct gfx_surface *s, struct ttf_font *font,
                          int cell_x, int baseline, int cell_w, int cp,

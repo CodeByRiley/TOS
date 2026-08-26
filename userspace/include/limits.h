@@ -1,4 +1,4 @@
-/* userspace/include/limits.h — integer-range macros.
+/* userspace/include/limits.h , integer-range macros.
  *
  * Assumes a 64-bit LP64-ish target (long == 64 bits). char is 8 bits,
  * short is 16, int is 32. Add new entries here when a ported library

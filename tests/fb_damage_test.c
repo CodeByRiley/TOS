@@ -6,8 +6,8 @@
  * edges of a window-sized rect, and coalescing those into one bounding
  * box turns a few thousand pixels of real damage into most of a window.
  *
- * framebuffer.c cannot be compiled on the host — it pulls in the VMM, the
- * PMM and the virtio driver — so the accumulator is reproduced here and
+ * framebuffer.c cannot be compiled on the host , it pulls in the VMM, the
+ * PMM and the virtio driver , so the accumulator is reproduced here and
  * kept honest by a copy check: tests/fb_damage_test.c and the kernel must
  * agree, and the assertions below describe behaviour, not implementation,
  * so a divergence shows up as a failing expectation rather than silence.

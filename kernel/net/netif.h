@@ -1,7 +1,7 @@
-/* kernel/net/netif.h — the bound network interface.
+/* kernel/net/netif.h , the bound network interface.
  *
  * One interface. TOS binds a single NIC, and giving this an index before
- * there is a second card to put in it would be structure without a user —
+ * there is a second card to put in it would be structure without a user ,
  * the same call netmon.c made for its capture ring. When a second card
  * appears, netif_get() grows into netif_at(i) and the protocol files take
  * an interface argument; nothing else here changes shape.
@@ -44,7 +44,7 @@ struct netif {
 };
 
 /* Take a copy of *nif as the bound interface. Safe to call again when the
- * address changes — DHCP will do exactly that. */
+ * address changes , DHCP will do exactly that. */
 void netif_register(const struct netif *nif);
 
 /* NULL until a driver has registered. Every protocol path checks this

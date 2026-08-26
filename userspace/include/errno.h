@@ -1,4 +1,4 @@
-/* userspace/include/errno.h — POSIX-style error codes. */
+/* userspace/include/errno.h , POSIX-style error codes. */
 #ifndef ERRNO_H
 #define ERRNO_H
 

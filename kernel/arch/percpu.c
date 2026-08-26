@@ -1,4 +1,4 @@
-/* kernel/arch/percpu.c — per-CPU data.
+/* kernel/arch/percpu.c , per-CPU data.
  *
  * One struct cpu_local per logical CPU. GS_BASE on each core points at
  * its own slot. BSP populates its slot during early kernel_main; each
@@ -7,7 +7,7 @@
  *
  * GS_BASE + KERNEL_GS_BASE both get the same pointer. We don't actually
  * use SWAPGS (userspace doesn't touch GS) but keeping both MSRs in sync
- * means a stray SWAPGS — including one added later — won't leave GS
+ * means a stray SWAPGS , including one added later , won't leave GS
  * pointing at oblivion.
  */
 #include <arch/percpu.h>
@@ -21,13 +21,13 @@
 static struct cpu_local cpus[MAX_CPUS] ALIGNED(64);
 static int              cpu_count = 1;
 
-static inline void wrmsr(uint32_t msr, uint64_t val) {
+SINLINE void wrmsr(uint32_t msr, uint64_t val) {
     uint32_t lo = (uint32_t)val;
     uint32_t hi = (uint32_t)(val >> 32);
     __asm__ volatile ("wrmsr" :: "c"(msr), "a"(lo), "d"(hi) : "memory");
 }
 
-static inline uint64_t rdmsr(uint32_t msr) {
+SINLINE uint64_t rdmsr(uint32_t msr) {
     uint32_t lo, hi;
     __asm__ volatile ("rdmsr" : "=a"(lo), "=d"(hi) : "c"(msr));
     return ((uint64_t)hi << 32) | lo;
@@ -36,7 +36,7 @@ static inline uint64_t rdmsr(uint32_t msr) {
 static void set_gs_base(struct cpu_local *c) {
     /* Set both GS_BASE and KERNEL_GS_BASE to the same value. We don't use
      * SWAPGS (userspace doesn't touch gs), but staging the same pointer
-     * into both means a stray SWAPGS — including one we add later — won't
+     * into both means a stray SWAPGS , including one we add later , won't
      * leave GS pointing into oblivion. */
     wrmsr(MSR_GS_BASE,        (uint64_t)c);
     wrmsr(MSR_KERNEL_GS_BASE, (uint64_t)c);
@@ -61,7 +61,7 @@ void percpu_init_bsp(uint8_t bsp_lapic_id) {
 
 void percpu_init_ap(int cpu_id, uint8_t lapic_id) {
     /* Called from the BSP while staging AP boot. Fills the AP's cpu_local
-     * slot but DOES NOT write GS_BASE — that MSR is per-CPU and must be
+     * slot but DOES NOT write GS_BASE , that MSR is per-CPU and must be
      * armed by the AP itself once it lands in long mode. */
     if (cpu_id <= 0 || cpu_id >= MAX_CPUS) return;
     struct cpu_local *c = &cpus[cpu_id];

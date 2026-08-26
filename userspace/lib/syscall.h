@@ -1,17 +1,17 @@
-/* userspace/lib/syscall.h — userspace syscall interface.
+/* userspace/lib/syscall.h , userspace syscall interface.
  *
  * All system call numbers, kernel-shared structs, and the C wrappers
  * that userspace apps call instead of writing `syscall0..6` directly.
  *
  * Sections:
- *   - SYS_* numbers           — must match kernel/arch/syscall.h dispatch table.
- *   - proc_info / mem_stats   — mirrors of kernel structs returned by
+ *   - SYS_* numbers           , must match kernel/arch/syscall.h dispatch table.
+ *   - proc_info / mem_stats   , mirrors of kernel structs returned by
  *                                SYS_PROC_LIST and SYS_MEM_STATS.
- *   - msg / ipc_msg           — input-event and cross-process message
+ *   - msg / ipc_msg           , input-event and cross-process message
  *                                layouts. ipc_msg must match
  *                                kernel/msg/msg.h byte-for-byte.
- *   - syscallN()              — raw register-passing trampolines.
- *   - libc-style wrappers     — typed helpers around the syscalls above.
+ *   - syscallN()              , raw register-passing trampolines.
+ *   - libc-style wrappers     , typed helpers around the syscalls above.
  *
  * Higher-level winman client API lives in lib/wm.h, not here.
  */
@@ -24,7 +24,7 @@
 #ifdef TOS_USE_MUSL
 /* Built against musl: the POSIX surface comes from the real headers, and
  * the TOS declarations of those same functions are compiled out below.
- * Pulling them in here means every lib/ source keeps working unchanged —
+ * Pulling them in here means every lib/ source keeps working unchanged ,
  * bmp.c calling open()/read() gets musl's, which issue the same syscalls. */
 #include <fcntl.h>
 #include <unistd.h>
@@ -133,8 +133,9 @@
 #define SYS_FSTAT_RAW        	 1124
 #define SYS_NET_STATS          1140
 #define SYS_NET_CAPTURE        1141
+#define SYS_NET_PING           1142
 /* TOS's index-based directory walk. Split off 217, which is now strictly
- * Linux getdents64 — the kernel used to pick between the two by guessing
+ * Linux getdents64 , the kernel used to pick between the two by guessing
  * whether the first argument looked like an fd. */
 #define SYS_READDIR_INDEX      1125
 /* ---------------- mmap / mprotect --------------------------------------
@@ -206,7 +207,7 @@ _Static_assert(offsetof(struct proc_info, pid) == 8,
 _Static_assert(offsetof(struct proc_info, name) == 20,
                "proc_info.name offset must match kernel");
 
-/* Process state codes — must match enum task_state in kernel/sched/sched.h. */
+/* Process state codes , must match enum task_state in kernel/sched/sched.h. */
 #define PROC_STATE_RUNNING  0
 #define PROC_STATE_BLOCKED  1
 #define PROC_STATE_ZOMBIE   2
@@ -264,6 +265,20 @@ struct net_stats {
     uint32_t present;     /* 0 when no NIC is bound                */
     uint32_t ring_frames;
 };
+
+/* SYS_NET_PING argument block. Mirrors struct net_ping_user in
+ * kernel/net/icmp.h; rtt_ms is written by the kernel and is meaningful
+ * only when the call returns 0. */
+struct net_ping {
+    uint8_t  dst[4];
+    uint16_t ident;
+    uint16_t seq;
+    uint32_t timeout_ms;
+    uint32_t rtt_ms;    /* out */
+};
+
+_Static_assert(sizeof(struct net_ping) == 16,
+               "net_ping must match kernel net_ping_user size");
 
 _Static_assert(sizeof(struct net_frame) == 160,
                "net_frame must match kernel netmon_frame_user size");
@@ -361,7 +376,7 @@ _Static_assert(sizeof(struct fb_rect) == 16,
  * The ELF toolchain is LP64 so the two are the same width there, but the
  * PE variants are built by mingw, which is LLP64: `long` is four bytes.
  * A pointer passed as long would reach the kernel truncated to its low 32
- * bits — for a PE image based at 0x140000000, an address 4 GiB from the
+ * bits , for a PE image based at 0x140000000, an address 4 GiB from the
  * one intended. long long is 64-bit under both models.
  *
  * ELF builds get these from lib/syscall.s; PE builds from lib/syscall_pe.c.
@@ -412,7 +427,7 @@ long fstat_raw(int fd, struct stat_user *out);
 
 /* Anonymous, private, zero-filled, demand-paged.
  *
- * addr is a request, honoured only with MAP_FIXED — and MAP_FIXED fails
+ * addr is a request, honoured only with MAP_FIXED , and MAP_FIXED fails
  * rather than replacing an existing mapping. Returns MAP_FAILED on error.
  *
  * Physical memory is NOT allocated immediately. The kernel only reserves
@@ -513,6 +528,10 @@ long  mem_stats(struct mem_stats *out);
  * cursor to count missed frames. */
 long  net_stats(struct net_stats *out);
 long  net_capture(uint64_t *cursor, struct net_frame *out, long max);
+/* One echo request, one reply. 0 on success with req->rtt_ms filled in,
+ * -1 on timeout or a rejected argument, -2 when there is no route or too
+ * many pings are already in flight. Blocks for up to req->timeout_ms. */
+long  net_ping(struct net_ping *req);
 
 /* Threading */
 long  thread_create(void *(*entry)(void *), void *stack, void *arg);

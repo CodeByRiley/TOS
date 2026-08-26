@@ -613,7 +613,7 @@ panic_finish(struct panic_record *record) {
    * drawing anything. An NMI or machine check can land inside
    * framebuffer_present with scanout_lock held on this CPU, and the panic
    * screen would then spin on a lock only the interrupted frame could
-   * release — serial report complete, display frozen mid-frame. */
+   * release , serial report complete, display frozen mid-frame. */
   framebuffer_panic_takeover();
 
   if (panic_screen(record))

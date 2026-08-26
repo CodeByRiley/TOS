@@ -1,4 +1,4 @@
-/* kernel/display/tty.c — framebuffer-backed text terminal.
+/* kernel/display/tty.c , framebuffer-backed text terminal.
  *
  * Kernel-side fallback console. Renders an 8x8 bitmap font into the
  * framebuffer via the font8x8 table. Push/pop give a single-level alt-
@@ -22,7 +22,7 @@
 #include <stdint.h>
 
 #define TTY_FG 0x00FFFFFFu
-#define TTY_BG 0x00008080u   /* teal — matches the old WM desktop colour */
+#define TTY_BG 0x00008080u   /* teal , matches the old WM desktop colour */
 
 #define TTY_PAD 4
 #define TTY_SCALE_MIN 1
@@ -427,7 +427,7 @@ size_t tty_drain(char *out, size_t max) {
 }
 
 /* Compositor kthread for the kernel TTY. Sleeps a few ticks between
- * frames — the kernel TTY is a fallback, not a game. Also tracks the
+ * frames , the kernel TTY is a fallback, not a game. Also tracks the
  * input owner so we automatically resume drawing when a winman
  * process dies and surrenders ownership.
  *
@@ -449,7 +449,7 @@ void tty_thread_entry(void) {
         if (want_active != active) tty_set_active(want_active);
 
         if (ready && active && dirty) render();
-        /* Flush is owned by framebuffer_flush_thread_entry now — it polls
+        /* Flush is owned by framebuffer_flush_thread_entry now , it polls
          * the damage rect at PIT tick rate independently of the tty render
          * cadence so a slow virtio ACK can't stall this thread. */
 

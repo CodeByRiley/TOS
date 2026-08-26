@@ -1,0 +1,17 @@
+U8 main() {
+	I64 sock = UdpSocket();
+
+	if (sock == 0) {
+		Print("Couldn't open socket.\n");
+		return 1;
+	}
+	UdpBind(sock, 5000);
+	I64[] ip = [10,0,2,2];
+	UdpSend(sock, ip, 5001, "Hello From HolyD!\n");
+
+	String msg = UdpRecv(sock);
+	Print("Received: %s\n", msg);
+	UdpClose(sock);
+
+	return 0;
+}

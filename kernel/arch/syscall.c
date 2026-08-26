@@ -1,4 +1,4 @@
-/* kernel/arch/syscall.c — SYSCALL entry + dispatcher.
+/* kernel/arch/syscall.c , SYSCALL entry + dispatcher.
  *
  * syscall_init programs LSTAR / STAR / SFMASK and enables SCE so the
  * SYSCALL instruction lands at the asm entry trampoline in
@@ -37,6 +37,7 @@
 #include <memory/pmm.h>
 #include <memory/vmm.h>
 #include <msg/msg.h>
+#include <net/icmp.h>
 #include <net/netmon.h>
 #include <sched/sched.h>
 #include <utilities/log.h>
@@ -317,7 +318,7 @@ static long sys_fb_present(const void *pixels, uint64_t source_pitch,
 }
 
 /* Translate PROT_* into PTE bits. Returns 0 for a protection this VMM
- * cannot express, which callers must treat as an error — 0 is never a
+ * cannot express, which callers must treat as an error , 0 is never a
  * legal user PTE flag set (VMM_USER is always required). */
 static uint64_t prot_to_pte(int prot) {
   if (prot == PROT_NONE)
@@ -473,7 +474,7 @@ static void hole_add(struct task *t, uint64_t base, uint64_t bytes) {
 }
 
 /* First-fit over the free list, then the bump pointer. Returns 0 when the
- * arena is exhausted — never a valid address, since the arena starts well
+ * arena is exhausted , never a valid address, since the arena starts well
  * above USER_VA_MIN. */
 static uint64_t arena_alloc(struct task *t, uint64_t bytes) {
   for (int i = 0; i < TASK_MMAP_HOLES; i++) {
@@ -623,8 +624,8 @@ static long sys_mprotect(uint64_t addr, long len, int prot) {
  * need no bookkeeping, since fixed mappings are placed by the caller and
  * collision-checked at map time.
  *
- * Unmapping a range with holes in it is not an error — POSIX says the same
- * — so this reports success as long as the range itself is legal. */
+ * Unmapping a range with holes in it is not an error , POSIX says the same
+ * , so this reports success as long as the range itself is legal. */
 static long sys_munmap(uint64_t addr, long len) {
   if (len <= 0 || (addr & 4095))
     return -1;
@@ -932,7 +933,7 @@ static long sys_shmem_share(long target_pid, uint64_t in_va, long npages,
 
   uint64_t target_va = target->shmem_next_va;
   /* VMM_SHARED marks the PTE so the target's exit cleanup (free_user_pml4)
-   * skips pmm_free_frame on these phys frames — the caller still owns them. */
+   * skips pmm_free_frame on these phys frames , the caller still owns them. */
   uint64_t flags = VMM_PRESENT | VMM_WRITE | VMM_USER | VMM_SHARED;
 
   for (long i = 0; i < npages; i++) {
@@ -955,7 +956,7 @@ static long sys_shmem_share(long target_pid, uint64_t in_va, long npages,
 }
 
 /* Unmap shared pages from the target process. `va` is an address in the
- * TARGET's address space — the value sys_shmem_share wrote back through
+ * TARGET's address space , the value sys_shmem_share wrote back through
  * out_target_va, not the caller's own mapping of the same frames.
  *
  * The caller still owns the physical frames (they were marked VMM_SHARED
@@ -996,8 +997,8 @@ static long sys_shmem_unshare(long target_pid, uint64_t va, long npages) {
    * are ours to take away. Without this check any task could hand another
    * task's pid to unshare and unmap its stack or its text.
    *
-   * It still does not prove *this* task was the one that shared them —
-   * that needs per-share ownership the kernel does not record yet — but
+   * It still does not prove *this* task was the one that shared them ,
+   * that needs per-share ownership the kernel does not record yet , but
    * it keeps the blast radius inside genuinely shared pages. */
   long removed = 0;
   for (long i = 0; i < npages; i++) {
@@ -1049,7 +1050,7 @@ static long sys_tty_drain(char *out, long max) {
  * Non-blocking: returns 0 when nothing is queued.
  *
  * This is the counterpart to SYS_TTY_INJECT, and the reason the console
- * shell must not poll the raw keyboard ring — that ring receives every key
+ * shell must not poll the raw keyboard ring , that ring receives every key
  * regardless of which window has focus, so a shell reading it also collects
  * everything typed into other applications. */
 static long sys_tty_read_input(char *out, long max) {
@@ -1386,7 +1387,7 @@ static long sys_stat(const char *path, struct linux_kstat *out) {
 
 /* fstat works off the open handle rather than re-resolving a path, so it
  * still reports the right size for a file that has been written through
- * this fd — and keeps working if the name is unlinked while open. */
+ * this fd , and keeps working if the name is unlinked while open. */
 static long sys_fstat_raw(int fd, struct stat_user *out) {
   struct task *t = task_current();
   if (!t || !out || fd < 3 || fd >= TASK_MAX_FDS || !t->fds[fd])
@@ -1692,7 +1693,7 @@ static void monotonic_timespec(struct linux_timespec *ts) {
  * time would break anything measuring short intervals with it.
  *
  * Falls back to uptime when the RTC is unreadable, which is the old
- * behaviour — wrong, but wrong in a way callers already tolerate, and better
+ * behaviour , wrong, but wrong in a way callers already tolerate, and better
  * than reporting 1970 with a straight face. */
 static void realtime_timespec(struct linux_timespec *ts) {
   uint64_t epoch = rtc_unix_epoch();
@@ -1930,6 +1931,29 @@ static long sys_net_capture(uint64_t *cursor, struct netmon_frame_user *out,
   return netmon_read_frames(cursor, out, max);
 }
 
+/* One echo request, one reply, one round trip. The arguments are copied
+ * out of user memory before icmp_ping runs because it yields while it
+ * waits: leaving the request struct mapped and re-read across a yield
+ * would let another thread in the same process change the destination
+ * after the packet had already gone. */
+static long sys_net_ping(struct net_ping_user *req) {
+  if (!user_buffer_ok(req, sizeof(*req), 1))
+    return -1;
+
+  struct net_ping_user local;
+  memcpy(&local, req, sizeof(local));
+
+  if (local.timeout_ms == 0 || local.timeout_ms > 60000u)
+    return -1;
+
+  uint32_t rtt_ms = 0;
+  long rc = icmp_ping(local.dst, local.ident, local.seq, local.timeout_ms,
+                      &rtt_ms);
+  if (rc == 0)
+    req->rtt_ms = rtt_ms;
+  return rc;
+}
+
 static long sys_arch_prctl(long code, uint64_t addr) {
   switch (code) {
   case ARCH_SET_FS:
@@ -1967,7 +1991,7 @@ static long sys_thread_exit(void) {
         t->pml4_ref_count = 0;
         task_exit(0);            /* tears down the address space too */
     } else {
-        /* Detach from the shared PML4 first — task_exit_thread must not
+        /* Detach from the shared PML4 first , task_exit_thread must not
          * reap an address space its siblings are still running on. */
         t->user_pml4 = 0;
         t->pml4_ref_count = 0;
@@ -2096,7 +2120,7 @@ long syscall_dispatch(struct syscall_frame *f) {
     break;
   /* 217 is getdents64 and nothing else. It used to also carry TOS's
    * index-based walk, disambiguated by testing whether the first argument
-   * looked like an fd — which is a guess about a pointer value, and exactly
+   * looked like an fd , which is a guess about a pointer value, and exactly
    * the kind of overload that makes a libc built for Linux misbehave. The
    * TOS form now has its own number. */
   case SYS_READDIR:
@@ -2324,6 +2348,9 @@ long syscall_dispatch(struct syscall_frame *f) {
   case SYS_NET_CAPTURE:
     ret = sys_net_capture((uint64_t *)(uintptr_t)a1,
                           (struct netmon_frame_user *)(uintptr_t)a2, (long)a3);
+    break;
+  case SYS_NET_PING:
+    ret = sys_net_ping((struct net_ping_user *)(uintptr_t)a1);
     break;
   default:
     log_write_hex("unknown syscall =", num, KERNEL, LOG_ERROR);

@@ -12,9 +12,15 @@ from pathlib import Path
 from kernel_panic_test import Qmp, available_port, wait_for_text
 
 
+# QEMU's sendkey takes qcode names, not characters. Anything missing here
+# is passed through as-is, which QEMU rejects and silently drops -- so a
+# typed "10.0.2.2" arrived as "10022" until "." was added.
 QEMU_KEYS = {
     " ": "spc",
     "/": "slash",
+    ".": "dot",
+    "-": "minus",
+    ",": "comma",
 }
 
 

@@ -1,4 +1,4 @@
-/* kernel/utilities/types.h — kernel typedef bag.
+/* kernel/utilities/types.h , kernel typedef bag.
  *
  * Collects every alias the kernel codebase uses: POSIX names, fixed-width
  * shorthands (u8/u32, i8/i32, uint8/uint32), pointer-sized integers, and
@@ -18,6 +18,8 @@
 #define UNUSED __attribute__((unused))
 #define WEAK __attribute__((weak))
 
+#define SINLINE static inline
+
 /* Branch prediction hints for performance-critical paths */
 #define LIKELY(x) __builtin_expect(!!(x), 1)
 #define UNLIKELY(x) __builtin_expect(!!(x), 0)
@@ -31,6 +33,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+
 
 /* --- Linux-style short names --------------------------------------- */
 typedef unsigned char uchar;

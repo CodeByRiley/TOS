@@ -34,7 +34,7 @@
 #define AHCI_PxSSTS_DET_MASK 0x0F
 #define AHCI_PxSSTS_DET_PRESENT 0x03 // Device detected and interface active
 
-/* PxTFD (Task File Data) — low byte is the ATA status register */
+/* PxTFD (Task File Data) , low byte is the ATA status register */
 #define AHCI_PxTFD_STS_ERR (1u << 0)
 #define AHCI_PxTFD_STS_DRQ (1u << 3)
 #define AHCI_PxTFD_STS_BSY (1u << 7)

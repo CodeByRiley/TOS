@@ -1,4 +1,4 @@
-/* kernel/utilities/printf.c — kernel vsnprintf / snprintf / printf.
+/* kernel/utilities/printf.c , kernel vsnprintf / snprintf / printf.
  *
  * Single source for every format-string user in the kernel. Supports the
  * full C99 conversion spec set:

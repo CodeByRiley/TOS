@@ -82,7 +82,7 @@ struct nvidia_device {
     uint32_t vbios_bit_token_count;
     uint64_t vbios_version;
     /* FWSEC ucode descriptor location within the VBIOS. The descriptor
-     * body is not decoded yet — see nvidia_fwsec.c. */
+     * body is not decoded yet , see nvidia_fwsec.c. */
     uint32_t fwsec_desc_offset;
     uint8_t  fwsec_desc_version;
     uint8_t  fwsec_desc_size;

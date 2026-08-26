@@ -1,4 +1,4 @@
-; kernel/arch/x86_64/cpu/syscall.asm — SYSCALL entry stub.
+; kernel/arch/x86_64/cpu/syscall.asm , SYSCALL entry stub.
 ;
 ; Builds a 15-register frame on the kernel stack in the exact order
 ; `struct syscall_frame` (kernel/arch/syscall.h) expects, calls into

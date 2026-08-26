@@ -1,4 +1,4 @@
-/* userspace/lib/syscall_posix.c — POSIX syscall wrappers.
+/* userspace/lib/syscall_posix.c , POSIX syscall wrappers.
  *
  * Split out of syscall.c because musl defines every one of these. A
  * binary linked against musl uses musl's versions and must not link this

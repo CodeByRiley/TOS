@@ -1,4 +1,4 @@
-/* kernel/input/mouse.h — mouse input surface.
+/* kernel/input/mouse.h , mouse input surface.
  *
  * Reports relative motion + button mask from hardware mouse drivers. The
  * driver also maintains an absolute cursor position clamped by

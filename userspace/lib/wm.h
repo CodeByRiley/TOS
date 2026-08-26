@@ -1,4 +1,4 @@
-/* userspace/lib/wm.h — libwm: userspace window-manager client API.
+/* userspace/lib/wm.h , libwm: userspace window-manager client API.
  *
  * Apps include this header to talk to winman over IPC without knowing
  * the wire protocol. The functions wrap a synchronous request/reply
@@ -8,7 +8,7 @@
  * The server lives in userspace/bin/winman/winman.c and includes this
  * same header so wire types and `struct ipc_msg` field layout stay
  * single-sourced. The kernel msg dispatcher (kernel/msg/msg.h) only
- * routes opaque ipc_msg payloads — IPC_WM_* codes are user-defined.
+ * routes opaque ipc_msg payloads , IPC_WM_* codes are user-defined.
  */
 #ifndef USER_WM_H
 #define USER_WM_H
@@ -37,7 +37,7 @@
 
 /* Creation flags, passed in ipc_msg.flags on IPC_WM_CREATE_REQ. */
 /* Give the window a status strip along the bottom of its frame. The client
- * area is unaffected — the frame grows to make room — so a window that asks
+ * area is unaffected , the frame grows to make room , so a window that asks
  * for one does not silently lose drawing space. */
 #define WM_CREATE_STATUSBAR     0x1u
 
@@ -52,12 +52,12 @@ enum {
 enum {
     WM_PROMPT_CANCEL = 0, /* Escape, Cancel, or the request failed */
     WM_PROMPT_OK     = 1, /* OK / Yes / Enter                      */
-    WM_PROMPT_NO     = 2, /* No — confirm dialogs only             */
+    WM_PROMPT_NO     = 2, /* No , confirm dialogs only             */
 };
 
 /* ---------------- Window handle ---------------------------------------- */
 /* Returned by wm_window_create. `surface_va` is the page-aligned base of
- * the shared BGRA pixel buffer mapped into the client's address space —
+ * the shared BGRA pixel buffer mapped into the client's address space ,
  * write pixels there directly, then call wm_window_invalidate so winman
  * recomposites. `pitch` is the row stride in bytes (== w*4 today). */
 struct wm_window {
@@ -114,7 +114,7 @@ int  wm_window_set_status(int handle, const char *text);
  *
  * `kind` is WM_PROMPT_*. For WM_PROMPT_TEXT the reply is copied into `out`
  * (NUL-terminated, truncated to `cap`); pass NULL/0 for the other kinds.
- * Returns WM_PROMPT_OK, WM_PROMPT_NO, or WM_PROMPT_CANCEL — a dead winman
+ * Returns WM_PROMPT_OK, WM_PROMPT_NO, or WM_PROMPT_CANCEL , a dead winman
  * or a failed request reads as WM_PROMPT_CANCEL, so callers only have to
  * handle "the user did not say yes".
  *

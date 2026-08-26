@@ -1,4 +1,4 @@
-/* kernel/loader/elf.c — ELF64 loader.
+/* kernel/loader/elf.c , ELF64 loader.
  *
  * The world's smallest ELF64 loader: opens the file via the FAT-backed
  * FILE* layer, validates magic + machine type, walks the program header
@@ -69,8 +69,8 @@ uint64_t elf_load(const char *path, uint64_t *pml4) {
         }
 
         /* p_vaddr comes straight off disk and is fully attacker-controlled.
-         * Unchecked, a kernel-half vaddr walks into PML4[256..511] — which
-         * process_pml4_create shares by physical address with kernel_pml4 —
+         * Unchecked, a kernel-half vaddr walks into PML4[256..511] , which
+         * process_pml4_create shares by physical address with kernel_pml4 ,
          * and walk_or_create ORs VMM_USER into those shared entries on the
          * way down. That hands ring 3 a mapping in the kernel half of every
          * address space. Bound memsz first so the second test cannot wrap. */
@@ -102,7 +102,7 @@ uint64_t elf_load(const char *path, uint64_t *pml4) {
          *
          * Previous version did one big `memset(va_start, 0, va_end - va_start)`
          * AFTER the loop, which had the side effect of erasing every page that
-         * a prior PT_LOAD segment happened to share with this one — typically
+         * a prior PT_LOAD segment happened to share with this one , typically
          * the page straddling a segment boundary. fread then refilled only the
          * second segment's bytes, leaving a confetti'd hole where the first
          * segment used to be. ELFs are aligned enough that this almost never

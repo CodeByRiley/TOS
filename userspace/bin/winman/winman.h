@@ -10,7 +10,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* In-band TTY control codes — must match kernel/display/tty.h. Defined
+/* In-band TTY control codes , must match kernel/display/tty.h. Defined
  * inline rather than #include'd because that header also declares
  * tty_drain() with a `size_t` signature that conflicts with the userspace
  * `long` wrapper in lib/syscall.h. */
@@ -102,7 +102,7 @@ extern void *malloc(size_t);
 extern void free(void *);
 #include <stdio.h>
 
-/* Forward decls — used by helpers that appear before their definitions
+/* Forward decls , used by helpers that appear before their definitions
  * because GEOMETRY + DRAG sit ahead of the helper bag. */
 struct window;
 static void *aligned_page_alloc(size_t npages, void **out_raw);
@@ -143,7 +143,7 @@ static const uint8_t fallback_cursor_mask[CURSOR_H][CURSOR_W] = {
     {0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
 };
 
-#define DESKTOP_BG 0x00008080u /* teal — Win3-ish                        */
+#define DESKTOP_BG 0x00008080u /* teal , Win3-ish                        */
 #define CHROME_BG 0x00C0C0C0u
 #define TITLEBAR_FG 0x000000A0u /* navy title bar (focused)               */
 #define TITLEBAR_BG 0x00808080u
@@ -162,7 +162,7 @@ static const uint8_t fallback_cursor_mask[CURSOR_H][CURSOR_W] = {
 /* Status strip along the bottom of a window frame. Opt-in per window at
  * create time (WM_CREATE_STATUSBAR): a window that never sets status text
  * would otherwise pay for a blank strip, and the console does not want one.
- * The client area is unchanged — the frame grows — so opting in never costs
+ * The client area is unchanged , the frame grows , so opting in never costs
  * an app drawing space. */
 #define STATUSBAR_PX 16
 #define STATUSBAR_BG 0x00C0C0C0u
@@ -210,7 +210,7 @@ static const uint8_t fallback_cursor_mask[CURSOR_H][CURSOR_W] = {
 #define CLOCK_LINE_GAP 2
 #define CLOCK_FG 0x00FFFFFFu
 /* Poll interval. The taskbar only shows minutes, so once a second is already
- * far more often than the display can change — it just keeps the rollover
+ * far more often than the display can change , it just keeps the rollover
  * from lagging by up to a minute. */
 #define CLOCK_POLL_TICKS 100u
 
@@ -252,7 +252,7 @@ static const uint8_t fallback_cursor_mask[CURSOR_H][CURSOR_W] = {
 #define TB_BTN_FG 0x00000000u
 
 /* Taskbar start button artwork. The image is scaled to fit the button, so
- * the source does not have to be TASKBAR_START_W square — but reject
+ * the source does not have to be TASKBAR_START_W square , but reject
  * anything absurd so a mis-sized file can't turn into a huge rescale. */
 #define TB_START_ICON_PATH "/system/icons/icon.bmp"
 #define TB_START_ICON_MAX_DIM 256
@@ -375,7 +375,7 @@ struct prompt_state {
   int owner_handle;
   /* Screen rect, fixed when the dialog opens. Drawing, hit-testing and the
    * erase-on-dismiss all have to agree on where the dialog is, so this is
-   * stored rather than recomputed — the owner window it is centred on can
+   * stored rather than recomputed , the owner window it is centred on can
    * be gone by the time the dialog is torn down. */
   int x, y, w, h;
   int selected; /* index into the kind's button row */
@@ -405,7 +405,7 @@ static struct window windows[MAX_WINDOWS];
 static int focused_handle = 0;
 
 /* Z-order: handles ordered front-to-back. z_order[0] is topmost (drawn
- * last, hit-tested first). Console takes a slot too — it can be raised
+ * last, hit-tested first). Console takes a slot too , it can be raised
  * over client windows just like any other surface. Re-bound on every
  * create / focus / destroy so the array always reflects current stacking. */
 #define MAX_Z (1 + MAX_WINDOWS)

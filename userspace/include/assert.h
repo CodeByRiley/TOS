@@ -1,4 +1,4 @@
-/* userspace/include/assert.h — assert() stub.
+/* userspace/include/assert.h , assert() stub.
  *
  * No abort path is wired up yet, so assert() is currently a no-op. The
  * macro still consumes its argument so unused-variable warnings stay

@@ -1,4 +1,4 @@
-/* userspace/lib/bmp.c — minimal BMP decoder.
+/* userspace/lib/bmp.c , minimal BMP decoder.
  *
  * Handles the shapes an image editor actually emits for a small sprite:
  * BITMAPINFOHEADER through BITMAPV5HEADER, 24- or 32-bit, BI_RGB or
@@ -6,7 +6,7 @@
  * from the bitfield masks rather than assumed, so an unusual byte order
  * decodes correctly instead of coming out with red and blue swapped.
  *
- * Everything is read into memory in one go — these are sprites, not
+ * Everything is read into memory in one go , these are sprites, not
  * photographs, and the FAT driver has no readahead worth streaming for.
  */
 #include "bmp.h"

@@ -1,9 +1,9 @@
-/* userspace/lib/bmp.h — minimal BMP decoder.
+/* userspace/lib/bmp.h , minimal BMP decoder.
  *
  * Decodes uncompressed 24- and 32-bit Windows BMPs into a top-down buffer
  * of 0xAARRGGBB pixels, which is the framebuffer's own layout plus an
  * alpha byte. Enough for cursors, titlebar glyphs and desktop icons; not
- * a general image library — no RLE, no palettes, no 16bpp.
+ * a general image library , no RLE, no palettes, no 16bpp.
  *
  * Implementation: userspace/lib/bmp.c.
  */
@@ -23,7 +23,7 @@ struct bmp_image {
  * written on success, so a failed load leaves a caller's fallback intact.
  *
  * 24-bit images come back fully opaque. 32-bit images whose alpha channel
- * is entirely zero are also treated as opaque — plenty of tools write
+ * is entirely zero are also treated as opaque , plenty of tools write
  * that for images with no transparency, and honouring it literally would
  * make every such image invisible. */
 int  bmp_load(const char *path, struct bmp_image *out);

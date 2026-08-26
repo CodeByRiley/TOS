@@ -14,7 +14,7 @@
 int nvidia_driver_register(void);
 
 /* Number of NVIDIA display controllers this driver has bound. Presence
- * only — a bound device is not necessarily driving the display. */
+ * only , a bound device is not necessarily driving the display. */
 int nvidia_device_count(void);
 
 /* Non-zero once a bound device has actually taken over scanout. Until

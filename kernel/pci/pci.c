@@ -1,4 +1,4 @@
-/* kernel/pci/pci.c — PCI/PCIe enumeration + config-space access.
+/* kernel/pci/pci.c , PCI/PCIe enumeration + config-space access.
  *
  * ACPI MCFG ranges use PCIe ECAM. A single 4 KiB virtual slot is remapped
  * to the requested function on demand, avoiding a permanent mapping for
@@ -25,7 +25,7 @@
 static struct pci_device pci_table[MAX_PCI_DEVICES];
 static uint32_t pci_count = 0;
 static int      pci_scanned = 0;
-static spinlock_t cfg_lock = SPINLOCK_INIT;
+static struct spinlock cfg_lock = SPINLOCK_INIT;
 static uint64_t ecam_mapped_page = UINT64_MAX;
 
 static uint32_t legacy_cfg_addr(struct pci_addr a, uint16_t off) {
@@ -288,7 +288,7 @@ static void describe_fn(struct pci_addr a) {
                ? (pci_read8(a, PCI_CFG_CAP_PTR) & 0xFC)
                : 0;
 
-    /* Type 1 (PCI-to-PCI bridge) has BARs at 0/1 only — skip BARs for
+    /* Type 1 (PCI-to-PCI bridge) has BARs at 0/1 only , skip BARs for
      * non-zero header types to avoid garbage probing the bridge IO window. */
     for (int i = 0; i < 6; i++) {
         d->bar[i].valid = 0;

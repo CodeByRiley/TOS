@@ -1,6 +1,6 @@
 /*
  * 8x8 bitmap font for printable ASCII (0x20..0x7E).
- * Public-domain CP437 subset (Marcel Sondaar / dhepper / VileR — widely circulated).
+ * Public-domain CP437 subset (Marcel Sondaar / dhepper / VileR , widely circulated).
  * Each glyph: 8 bytes. Row N maps to byte N. Bit 0 = leftmost pixel.
  */
 #ifndef FONT8X8_H

@@ -1,4 +1,4 @@
-/* userspace/lib/string.c — core mem... / str... primitives.
+/* userspace/lib/string.c , core mem... / str... primitives.
  *
  * mem* routines fast-path the 8-byte-aligned case (common for our heap +
  * structs) and fall through to byte copies for the tail. str* routines
@@ -88,7 +88,7 @@ int strcmp(const char *a, const char *b) {
     return (uint8_t)*a - (uint8_t)*b;
 }
 
-/* strncmp(3) — stops at min(n, strlen(a), strlen(b)). */
+/* strncmp(3) , stops at min(n, strlen(a), strlen(b)). */
 int strncmp(const char *a, const char *b, size_t n) {
     while (n && *a && *a == *b) { a++; b++; n--; }
     return n == 0 ? 0 : (uint8_t)*a - (uint8_t)*b;
@@ -103,7 +103,7 @@ char *strchr(const char *s, int c) {
     return c == 0 ? (char*)s : 0;
 }
 
-/* strdup(3) — caller frees. NULL on OOM. */
+/* strdup(3) , caller frees. NULL on OOM. */
 char *strdup(const char *s) {
     extern void *malloc(size_t);
     size_t len = strlen(s) + 1;

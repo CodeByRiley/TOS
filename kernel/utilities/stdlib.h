@@ -1,4 +1,4 @@
-/* kernel/utilities/stdlib.h — kernel-side stdlib subset.
+/* kernel/utilities/stdlib.h , kernel-side stdlib subset.
  *
  * Number parsers + abs + strdup + qsort. Implementations live in
  * kernel/utilities/stdlib.c. Memory-allocation helpers (kmalloc/

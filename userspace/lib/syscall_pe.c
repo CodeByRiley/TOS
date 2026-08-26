@@ -1,10 +1,10 @@
-/* userspace/lib/syscall_pe.c — syscall trampolines for PE builds.
+/* userspace/lib/syscall_pe.c , syscall trampolines for PE builds.
  *
  * The PE counterpart of lib/syscall.s. ELF binaries get syscall0..6 from
  * that NASM file; mingw cannot assemble it, and more importantly the two
  * toolchains disagree about which registers hold arguments.
  *
- * mingw compiles to the Microsoft x64 convention — rcx, rdx, r8, r9 —
+ * mingw compiles to the Microsoft x64 convention , rcx, rdx, r8, r9 ,
  * while the kernel reads arguments the SysV way: rdi, rsi, rdx, r10, r8,
  * r9, with the call number in rax. Rather than hand-writing the moves,
  * each stub below pins its operands to the registers the kernel expects

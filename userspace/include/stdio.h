@@ -1,4 +1,4 @@
-/* userspace/include/stdio.h — FILE* + formatted I/O surface.
+/* userspace/include/stdio.h , FILE* + formatted I/O surface.
  *
  * FILE is an opaque struct {fd, eof}; no buffering. Implementations:
  *   - lib/stdio.c        : fopen/fclose/fread/fwrite/fseek/ftell/feof/fgetc/fgets

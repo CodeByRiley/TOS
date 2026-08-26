@@ -72,7 +72,7 @@
 #define UHCI_USBINTR_IOC_EN          (1u << 2)   // Interrupt on Complete (IOC)
 #define UHCI_USBINTR_SHORT_EN       (1u << 3)
 
-/* UHCI Port Status/Control (PORTSC1, PORTSC2 — identical layout) */
+/* UHCI Port Status/Control (PORTSC1, PORTSC2 , identical layout) */
 //
 // Bits | Name                              | Description
 // 15-13| Reserved                          |
@@ -123,7 +123,7 @@
 #define UHCI_PTR_QH       (1u << 1)
 #define UHCI_PTR_DEPTH    (1u << 2)
 
-/* TD Token (uhci_td.token) — DWORD 2 */
+/* TD Token (uhci_td.token) , DWORD 2 */
 //
 // Bits  | Name              | Description
 // 31-21 | Maximum Length    | Bytes to transfer, encoded as (len - 1); 0x7FF = 0 bytes
@@ -143,7 +143,7 @@
 #define USB_PID_IN      0x69
 #define USB_PID_OUT     0xE1
 
-/* TD Control and Status (uhci_td.status) — DWORD 1 */
+/* TD Control and Status (uhci_td.status) , DWORD 1 */
 //
 // Bits  | Name                    | Description
 // 31-30 | Reserved                |
@@ -163,7 +163,7 @@
 // 10-0  | Actual Length           | Bytes actually moved, encoded as (len - 1)
 //
 // Bits 16-11 are the trap here. Omitting them shifts every flag down by five,
-// landing Active on CRC/Timeout and C_ERR on Stalled|Active — the controller
+// landing Active on CRC/Timeout and C_ERR on Stalled|Active , the controller
 // then gets a TD claiming to be simultaneously active and stalled, and the
 // driver reads a freshly-set error flag as "still running".
 //

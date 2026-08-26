@@ -1,4 +1,4 @@
-/* userspace/lib/stat.c — POSIX stat()/fstat() over the kernel's compact
+/* userspace/lib/stat.c , POSIX stat()/fstat() over the kernel's compact
  * stat_user, plus mkdir().
  *
  * The kernel reports what FAT actually stores: size, directory flag, the

@@ -1,4 +1,4 @@
-/* kernel/msg/msg.h — per-task message rings (input + IPC).
+/* kernel/msg/msg.h , per-task message rings (input + IPC).
  *
  * Two ring layers share this header:
  *   - struct msg     : Win3-style input event ring. IRQ handlers + timers
@@ -80,7 +80,7 @@ _Static_assert(offsetof(struct ipc_msg, str) == 40,
 void msg_init(void);
 
 /* Post an input event onto the input-owner's ring. Called from IRQ
- * contexts — must not block. Drops the event silently if no input owner
+ * contexts , must not block. Drops the event silently if no input owner
  * is set or the recipient's ring is full. */
 void msg_post(const struct msg *m);
 

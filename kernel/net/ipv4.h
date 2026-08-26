@@ -1,4 +1,4 @@
-/* kernel/net/ipv4.h — IPv4 input demultiplexing and output.
+/* kernel/net/ipv4.h , IPv4 input demultiplexing and output.
  *
  * Output is the new capability here. The driver-resident ICMP this replaces
  * could only turn a received packet around in place, so it never had to

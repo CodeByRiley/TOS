@@ -1,4 +1,4 @@
-/* kernel/acpi/acpi.c — ACPI discovery + SDT/MADT parsing.
+/* kernel/acpi/acpi.c , ACPI discovery + SDT/MADT parsing.
  *
  * Two RSDP sources, in order of preference:
  *   1. Multiboot2 ACPI_NEW (XSDP) or ACPI_OLD (RSDP) tag
@@ -68,7 +68,7 @@ static const struct acpi_rsdp_v1 *scan_for_rsdp(uint64_t start, uint64_t end) {
 }
 
 static const struct acpi_rsdp_v1 *find_rsdp(uint64_t mb2_addr) {
-    /* 1. Multiboot tag (preferred — explicit, validated). */
+    /* 1. Multiboot tag (preferred , explicit, validated). */
     struct MB2_TAG_ACPI *t = (struct MB2_TAG_ACPI*)
         mb2_find_tag(mb2_addr, MULTIBOOT_TAG_ACPI_NEW);
     if (!t) t = (struct MB2_TAG_ACPI*)
@@ -111,7 +111,7 @@ static int parse_madt(const struct acpi_madt *madt) {
                 cpu_ids[cpu_count++] = e->apic_id;
             }
         } else if (type == MADT_TYPE_LOCAL_APIC_OVR && len >= 12) {
-            /* 64-bit LAPIC base override — wins over the 32-bit MADT field. */
+            /* 64-bit LAPIC base override , wins over the 32-bit MADT field. */
             lapic_phys = *(const uint64_t*)(p + 4);
         }
         p += len;

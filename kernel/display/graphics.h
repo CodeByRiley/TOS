@@ -18,6 +18,7 @@
 #ifndef GRAPHICS_H
 #define GRAPHICS_H
 
+#include "utilities/types.h"
 #include <stddef.h>
 #include <stdint.h>
 
@@ -30,16 +31,16 @@ struct gfx_rect {
     int x, y, w, h;
 };
 
-static inline struct gfx_rect gfx_rect_make(int x, int y, int w, int h) {
+SINLINE struct gfx_rect gfx_rect_make(int x, int y, int w, int h) {
     struct gfx_rect r = { x, y, w, h };
     return r;
 }
 
-static inline int gfx_rect_empty(struct gfx_rect r) {
+SINLINE int gfx_rect_empty(struct gfx_rect r) {
     return r.w <= 0 || r.h <= 0;
 }
 
-static inline int gfx_rect_contains(struct gfx_rect r, int x, int y) {
+SINLINE int gfx_rect_contains(struct gfx_rect r, int x, int y) {
     return x >= r.x && y >= r.y && x < r.x + r.w && y < r.y + r.h;
 }
 
@@ -62,7 +63,7 @@ struct gfx_rect gfx_clip_push(struct gfx_surface *s, struct gfx_rect r);
 void            gfx_clip_set(struct gfx_surface *s, struct gfx_rect r);
 void            gfx_clip_reset(struct gfx_surface *s);
 
-static inline struct gfx_rect gfx_surface_bounds(const struct gfx_surface *s) {
+SINLINE struct gfx_rect gfx_surface_bounds(const struct gfx_surface *s) {
     return gfx_rect_make(0, 0, s->w, s->h);
 }
 

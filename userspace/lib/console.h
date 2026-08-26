@@ -1,4 +1,4 @@
-/* userspace/lib/console.h — userspace console API.
+/* userspace/lib/console.h , userspace console API.
  *
  * Thin wrapper over SYS_CON_* syscalls. Apps stream text through the
  * kernel TTY; the kernel WM handles glyph rendering and color. The

@@ -1,4 +1,4 @@
-/* kernel/arch/gdt.h — kernel GDT + TSS surface.
+/* kernel/arch/gdt.h , kernel GDT + TSS surface.
  *
  * Holds the selectors used by syscall entry / IRET paths and the
  * helpers for installing per-CPU TSSes. AP TSS selectors follow the BSP

@@ -1,4 +1,4 @@
-/* userspace/bin/btop/btop.c — terminal task & memory monitor.
+/* userspace/bin/btop/btop.c , terminal task & memory monitor.
  *
  * Polls SYS_PROC_LIST + SYS_MEM_STATS every ~500 ms and redraws a header,
  * memory bar, and process table. CPU% per task is the ticks_run delta
@@ -124,7 +124,7 @@ int main(int argc, char **argv) {
 
     memset(prev, 0, sizeof(prev));
 
-    /* Take the screen — saves the shell's grid + cursor and clears the
+    /* Take the screen , saves the shell's grid + cursor and clears the
      * live screen. Restored before every `return` so the prompt comes
      * back exactly where it left off. */
     console_save();
@@ -150,7 +150,7 @@ int main(int argc, char **argv) {
         }
 
         /* Compute per-task tick deltas vs. the previous snapshot. Match
-         * by PID, not by index — a task reaped between snapshots shifts
+         * by PID, not by index , a task reaped between snapshots shifts
          * everything below it up. New tasks report 0% this tick. */
         uint64_t total_delta = 0;
         for (int i = 0; i < n; i++) {

@@ -1,4 +1,4 @@
-/* userspace/include/strings.h — POSIX <strings.h> alias.
+/* userspace/include/strings.h , POSIX <strings.h> alias.
  *
  * strcasecmp/strncasecmp etc. already live in <string.h> in this libc, so
  * this header is a one-liner indirection for source compatibility with

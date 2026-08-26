@@ -1,4 +1,4 @@
-/* kernel/net/netif.c — see netif.h. */
+/* kernel/net/netif.c , see netif.h. */
 #include <net/netif.h>
 #include <utilities/string.h>
 

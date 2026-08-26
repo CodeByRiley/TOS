@@ -1,4 +1,5 @@
-/* kernel/net/eth.c — see eth.h. */
+/* kernel/net/eth.c , see eth.h. */
+#include "utilities/log.h"
 #include <net/arp.h>
 #include <net/eth.h>
 #include <net/ipv4.h>
@@ -18,25 +19,36 @@ static int eth_addressed_to_us(const struct netif *nif, const uint8_t *dst) {
 }
 
 void eth_input(const uint8_t *frame, uint16_t len) {
+  log_write("eth_input: called", KERNEL, LOG_DEBUG);
   struct netif *nif = netif_get();
   if (!nif || !frame || len < ETH_HDR_LEN || len > ETH_FRAME_MAX)
     return;
 
+  log_write("eth_input: frame is valid", KERNEL, LOG_DEBUG);
+
   const struct eth_hdr *eth = (const struct eth_hdr *)frame;
   if (!eth_addressed_to_us(nif, eth->dst))
     return;
+
+  log_write("eth_input: frame is addressed to us", KERNEL, LOG_DEBUG);
 
   const uint8_t *payload = frame + ETH_HDR_LEN;
   uint16_t payload_len = (uint16_t)(len - ETH_HDR_LEN);
 
   switch (from_be16(eth->type)) {
   case ETH_TYPE_ARP:
+    log_write("eth_input: ARP frame", KERNEL, LOG_DEBUG);
     arp_input(eth, payload, payload_len);
     break;
   case ETH_TYPE_IPV4:
+    log_write("eth_input: IPv4 frame", KERNEL, LOG_DEBUG);
     ipv4_input(eth, payload, payload_len);
     break;
   default:
+    /* Ignore unknown types */
+    log_write_fmt(KERNEL, LOG_DEBUG,
+                  "eth_input: unknown type %04x, frame, len",
+                  from_be16(eth->type), frame, len);
     break;
   }
 }

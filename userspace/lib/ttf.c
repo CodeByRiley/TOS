@@ -420,7 +420,7 @@ void ttf_draw_glyph_cell(struct gfx_surface *s, struct ttf_font *font,
     float scale_x = scale;
 
     /* Glyphs wider than the cell get condensed horizontally rather than
-     * clipped — a squeezed 'M' still reads as an 'M', a cropped one doesn't.
+     * clipped , a squeezed 'M' still reads as an 'M', a cropped one doesn't.
      * Narrow glyphs keep their shape and are simply centred. */
     int fit = cell_w - 1;
     if (fit > 0 && adv > fit) {

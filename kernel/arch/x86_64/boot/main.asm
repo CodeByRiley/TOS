@@ -1,7 +1,7 @@
-; kernel/arch/x86_64/boot/main.asm — 32-bit boot stub.
+; kernel/arch/x86_64/boot/main.asm , 32-bit boot stub.
 ;
 ; Convinces a CPU currently pretending it's 1986 to act like it's at
-; least 2003. Checks valid Multiboot2 magic, cpuid, long mode, and SSE —
+; least 2003. Checks valid Multiboot2 magic, cpuid, long mode, and SSE ,
 ; every capability we already know is there but refuse to assume because
 ; someone, somewhere, is booting this on something weird. Then builds a
 ; 1 GiB identity-mapped pagetable with 2 MiB huge pages (one PML4 entry
@@ -192,7 +192,7 @@ setup_page_tables:
     ; The HHDM is a data-only window over physical memory: kernel code runs
     ; from the low identity map and the PML4[511] alias, never from here.
     ; edx is the entry's high dword, so bit 31 here is entry bit 63 (NX).
-    ; Requires EFER.NXE, which enable_paging sets before CR0.PG — and
+    ; Requires EFER.NXE, which enable_paging sets before CR0.PG , and
     ; check_long_mode has already proven the CPU supports it.
     or edx, (1 << 31)                     ; NX
     mov [edi + 4], edx

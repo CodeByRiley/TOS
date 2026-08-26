@@ -1,4 +1,5 @@
-/* kernel/net/arp.c — see arp.h. */
+/* kernel/net/arp.c , see arp.h. */
+#include "utilities/log.h"
 #include <devices/pit.h>
 #include <net/arp.h>
 #include <net/eth.h>
@@ -34,7 +35,7 @@ struct arp_pending {
 };
 
 static struct {
-  spinlock_t lock;
+  struct spinlock lock;
   struct arp_entry cache[ARP_CACHE_ENTRIES];
   struct arp_pending pending[ARP_PENDING_SLOTS];
 } arp = {.lock = SPINLOCK_INIT};
@@ -67,8 +68,8 @@ static void arp_drop_pending_locked(int entry_index) {
 }
 
 /* Free slot first, otherwise the entry closest to its deadline. Evicting by
- * deadline rather than round-robin keeps the gateway — refreshed on every
- * exchange — resident, which is the entry that actually matters. */
+ * deadline rather than round-robin keeps the gateway , refreshed on every
+ * exchange , resident, which is the entry that actually matters. */
 static struct arp_entry *arp_alloc_locked(void) {
   struct arp_entry *victim = &arp.cache[0];
 
@@ -84,7 +85,7 @@ static struct arp_entry *arp_alloc_locked(void) {
   return victim;
 }
 
-/* Free slot first, otherwise the frame that has waited longest — it is the
+/* Free slot first, otherwise the frame that has waited longest , it is the
  * one most likely to have been given up on upstream. */
 static struct arp_pending *arp_pending_alloc_locked(void) {
   struct arp_pending *victim = &arp.pending[0];
@@ -269,35 +270,127 @@ static void arp_learn(const uint8_t *ip, const uint8_t *mac, int may_create) {
 
 void arp_input(const struct eth_hdr *eth, const uint8_t *payload,
                uint16_t len) {
+  log_write_fmt(KERNEL, LOG_INFO, "ARP: input eth=%p payload=%p len=%u",
+                (const void *)eth, (const void *)payload, len);
+
   struct netif *nif = netif_get();
-  if (!nif || !eth || !payload || len < sizeof(struct arp_ipv4))
+  if (!nif) {
+    log_write_fmt(KERNEL, LOG_INFO, "ARP: dropped: no network interface");
     return;
+  }
+
+  if (!eth) {
+    log_write_fmt(KERNEL, LOG_INFO, "ARP: dropped: null Ethernet header");
+    return;
+  }
+
+  if (!payload) {
+    log_write_fmt(KERNEL, LOG_INFO, "ARP: dropped: null payload");
+    return;
+  }
+
+  if (len < sizeof(struct arp_ipv4)) {
+    log_write_fmt(KERNEL, LOG_INFO,
+                  "ARP: dropped: packet too short len=%u required=%u", len,
+                  (unsigned)sizeof(struct arp_ipv4));
+    return;
+  }
 
   const struct arp_ipv4 *pkt = (const struct arp_ipv4 *)payload;
-  if (from_be16(pkt->htype) != ARP_HTYPE_ETHERNET ||
-      from_be16(pkt->ptype) != ETH_TYPE_IPV4 || pkt->hlen != ETH_ALEN ||
-      pkt->plen != IPV4_ALEN)
+
+  uint16_t htype = from_be16(pkt->htype);
+  uint16_t ptype = from_be16(pkt->ptype);
+
+  log_write_fmt(KERNEL, LOG_INFO,
+                "ARP: header htype=0x%04x ptype=0x%04x hlen=%u plen=%u", htype,
+                ptype, pkt->hlen, pkt->plen);
+
+  if (htype != ARP_HTYPE_ETHERNET) {
+    log_write_fmt(KERNEL, LOG_INFO,
+                  "ARP: dropped: unsupported hardware type=0x%04x", htype);
     return;
+  }
+
+  if (ptype != ETH_TYPE_IPV4) {
+    log_write_fmt(KERNEL, LOG_INFO,
+                  "ARP: dropped: unsupported protocol type=0x%04x", ptype);
+    return;
+  }
+
+  if (pkt->hlen != ETH_ALEN) {
+    log_write_fmt(KERNEL, LOG_INFO,
+                  "ARP: dropped: invalid hardware length=%u expected=%u",
+                  pkt->hlen, ETH_ALEN);
+    return;
+  }
+
+  if (pkt->plen != IPV4_ALEN) {
+    log_write_fmt(KERNEL, LOG_INFO,
+                  "ARP: dropped: invalid protocol length=%u expected=%u",
+                  pkt->plen, IPV4_ALEN);
+    return;
+  }
 
   uint16_t oper = from_be16(pkt->oper);
-  if (oper != ARP_OP_REQUEST && oper != ARP_OP_REPLY)
+
+  log_write_fmt(KERNEL, LOG_INFO, "ARP: operation=0x%04x%s", oper,
+                oper == ARP_OP_REQUEST ? " request"
+                : oper == ARP_OP_REPLY ? " reply"
+                                       : " unsupported");
+
+  if (oper != ARP_OP_REQUEST && oper != ARP_OP_REPLY) {
+    log_write_fmt(KERNEL, LOG_INFO,
+                  "ARP: dropped: unsupported operation=0x%04x", oper);
     return;
+  }
 
   int for_us = ipv4_addr_equal(pkt->tpa, nif->ipv4);
 
-  /* A zero sender address means an ARP probe: the sender has no address
-   * yet, so caching it would map 0.0.0.0 onto a real MAC. */
-  if (!ipv4_addr_is_zero(pkt->spa))
-    arp_learn(pkt->spa, pkt->sha, for_us);
+  log_write_fmt(KERNEL, LOG_INFO, "ARP: target is %s",
+                for_us ? "local interface" : "not local interface");
 
-  if (oper != ARP_OP_REQUEST || !for_us)
+  /*
+   * A zero sender address means an ARP probe: the sender has no address
+   * yet, so caching it would map 0.0.0.0 onto a real MAC.
+   */
+  if (ipv4_addr_is_zero(pkt->spa)) {
+    log_write_fmt(KERNEL, LOG_INFO,
+                  "ARP: sender address is zero; skipping ARP cache update");
+  } else {
+    log_write_fmt(KERNEL, LOG_INFO, "ARP: learning sender address");
+    arp_learn(pkt->spa, pkt->sha, for_us);
+  }
+
+  if (oper != ARP_OP_REQUEST) {
+    log_write_fmt(KERNEL, LOG_INFO,
+                  "ARP: received reply; no response required");
     return;
-  if (ipv4_addr_is_zero(nif->ipv4))
+  }
+
+  if (!for_us) {
+    log_write_fmt(KERNEL, LOG_INFO,
+                  "ARP: request is not for this interface; no response");
     return;
+  }
+
+  if (ipv4_addr_is_zero(nif->ipv4)) {
+    log_write_fmt(KERNEL, LOG_INFO,
+                  "ARP: interface has no IPv4 address; no response");
+    return;
+  }
+
+  log_write_fmt(KERNEL, LOG_INFO,
+                "ARP: request is for local IPv4 address; building reply");
 
   struct arp_ipv4 reply;
   arp_fill(&reply, nif, ARP_OP_REPLY, pkt->sha, pkt->spa);
+
+  log_write_fmt(KERNEL, LOG_INFO, "ARP: sending reply len=%u",
+                (unsigned)sizeof(reply));
+
   eth_output(eth->src, ETH_TYPE_ARP, &reply, sizeof(reply));
+
+  log_write_fmt(KERNEL, LOG_INFO, "ARP: reply sent");
 }
 
 /* ---------------- maintenance ------------------------------------------ */

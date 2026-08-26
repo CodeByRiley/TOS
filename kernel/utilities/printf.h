@@ -1,4 +1,4 @@
-/* kernel/utilities/printf.h — kernel printf surface.
+/* kernel/utilities/printf.h , kernel printf surface.
  *
  * vsnprintf/snprintf/printf live in kernel/utilities/printf.c.
  * The format engine matches the userspace one (full C99 conversion spec

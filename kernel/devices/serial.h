@@ -1,4 +1,4 @@
-/* kernel/devices/serial.h — COM1 UART driver.
+/* kernel/devices/serial.h , COM1 UART driver.
  *
  * Used for kernel printf + early-boot logging (visible in QEMU's serial
  * window). 38400 8N1, polled I/O.

@@ -1,13 +1,13 @@
-/* userspace/lib/unistd_stub.c — minimal unistd surface.
+/* userspace/lib/unistd_stub.c , minimal unistd surface.
  *
  * Most POSIX bits aren't wired up yet; this file gives callers something
  * that compiles + behaves harmlessly. sleep/usleep busy-wait against the
- * tick counter — fine for the current single-task workloads.
+ * tick counter , fine for the current single-task workloads.
  */
 #include <include/unistd.h>
 #include <lib/syscall.h>
 
-/* TTY detection unsupported — treat every fd as a pipe/file. */
+/* TTY detection unsupported , treat every fd as a pipe/file. */
 int isatty(int fd)                       { (void)fd; return 0; }
 
 /* Busy-wait `s` seconds. Returns 0 (no signal handling). */
@@ -17,7 +17,7 @@ unsigned int sleep(unsigned int s) {
     return 0;
 }
 
-/* Busy-wait `us` microseconds (resolution is actually ~1 ms — tick rate). */
+/* Busy-wait `us` microseconds (resolution is actually ~1 ms , tick rate). */
 int usleep(unsigned int us) {
     long target = get_ticks() + (long)(us / 1000);
     while (get_ticks() < target) { }

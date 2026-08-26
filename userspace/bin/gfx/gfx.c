@@ -1,4 +1,4 @@
-/* userspace/bin/gfx/gfx.c — fullscreen framebuffer demo.
+/* userspace/bin/gfx/gfx.c , fullscreen framebuffer demo.
  *
  * Maps the kernel framebuffer with fb_map() and paints an animated
  * gradient until the user presses ESC. Used to sanity-check the FB
@@ -7,7 +7,7 @@
  * fb_map does NOT hand back the scanout. Under virtio-gpu it returns the
  * RAM backbuffer, and the kernel flush thread only transfers rectangles
  * that were marked with fb_damage. Painting without marking damage draws
- * into memory nobody ever pushes to the host — the program runs, responds
+ * into memory nobody ever pushes to the host , the program runs, responds
  * to keys, exits cleanly, and is invisible the whole time.
  */
 #include <lib/syscall.h>

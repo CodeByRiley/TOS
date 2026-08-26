@@ -1,4 +1,4 @@
-/* kernel/arch/percpu.h — per-CPU data area.
+/* kernel/arch/percpu.h , per-CPU data area.
  *
  * GS_BASE points at the running CPU's struct cpu_local. Kernel code reads
  * and writes per-CPU state without locks or explicit CPU-id passing by
@@ -10,7 +10,7 @@
  * Any field reorder must update the offset macros below + the asm. The
  * static_asserts catch silent drift at compile time.
  *
- * The hardware TSS is NOT embedded here — its layout is fixed by the CPU
+ * The hardware TSS is NOT embedded here , its layout is fixed by the CPU
  * and the GDT descriptor needs its physical address. We hold a pointer to
  * a separately-allocated TSS instead.
  *
@@ -28,7 +28,7 @@ struct task;
 struct tss;
 
 struct cpu_local {
-    struct cpu_local *self;             /* gs:0 — for C-level read of base   */
+    struct cpu_local *self;             /* gs:0 , for C-level read of base   */
     int               cpu_id;           /* logical id, 0..MAX_CPUS-1         */
     uint8_t           lapic_id;         /* hardware APIC id                  */
     uint8_t           _pad[3];
@@ -40,7 +40,7 @@ struct cpu_local {
     volatile int      online;           /* 1 once AP has reached scheduler   */
 };
 
-/* Asm-visible offsets. Must stay in lockstep with the struct above —
+/* Asm-visible offsets. Must stay in lockstep with the struct above ,
  * SYSCALL entry uses these literally with no symbol lookup. */
 #define CPU_LOCAL_KERNEL_RSP_TOP_OFF  16
 #define CPU_LOCAL_USER_RSP_SAVE_OFF   24

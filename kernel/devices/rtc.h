@@ -1,4 +1,4 @@
-/* kernel/devices/rtc.h — CMOS real-time clock.
+/* kernel/devices/rtc.h , CMOS real-time clock.
  *
  * The only wall-clock source in the system. Everything else that looks like
  * a clock is uptime: pit_ticks() counts from boot, so current_timespec() and
@@ -31,7 +31,7 @@ void rtc_read(struct rtc_time *out);
 
 /* Seconds since 1970-01-01 00:00:00 as the CMOS reports it, or 0 when the
  * clock is unreadable. Whether that is UTC or local time is a property of
- * the machine's CMOS, not something this kernel can know — QEMU defaults to
+ * the machine's CMOS, not something this kernel can know , QEMU defaults to
  * UTC and `-rtc base=localtime` switches it. */
 uint64_t rtc_unix_epoch(void);
 

@@ -1,4 +1,4 @@
-/* userspace/bin/mtest/mtest.c — libwm + mouse smoke test.
+/* userspace/bin/mtest/mtest.c , libwm + mouse smoke test.
  *
  * Spawns a 640x480 window, draws a cursor at the last-known mouse
  * position, drops a colored dot on every MOUSE_DOWN, and quits on ESC.

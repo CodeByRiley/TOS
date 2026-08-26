@@ -1,4 +1,4 @@
-/* userspace/lib/ui.c — immediate-mode widgets over lib/gfx.
+/* userspace/lib/ui.c , immediate-mode widgets over lib/gfx.
  *
  * The interaction model is the usual two-id one: `hot` is whatever the
  * pointer is over, `active` is whatever took the press. A click is a
@@ -173,7 +173,7 @@ static int button_box(struct ui_context *c, int id, struct gfx_rect r,
 
     gfx_fill(c->s, r, face);
     /* Pressed buttons invert the bevel, and the label shifts a pixel down
-     * and right — the cheapest way to read as physically depressed. */
+     * and right , the cheapest way to read as physically depressed. */
     if (held) gfx_bevel(c->s, r, t->dark, t->light, t->border);
     else      gfx_bevel(c->s, r, t->light, t->dark, t->border);
 

@@ -110,7 +110,7 @@ then gateway resolution and the reply landing in the cache).
 
 Two things drive the order below. Each item is the cheapest change that makes
 the next one testable, and NetSurf is the consumer that decides when the stack
-is actually finished — it renders `data:` and `resource:` URLs today and cannot
+is actually finished , it renders `data:` and `resource:` URLs today and cannot
 fetch a single byte over the network.
 
 - [ ] Cover the two layers that shipped without tests.
@@ -128,7 +128,7 @@ fetch a single byte over the network.
 
 - [ ] Fix `kernel/net/ksocket.c` before building anything on it.
   - It has no callers and no syscalls behind it, so nothing here is a
-    regression risk — but the bugs are wrong behaviour, not missing features,
+    regression risk , but the bugs are wrong behaviour, not missing features,
     and inheriting them into UDP would be much more expensive to find later.
   - `ring_buffer_push` tests `ring_buffer_full` and then writes `len` bytes
     regardless, walking past the tail and silently corrupting queued data.
@@ -141,7 +141,7 @@ fetch a single byte over the network.
     0 instead of blocking; there is no `socket_close`, so every socket and its
     buffer leaks for the life of the kernel.
   - Reconcile the duplicate definitions in `ksocket.h` against `net/inet.h`
-    (`ipv4_addr_t`, `IPPROTO_*`) rather than leaving two sources of truth.
+    (`ipv4_addr`, `IPPROTO_*`) rather than leaving two sources of truth.
   - Done when the datagram queue has host tests covering oversized writes, a
     full queue, message boundaries, and per-datagram source addresses.
 
@@ -188,7 +188,7 @@ fetch a single byte over the network.
 
 - [ ] Implement TCP.
   - The largest item here by a wide margin, and the one NetSurf is waiting
-    on. Do not start it until UDP, DHCP, and DNS are reliable — every bug
+    on. Do not start it until UDP, DHCP, and DNS are reliable , every bug
     found in those layers is a bug that would otherwise be found while
     debugging a retransmit timer.
   - Stage it: connection setup and teardown with the full state machine;

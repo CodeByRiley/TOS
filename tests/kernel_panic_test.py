@@ -108,7 +108,7 @@ SYMBOL_RE = re.compile(r"^[A-Za-z_][A-Za-z_0-9.$]*\+0x[0-9a-fA-F]+$")
 
 # panic_symstr() prints "kernel+0xNNN" when symtab_resolve() returns NULL but
 # the address is inside the kernel text. That is the shape of a *failed*
-# lookup, and it satisfies SYMBOL_RE, so it has to be rejected by name — an
+# lookup, and it satisfies SYMBOL_RE, so it has to be rejected by name , an
 # empty symbol table otherwise produces a backtrace this check calls resolved.
 UNRESOLVED_NAMES = {"kernel"}
 
@@ -116,7 +116,7 @@ UNRESOLVED_NAMES = {"kernel"}
 def backtrace_symbols(log: str) -> tuple[int, list[str]]:
     """Check the backtrace resolved to names rather than bare addresses.
 
-    Returns (resolved_count, complaints). The header alone proves nothing —
+    Returns (resolved_count, complaints). The header alone proves nothing ,
     a dropped .ksymtab section, a table the second link pass failed to
     override, or offsets computed against the wrong base all still print a
     well-formed backtrace, just one made entirely of hex. So every return

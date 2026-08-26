@@ -1,4 +1,4 @@
-/* userspace/lib/keymap.h — scancode-to-ASCII translation.
+/* userspace/lib/keymap.h , scancode-to-ASCII translation.
  *
  * Used by apps that consume raw key events from msg_get() and need a
  * printable character (e.g., the shell). The kernel reports Linux KEY_*

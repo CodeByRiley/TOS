@@ -1,4 +1,4 @@
-/* kernel/interrupts/idt.c — IDT install + dispatch.
+/* kernel/interrupts/idt.c , IDT install + dispatch.
  *
  * Builds the IDT, points each vector at one of the asm stubs in
  * kernel/arch/x86_64/interrupts/isr.asm (which save GPRs + a vector number then
@@ -63,7 +63,7 @@ void idt_init(void) {
   idt_set(VEC_SMP_WORK_IPI, (uint64_t)isr240);
   idt_set(VEC_LAPIC_SPURIOUS, (uint64_t)isr255);
   /* #DF is the last chance to say anything before a triple fault resets
-   * the machine. Give it a stack that cannot itself be the problem —
+   * the machine. Give it a stack that cannot itself be the problem ,
    * a stack overflow or a bad rsp0 otherwise reboots with no output. */
   idt_set_ist(VEC_DOUBLE_FAULT, isr_stub_table[VEC_DOUBLE_FAULT],
               IST_DOUBLE_FAULT);
@@ -73,7 +73,7 @@ void idt_init(void) {
 }
 
 void idt_load_this_cpu(void) {
-  /* Same shared IDT — IDTR is per-CPU, so each AP must lidt for itself. */
+  /* Same shared IDT , IDTR is per-CPU, so each AP must lidt for itself. */
   __asm__ volatile("lidt %0" : : "m"(idtr));
 }
 
@@ -164,7 +164,7 @@ static const char *exception_names[32] = {
 /* Page-table bits, for the fault reporter's manual walk. Deliberately its own
  * set rather than vmm.h's VMM_*: this code runs inside the fault handler and
  * must stay readable as a decoder of whatever the CPU actually found, not as
- * the mapper's view of what should be there. Values are the same layout —
+ * the mapper's view of what should be there. Values are the same layout ,
  * see the table in vmm.h. */
 #define PF_PAGE_SIZE 4096ULL
 #define PF_ADDR_MASK VMM_ADDR_MASK
@@ -504,7 +504,7 @@ void isr_handler(struct interrupt_frame *r) {
      *
      * A page fault or #GP from ring 3 is the program's own doing, so kill
      * the task and keep the system up. But some vectors are not the running
-     * task's fault at all — they merely interrupted it:
+     * task's fault at all , they merely interrupted it:
      *
      *   NMI (2)           asynchronous, externally delivered
      *   double fault (8)  the fault handler itself failed; state is gone

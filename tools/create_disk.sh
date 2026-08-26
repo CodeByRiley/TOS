@@ -11,7 +11,7 @@ IMG="${IMG:-build/disk.img}"
 mkdir -p "$(dirname "$IMG")"
 
 # (host_path::fat_dst_path) pairs. The volume is FAT32 with VFAT long
-# names, so destinations are the real names — no 8.3 mangling, and no
+# names, so destinations are the real names , no 8.3 mangling, and no
 # second spelling to keep in sync with the kernel's hardcoded paths.
 payloads=(
 	"rootfs/readme.txt::readme.txt"
@@ -55,6 +55,7 @@ payloads=(
 	"userspace/bin/mmaptest/mmaptest.elf::usr/bin/mmaptest.elf"
 	"userspace/bin/faulter/faulter.elf::usr/bin/faulter.elf"
 	"userspace/bin/netmon/netmon.elf::usr/bin/netmon.elf"
+	"userspace/bin/ping/ping.elf::usr/bin/ping.elf"
 
 # System Apps
 	"userspace/bin/shutdown/shutdown.elf::system/bin/shutdown.elf"

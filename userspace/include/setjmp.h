@@ -1,4 +1,4 @@
-/* userspace/include/setjmp.h — non-functional setjmp/longjmp surface.
+/* userspace/include/setjmp.h , non-functional setjmp/longjmp surface.
  *
  * The buffer is sized generously (16 longs) so future real impls fit.
  * Until then, lib/setjmp_stub.c returns 0 from setjmp() and spins in

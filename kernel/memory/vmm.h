@@ -1,7 +1,7 @@
-/* kernel/memory/vmm.h — virtual-memory mapper.
+/* kernel/memory/vmm.h , virtual-memory mapper.
  *
  * Long-mode 4-level paging. Standard PTE bits exposed as VMM_*, plus a
- * project-specific VMM_SHARED bit (PTE bit 9) marking borrowed pages —
+ * project-specific VMM_SHARED bit (PTE bit 9) marking borrowed pages ,
  * those must NOT be freed back to the PMM on task exit because another
  * subsystem or process owns them.
  *
@@ -18,12 +18,12 @@
 // 63    | NX                  | 1 = No execute (needs EFER.NXE)
 // 62-52 | Available           | Ignored by the CPU, free for software use
 // 51-12 | Physical Address    | Frame address; must be 4KB aligned
-// 11-9  | Available           | Ignored by the CPU — VMM_SHARED lives at bit 9
+// 11-9  | Available           | Ignored by the CPU , VMM_SHARED lives at bit 9
 // 8     | Global              | 1 = Entry survives a CR3 reload (needs CR4.PGE)
 // 7     | PS / PAT            | Page Size at PD/PDPT level; PAT at PT level
 // 6     | Dirty               | Set by the CPU on write; never cleared by it
 // 5     | Accessed            | Set by the CPU on any access
-// 4     | PCD                 | 1 = Cache disabled — required for MMIO
+// 4     | PCD                 | 1 = Cache disabled , required for MMIO
 // 3     | PWT                 | 1 = Write-through instead of write-back
 // 2     | User                | 1 = Ring 3 may access; 0 = supervisor only
 // 1     | Write               | 1 = Writable (read-only if clear)

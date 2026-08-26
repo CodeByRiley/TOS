@@ -1,4 +1,4 @@
-/* userspace/bin/ls/ls.c — list filesystem entries.
+/* userspace/bin/ls/ls.c , list filesystem entries.
  *
  * Walks a root-relative FAT directory. Directory names returned by the
  * kernel carry a trailing slash.

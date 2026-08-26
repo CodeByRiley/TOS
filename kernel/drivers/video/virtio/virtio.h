@@ -1,11 +1,11 @@
-/* kernel/virtio/virtio.h — virtio 1.1 modern transport.
+/* kernel/virtio/virtio.h , virtio 1.1 modern transport.
  *
  * Common PCI capability layouts, device-status bits, and virtqueue
  * structures shared across all virtio device classes. Device-specific
  * headers (virtio_gpu.h, etc.) build on this surface.
  *
  * We refuse to talk to anything that doesn't advertise
- * VIRTIO_F_VERSION_1 — no transitional / legacy mode.
+ * VIRTIO_F_VERSION_1 , no transitional / legacy mode.
  *
  * Implementations:
  *   - virtio_pci_init / virtio_negotiate / queue setup: kernel/virtio/virtio_pci.c
@@ -19,7 +19,7 @@
 #include <utilities/types.h>
 #include <stdint.h>
 
-/* virtio 1.1, section 4.1.4 — vendor-specific PCI capability structure. */
+/* virtio 1.1, section 4.1.4 , vendor-specific PCI capability structure. */
 #define VIRTIO_PCI_CAP_ID            0x09
 #define VIRTIO_PCI_CAP_COMMON_CFG    1
 #define VIRTIO_PCI_CAP_NOTIFY_CFG    2
@@ -38,7 +38,7 @@
 // 1   | DRIVER      | Driver knows how to drive this device
 // 0   | ACKNOWLEDGE | Driver noticed the device
 //
-// These are cumulative and strictly ordered — writing 0 resets, then the bits
+// These are cumulative and strictly ordered , writing 0 resets, then the bits
 // are OR'd in the order listed. Two checks matter: after setting FEATURES_OK
 // the driver must read the byte back, since the device clears the bit to veto
 // the feature set; and queues must be configured before DRIVER_OK, because
@@ -51,7 +51,7 @@
 #define VIRTIO_STATUS_NEEDS_RESET     64
 #define VIRTIO_STATUS_FAILED          128
 
-/* Transport feature bit 32 — device understands the modern (v1.0+)
+/* Transport feature bit 32 , device understands the modern (v1.0+)
  * layout. We refuse to talk to anything that doesn't set this. */
 #define VIRTIO_F_VERSION_1            (1ULL << 32)
 
@@ -88,7 +88,7 @@ struct virtq_used {
     struct virtq_used_elem ring[];   /* size = qsize; followed by avail_event */
 } PACKED;
 
-/* virtio 1.1, 4.1.4.3 — common configuration structure. Field offsets
+/* virtio 1.1, 4.1.4.3 , common configuration structure. Field offsets
  * and widths are part of the spec; do not reorder. */
 struct virtio_pci_common_cfg {
     uint32_t device_feature_select;     /* 0x00 RW */

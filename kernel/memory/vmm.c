@@ -1,11 +1,11 @@
-/* kernel/memory/vmm.c — long-mode 4-level paging.
+/* kernel/memory/vmm.c , long-mode 4-level paging.
  *
  * walk_or_create grows the tree as needed during map; walk_only never
  * allocates (used by unmap so we don't leak intermediate tables for an
- * address that wasn't actually mapped — the previous version did, which
+ * address that wasn't actually mapped , the previous version did, which
  * was a quiet leak waiting for a fuzz test to find it).
  *
- * The non-_in wrappers operate on whichever PML4 is currently in CR3 —
+ * The non-_in wrappers operate on whichever PML4 is currently in CR3 ,
  * the natural thing for callers that want their effect visible to the
  * running context. Kernel-shared subtrees are linked by physical address
  * into every process PML4, so writes there propagate to kernel_pml4 too.
@@ -37,7 +37,7 @@ uint64_t *kernel_pml4 = 0;
 /* Crack a virtual address into its four index slices. Inlined because
  * doing this by hand four times across three functions was where the
  * bugs lived. */
-static inline void va_split(uint64_t virt, uint64_t idx[4]) {
+SINLINE void va_split(uint64_t virt, uint64_t idx[4]) {
     idx[0] = (virt >> 39) & 0x1FF;   /* PML4 */
     idx[1] = (virt >> 30) & 0x1FF;   /* PDPT */
     idx[2] = (virt >> 21) & 0x1FF;   /* PD   */
@@ -69,7 +69,7 @@ static int walk_or_create(uint64_t *pml4, uint64_t virt, uint64_t flags,
 
     uint64_t *pd;
     if (pdpt[i[1]] & VMM_PRESENT) {
-        if (pdpt[i[1]] & PAGE_PS) return -1;  /* 1 GiB huge — can't sub-divide */
+        if (pdpt[i[1]] & PAGE_PS) return -1;  /* 1 GiB huge , can't sub-divide */
         if ((flags & VMM_USER) && !(pdpt[i[1]] & VMM_USER)) {
             pdpt[i[1]] |= VMM_USER;
         }
@@ -84,7 +84,7 @@ static int walk_or_create(uint64_t *pml4, uint64_t virt, uint64_t flags,
 
     uint64_t *pt;
     if (pd[i[2]] & VMM_PRESENT) {
-        if (pd[i[2]] & PAGE_PS) return -1;     /* 2 MiB huge — boot uses these */
+        if (pd[i[2]] & PAGE_PS) return -1;     /* 2 MiB huge , boot uses these */
         if ((flags & VMM_USER) && !(pd[i[2]] & VMM_USER)) {
             pd[i[2]] |= VMM_USER;
         }
@@ -137,7 +137,7 @@ int vmm_map_in(uint64_t *pml4, uint64_t virt, uint64_t phys, uint64_t flags) {
 
 /* Rewrite the permission bits of an existing leaf PTE, keeping its frame.
  * VMM_SHARED is preserved because it records ownership (whose PMM frame
- * this is), not permission — losing it would make the receiver free a
+ * this is), not permission , losing it would make the receiver free a
  * frame the owner still maps. Fails if the page isn't mapped: mprotect on
  * an unmapped address must be an error, not a silent no-op. */
 int vmm_protect_in(uint64_t *pml4, uint64_t virt, uint64_t flags) {
@@ -189,7 +189,7 @@ uint64_t vmm_translate_in(uint64_t *pml4, uint64_t virt) {
 }
 
 /* Read CR3 and strip the flags to get the active PML4 base. */
-static inline uint64_t *current_pml4(void) {
+SINLINE uint64_t *current_pml4(void) {
     return phys_to_virt(read_cr3() & ADDR_MASK);
 }
 
@@ -210,7 +210,7 @@ uint64_t vmm_translate(uint64_t virt) {
  * process_create copies kernel PML4 entries by value, so a kernel mapping
  * whose top-level slot first appears *after* a process was spawned is
  * invisible to that process: its copy of the slot is still empty. That is
- * not hypothetical — large_alloc's arena at 0xFFFFA000_00000000 is a slot
+ * not hypothetical , large_alloc's arena at 0xFFFFA000_00000000 is a slot
  * of its own, and the first call to it after winman started left winman
  * unable to read the result, which an interrupt handler then did.
  *
@@ -242,7 +242,7 @@ static void reserve_kernel_pml4_entries(void) {
 }
 
 void vmm_init(void) {
-    /* Grab the boot PML4 from CR3 — that's the table set up by main.asm. */
+    /* Grab the boot PML4 from CR3 , that's the table set up by main.asm. */
     kernel_pml4 = phys_to_virt(read_cr3() & ADDR_MASK);
     log_write("VMM: using boot PML4", KERNEL, LOG_INFO);
 

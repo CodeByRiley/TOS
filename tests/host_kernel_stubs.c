@@ -1,4 +1,4 @@
-/* tests/host_kernel_stubs.c — host-side stand-ins for kernel services.
+/* tests/host_kernel_stubs.c , host-side stand-ins for kernel services.
  *
  * Kernel sources compiled into a host test still reference the allocator
  * and the log. Rather than have every test carry its own copy of the same

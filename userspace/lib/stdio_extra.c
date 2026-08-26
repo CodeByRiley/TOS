@@ -1,4 +1,4 @@
-/* userspace/lib/stdio_extra.c — the rest of stdio: putc/puts/printf wrappers,
+/* userspace/lib/stdio_extra.c , the rest of stdio: putc/puts/printf wrappers,
  * standard streams, the FILE* glue for the formatted writers, and a tiny
  * sscanf used by DOOM's config parser.
  *
@@ -67,7 +67,7 @@ int sprintf(char *buf, const char *fmt, ...) {
     return r;
 }
 
-/* vsprintf(3) — same as sprintf with a va_list already in hand. */
+/* vsprintf(3) , same as sprintf with a va_list already in hand. */
 int vsprintf(char *buf, const char *fmt, va_list ap) {
     return vsnprintf(buf, 0x7FFFFFFF, fmt, ap);
 }
@@ -103,7 +103,7 @@ int vfprintf(FILE *fp, const char *fmt, va_list ap) {
 int remove(const char *p) { (void)p; return -1; }
 int rename(const char *a, const char *b) { (void)a; (void)b; return -1; }
 
-/* perror(3) without errno strings — caller's `s`, then literal " error". */
+/* perror(3) without errno strings , caller's `s`, then literal " error". */
 void perror(const char *s) { fprintf(stderr, "%s: error\n", s); }
 
 /* No buffering, so nothing to flush. */

@@ -1,7 +1,7 @@
 /* Host-side regression test for userspace/lib/gfx.c and lib/ui.c.
  *
- * Both are pure memory arithmetic — no syscalls beyond the file read
- * behind gfx_sprite_load — so everything here runs on the host and checks
+ * Both are pure memory arithmetic , no syscalls beyond the file read
+ * behind gfx_sprite_load , so everything here runs on the host and checks
  * actual pixels rather than "it didn't crash".
  *
  * The clipping cases matter most. Every drawing entry point promises a

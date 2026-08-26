@@ -1,4 +1,4 @@
-/* userspace/include/stdlib.h — process + allocator surface.
+/* userspace/include/stdlib.h , process + allocator surface.
  *
  * Pulls in size_t. Allocator lives in lib/malloc.c; parsers/qsort/etc.
  * live in lib/stdlib_extra.c.

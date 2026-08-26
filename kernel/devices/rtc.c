@@ -1,4 +1,4 @@
-/* kernel/devices/rtc.c — CMOS real-time clock.
+/* kernel/devices/rtc.c , CMOS real-time clock.
  *
  * Reads the MC146818-compatible RTC behind ports 0x70 (register select) and
  * 0x71 (data). QEMU presents the host clock here, so this is the only place
@@ -26,7 +26,7 @@
 #define HOUR_PM_FLAG 0x80
 
 /* Bit 7 of the select port is the NMI-disable line on most chipsets. Leave
- * it clear so reading the clock does not mask NMIs — the panic path relies on
+ * it clear so reading the clock does not mask NMIs , the panic path relies on
  * those being delivered. */
 static uint8_t cmos_read(uint8_t reg) {
     outb(CMOS_SELECT, reg & 0x7F);
@@ -60,8 +60,8 @@ void rtc_read(struct rtc_time *out) {
     uint8_t hour_raw = 0, hour_raw_b = 0;
 
     /* Wait out any update in progress, then sample twice and require the two
-     * to agree. A single read can straddle the chip's own carry — 01:59:59
-     * becoming 01:00:00 rather than 02:00:00 — and the second sample is what
+     * to agree. A single read can straddle the chip's own carry , 01:59:59
+     * becoming 01:00:00 rather than 02:00:00 , and the second sample is what
      * rules that out. The bound keeps a dead or emulated-away clock from
      * hanging the caller. */
     int spins = 0;

@@ -1,9 +1,9 @@
-/* userspace/lib/syscall.c — typed C wrappers around syscallN().
+/* userspace/lib/syscall.c , typed C wrappers around syscallN().
  *
  * Each function loads the syscall number plus the right argument
  * combination, casts pointers through uintptr_t so calling conventions
  * stay clean, and returns the kernel's long result unchanged. Anything
- * that isn't a syscall (winman IPC helpers, etc.) lives elsewhere — see
+ * that isn't a syscall (winman IPC helpers, etc.) lives elsewhere , see
  * lib/wm.c.
  */
 #include <lib/syscall.h>
@@ -208,6 +208,10 @@ long net_stats(struct net_stats *out) {
 long net_capture(uint64_t *cursor, struct net_frame *out, long max) {
     return syscall3(SYS_NET_CAPTURE, (sysarg_t)(uintptr_t)cursor,
                     (sysarg_t)(uintptr_t)out, (sysarg_t)max);
+}
+
+long net_ping(struct net_ping *req) {
+    return syscall1(SYS_NET_PING, (sysarg_t)(uintptr_t)req);
 }
 
 /* Threading */

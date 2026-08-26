@@ -1,7 +1,7 @@
 /* Host-side regression test for userspace/lib/bmp.c.
  *
  * Decodes the generated cursor bitmap and checks it comes back as the
- * exact sprite tools/make_cursor.py encoded — same dimensions, same
+ * exact sprite tools/make_cursor.py encoded , same dimensions, same
  * pixels, right way up. A cursor that decodes upside down or with red and
  * blue swapped still renders something, so "it drew" is not evidence; the
  * pixel comparison is.
@@ -148,7 +148,7 @@ static void write_bmp24(const char *path, int top_down) {
     fclose(fp);
 }
 
-/* 1x1, 32-bit BI_RGB with a zero alpha byte — the "no alpha authored"
+/* 1x1, 32-bit BI_RGB with a zero alpha byte , the "no alpha authored"
  * case that must not decode as invisible. */
 static void write_bmp32_zero_alpha(const char *path) {
     unsigned char f[14 + 40 + 4];

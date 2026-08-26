@@ -1,4 +1,4 @@
-/* kernel/utilities/string.h — kernel mem... / str... surface.
+/* kernel/utilities/string.h , kernel mem... / str... surface.
  *
  * Implementations live in kernel/utilities/string.c. Mirrors the
  * userspace string.h API so code (e.g., the formatter) can be shared

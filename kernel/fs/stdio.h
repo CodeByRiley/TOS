@@ -1,11 +1,11 @@
-/* kernel/fs/stdio.h — kernel-internal stdio over FAT.
+/* kernel/fs/stdio.h , kernel-internal stdio over FAT.
  *
  * FILE wraps a fat_file, an in-use bit, and the access rights its mode
  * string granted. Used by the kernel logger, the ELF and PE loaders, and
  * any code that wants file access; userspace gets its own implementation
  * via syscalls.
  *
- * fread/fwrite return a count of complete items, as in C — not bytes.
+ * fread/fwrite return a count of complete items, as in C , not bytes.
  *
  * Implementation: kernel/fs/stdio.c.
  */

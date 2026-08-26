@@ -10,7 +10,6 @@
 #include <libnsfb.h>
 #include <libnsfb_event.h>
 #include <libnsfb_plot.h>
-#include <libnsfb_plot_util.h>
 
 #include "cursor.h"
 #include "nsfb.h"
@@ -20,6 +19,13 @@
 struct tos_surface {
     struct wm_window window;
 };
+
+static void tos_set_cursor_state(nsfb_t *nsfb, bool plotted)
+{
+    if (nsfb != NULL && nsfb->cursor != NULL) {
+        nsfb->cursor->plotted = plotted;
+    }
+}
 
 static int tos_defaults(nsfb_t *nsfb)
 {
@@ -60,6 +66,7 @@ static int tos_initialise(nsfb_t *nsfb)
     nsfb->surface_priv = surface;
     nsfb->ptr = (uint8_t *)(uintptr_t)surface->window.surface_va;
     nsfb->linelen = (int)surface->window.pitch;
+    tos_set_cursor_state(nsfb, false);
     return 0;
 }
 
@@ -77,6 +84,15 @@ static int tos_finalise(nsfb_t *nsfb)
 
 static enum nsfb_key_code_e tos_keycode(int key)
 {
+    switch (key) {
+    case KEY_TAB: return NSFB_KEY_TAB;
+    case KEY_ENTER:
+    case KEY_KPENTER: return NSFB_KEY_RETURN;
+    case KEY_BACKSPACE: return NSFB_KEY_BACKSPACE;
+    case KEY_DELETE: return NSFB_KEY_DELETE;
+    default: break;
+    }
+
     char ascii = keymap_to_ascii((uint16_t)key, 0);
     if (ascii != 0) {
         return (enum nsfb_key_code_e)ascii;
@@ -84,7 +100,6 @@ static enum nsfb_key_code_e tos_keycode(int key)
 
     switch (key) {
     case KEY_ESC: return NSFB_KEY_ESCAPE;
-    case KEY_DELETE: return NSFB_KEY_DELETE;
     case KEY_INSERT: return NSFB_KEY_INSERT;
     case KEY_HOME: return NSFB_KEY_HOME;
     case KEY_END: return NSFB_KEY_END;
@@ -177,9 +192,7 @@ static bool tos_input(nsfb_t *nsfb, nsfb_event_t *event, int timeout)
         nsfb->linelen = (int)input.pitch;
         nsfb->width = input.w;
         nsfb->height = input.h;
-        if (nsfb->cursor != NULL) {
-            nsfb->cursor->plotted = false;
-        }
+        tos_set_cursor_state(nsfb, false);
         event->type = NSFB_EVENT_RESIZE;
         event->value.resize.w = input.w;
         event->value.resize.h = input.h;
@@ -195,36 +208,25 @@ static bool tos_input(nsfb_t *nsfb, nsfb_event_t *event, int timeout)
 
 static int tos_claim(nsfb_t *nsfb, nsfb_bbox_t *box)
 {
-    struct nsfb_cursor_s *cursor = nsfb->cursor;
-    if (cursor != NULL && cursor->plotted &&
-        nsfb_plot_bbox_intersect(box, &cursor->loc)) {
-        nsfb_cursor_clear(nsfb, cursor);
-    }
+    (void)nsfb;
+    (void)box;
     return 0;
 }
 
 static int tos_update(nsfb_t *nsfb, nsfb_bbox_t *box)
 {
     struct tos_surface *surface = nsfb->surface_priv;
-    struct nsfb_cursor_s *cursor = nsfb->cursor;
     (void)box;
 
-    if (cursor != NULL && !cursor->plotted) {
-        nsfb_cursor_plot(nsfb, cursor);
-    }
+    tos_set_cursor_state(nsfb, false);
     return surface == NULL ? -1 : wm_window_invalidate(surface->window.handle);
 }
 
 static int tos_cursor(nsfb_t *nsfb, struct nsfb_cursor_s *cursor)
 {
-    struct tos_surface *surface = nsfb->surface_priv;
-    if (surface == NULL || cursor == NULL || !cursor->plotted) {
-        return 0;
-    }
-
-    nsfb_cursor_clear(nsfb, cursor);
-    nsfb_cursor_plot(nsfb, cursor);
-    return wm_window_invalidate(surface->window.handle);
+    (void)cursor;
+    tos_set_cursor_state(nsfb, false);
+    return 0;
 }
 
 static const nsfb_surface_rtns_t tos_rtns = {

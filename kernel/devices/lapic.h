@@ -1,4 +1,4 @@
-/* kernel/devices/lapic.h — Local APIC MMIO driver.
+/* kernel/devices/lapic.h , Local APIC MMIO driver.
  *
  * Maps the 4 KiB MMIO window into kernel VA space and exposes the subset
  * of registers we actually touch: EOI (acknowledge), ICR (send IPIs),
@@ -67,7 +67,7 @@
 /* BSP entry: map MMIO and enable for this CPU. */
 void     lapic_init(uint64_t mmio_phys);
 
-/* AP entry: just enable — BSP already mapped the MMIO page. */
+/* AP entry: just enable , BSP already mapped the MMIO page. */
 void     lapic_enable_this_cpu(void);
 
 uint32_t lapic_read(uint32_t reg);

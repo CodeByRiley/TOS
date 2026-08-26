@@ -1,4 +1,4 @@
-/* userspace/lib/printf.c — vsnprintf / snprintf / printf.
+/* userspace/lib/printf.c , vsnprintf / snprintf / printf.
  *
  * Single source for every format-string user in userspace. Supports the
  * full C99 conversion spec set:

@@ -1,6 +1,7 @@
 #ifndef PCI_MATCH_H
 #define PCI_MATCH_H
 
+#include "utilities/types.h"
 #include <stdint.h>
 
 struct pci_id {
@@ -8,25 +9,25 @@ struct pci_id {
     uint16_t device;
 };
 
-static inline int pci_id_match(struct pci_id id,
+SINLINE int pci_id_match(struct pci_id id,
                                uint16_t vendor,
                                uint16_t device)
 {
     return id.vendor == vendor && id.device == device;
 }
 
-static inline int pci_id_match_exact(uint16_t vendor, uint16_t device,
+SINLINE int pci_id_match_exact(uint16_t vendor, uint16_t device,
                                      struct pci_id want)
 {
     return vendor == want.vendor && device == want.device;
 }
 
-static inline int pci_id_match_vendor(uint16_t vendor, uint16_t want_vendor)
+SINLINE int pci_id_match_vendor(uint16_t vendor, uint16_t want_vendor)
 {
     return vendor == want_vendor;
 }
 
-static inline int pci_match_class(uint8_t base_class,
+SINLINE int pci_match_class(uint8_t base_class,
                                   uint8_t subclass,
                                   uint8_t prog_if,
                                   uint8_t dev_base_class,

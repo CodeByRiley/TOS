@@ -1,4 +1,4 @@
-/* kernel/boot/multiboot2.c — Multiboot2 tag walk helpers.
+/* kernel/boot/multiboot2.c , Multiboot2 tag walk helpers.
  *
  * Linear walk over the tag chain GRUB hands us at boot. Tags are 8-byte
  * aligned; the chain ends with MULTIBOOT_TAG_END.

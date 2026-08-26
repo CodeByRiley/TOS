@@ -1,4 +1,4 @@
-; kernel/arch/x86_64/boot/main64.asm — 64-bit landing pad.
+; kernel/arch/x86_64/boot/main64.asm , 64-bit landing pad.
 ;
 ; Reached from main.asm via a far jump through the 64-bit GDT. Zeros
 ; segment registers (long mode treats them as decorative, but the CPU
@@ -7,7 +7,7 @@
 ;
 ; serial_putc/puts/putln are copy-pasted from main.asm with 32-bit regs
 ; swapped for 64-bit. Yes that's duplication. No it's not getting
-; deduped — the 32-bit copy literally cannot link against the 64-bit
+; deduped , the 32-bit copy literally cannot link against the 64-bit
 ; one. Six lines of `mov` vs. a weekend with a linker script.
 extern kernel_main
 extern ap_main

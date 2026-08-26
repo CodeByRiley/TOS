@@ -1,4 +1,4 @@
-/* kernel/input/keyboard.h — PS/2 keyboard driver surface.
+/* kernel/input/keyboard.h , PS/2 keyboard driver surface.
  *
  * Translates IRQ1 scancodes into Linux KEY_* codes (see input/key_codes.h)
  * and exposes a polling reader for the syscall layer. Press/release state
@@ -23,7 +23,7 @@ struct kbd_event {
 void keyboard_init(void);
 
 /* Pop one event into *pressed / *key. Returns 1 on success, 0 if ring
- * empty. Lossy on overflow — sticky modifier holds may desync. */
+ * empty. Lossy on overflow , sticky modifier holds may desync. */
 int  keyboard_poll(int *pressed, uint16_t *key);
 
 #endif

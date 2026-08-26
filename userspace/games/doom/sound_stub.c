@@ -1,4 +1,4 @@
-/* userspace/games/doom/sound_stub.c — no-op sound + music backend.
+/* userspace/games/doom/sound_stub.c , no-op sound + music backend.
  *
  * Audio hardware isn't wired up yet, so the I_Sound + I_Music surfaces
  * required by DOOM are filled in with empty stubs. Sound effects return

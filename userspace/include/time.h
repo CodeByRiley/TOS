@@ -1,4 +1,4 @@
-/* userspace/include/time.h — minimal <time.h> surface.
+/* userspace/include/time.h , minimal <time.h> surface.
  *
  * `time()` is real wall-clock now: the kernel reads the CMOS RTC and
  * CLOCK_REALTIME reports seconds since the Unix epoch. It used to return
@@ -47,8 +47,8 @@ int clock_gettime(int clock_id, struct timespec *ts);
 #endif /* TOS_USE_MUSL */
 
 /* Broken-down calendar time, in whatever zone the RTC is keeping. Fields
- * follow the obvious ranges rather than struct tm's offsets — year is
- * absolute, month is 1-12 — because every caller here formats them directly
+ * follow the obvious ranges rather than struct tm's offsets , year is
+ * absolute, month is 1-12 , because every caller here formats them directly
  * and tm_year + 1900 is a reliable source of off-by-1900 bugs. */
 struct calendar_time {
     int year;    /* e.g. 2026 */

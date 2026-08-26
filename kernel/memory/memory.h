@@ -1,4 +1,4 @@
-/* kernel/memory/memory.h — umbrella header for the memory subsystem.
+/* kernel/memory/memory.h , umbrella header for the memory subsystem.
  *
  * Includes the physical (PMM), virtual (VMM), kernel heap, and
  * higher-half direct map (HHDM) headers. Callers can just include

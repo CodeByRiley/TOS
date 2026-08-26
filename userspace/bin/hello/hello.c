@@ -1,4 +1,4 @@
-/* userspace/bin/hello/hello.c — smoke-test "hello world".
+/* userspace/bin/hello/hello.c , smoke-test "hello world".
  *
  * Writes a fixed string to stdout via raw write() (no printf, no libc
  * pull-in beyond syscall.h). Returns 42 so the shell shows a recognisable

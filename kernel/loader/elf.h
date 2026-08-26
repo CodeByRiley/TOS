@@ -1,4 +1,4 @@
-/* kernel/loader/elf.h — ELF64 loader.
+/* kernel/loader/elf.h , ELF64 loader.
  *
  * Loads a single statically-linked ELF64 PT_LOAD chain into a target
  * PML4 and returns the entry-point virtual address. Used by process
@@ -53,7 +53,7 @@ struct PACKED Elf64_Phdr {
  * not be the active address space and the caller need not switch to it.
  *
  * On failure the target PML4 may hold partial mappings. The caller owns
- * cleanup — free_user_pml4() reclaims every frame this function mapped. */
+ * cleanup , free_user_pml4() reclaims every frame this function mapped. */
 uint64_t elf_load(const char *path, uint64_t *pml4);
 
 #endif

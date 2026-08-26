@@ -1,4 +1,4 @@
-/* userspace/games/doom/doomgeneric_kernel.c — DOOM platform glue for TOS.
+/* userspace/games/doom/doomgeneric_kernel.c , DOOM platform glue for TOS.
  *
  * Implements the doomgeneric "platform" entry points (DG_Init,
  * DG_DrawFrame, DG_GetTicksMs, DG_SleepMs, DG_GetKey, DG_SetWindowTitle)
@@ -7,7 +7,7 @@
  *
  * Run model: maps the framebuffer once at init, centers the 320x200 DOOM
  * canvas inside whatever physical resolution we got, and blits each frame
- * straight to fb_map() pixels. No double-buffering, no WM — DOOM owns the
+ * straight to fb_map() pixels. No double-buffering, no WM , DOOM owns the
  * screen exclusively while running.
  */
 #include <stdint.h>
@@ -23,7 +23,7 @@ static struct fb_info fbi;
 static uint32_t      *fb;
 static uint32_t       ox, oy;     /* centring offset within the host fb */
 
-/* DOOM single-byte key codes — values mirror doomgeneric/doomkeys.h. */
+/* DOOM single-byte key codes , values mirror doomgeneric/doomkeys.h. */
 #define DOOM_KEY_RIGHTARROW  0xae
 #define DOOM_KEY_LEFTARROW   0xac
 #define DOOM_KEY_UPARROW     0xad

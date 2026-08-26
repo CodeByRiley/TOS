@@ -1,3 +1,4 @@
+# I FUCKING HATE MAKE IT IS THE WORST BUILD SYSTEM EVER
 rwildcard = $(foreach d,$(wildcard $1*),$(call rwildcard,$d/,$2) $(filter $(subst *,%,$2),$d))
 
 # Kernel C sources and their headers live together under kernel/<subsystem>/.
@@ -5,7 +6,7 @@ rwildcard = $(foreach d,$(wildcard $1*),$(call rwildcard,$d/,$2) $(filter $(subs
 kernel_c_source_files := $(call rwildcard,kernel/,*.c)
 kernel_c_object_files := $(patsubst kernel/%.c, build/kernel/%.o, $(kernel_c_source_files))
 
-# AP trampoline is assembled flat (org 0x8000, real-mode start) — never elf64.
+# AP trampoline is assembled flat (org 0x8000, real-mode start) , never elf64.
 # Filter it out of the regular asm rule and build it via the explicit
 # ap_trampoline.bin -> ap_trampoline.o pipeline below.
 ap_trampoline_src := kernel/arch/x86_64/boot/ap_trampoline.asm
@@ -27,6 +28,7 @@ kernel_bin    := dist/x86_64/kernel.bin
 disk_img      := build/disk.img
 USERSPACE_CLEAN ?= 0
 BUILD_DOOM ?= 0
+BUILD_NETSURF ?= 0
 
 nvidia_firmware_files := $(wildcard rootfs/firmware/*.bin)
 holyd_sample_files := $(wildcard rootfs/holyd/*.hd)
@@ -67,10 +69,16 @@ userspace:
 ifeq ($(USERSPACE_CLEAN),1)
 	$(MAKE) -C userspace clean
 endif
-	$(MAKE) -C userspace all BUILD_DOOM=$(BUILD_DOOM)
+	$(MAKE) -C userspace all BUILD_DOOM=$(BUILD_DOOM) BUILD_NETSURF=$(BUILD_NETSURF)
 
-$(disk_img): userspace tools/create_disk.sh $(rootfs_payload_files)
-	wsl bash -c "cd \$$(wslpath '$(CURDIR)') && bash tools/create_disk.sh"
+
+$(disk_img): userspace tools/create_disk.sh $(rootfs_payload_files) | $(kernel_bin)
+	@echo "Creating Disk Image"
+	@mkdir -p $(dir $@)
+	wsl bash -lc "cd \"\$$(wslpath '$(CURDIR)')\" && \
+		bash -x tools/create_disk.sh"
+	@test -s "$@"
+	@echo "Disk Image Finished"
 
 # --- Kernel Symbol Table (Two-pass link) -----------------------------
 # Link once to generate symbols, then relink with the generated table.
@@ -91,14 +99,16 @@ $(symtab_gen_obj): $(symtab_gen_src)
 	mkdir -p $(dir $@)
 	x86_64-elf-gcc -c $(kernel_c_flags) $< -o $@
 
-# Link only — no disk image, no ISO. Useful for a quick compile check.
+# Link only , no disk image, no ISO. Useful for a quick compile check.
 .PHONY: kernel
 kernel: $(kernel_bin)
 
 $(kernel_bin): $(kernel_object_files) $(symtab_gen_obj) $(linker_script)
+	@echo "==> Linking $@"
 	mkdir -p $(dir $@)
 	x86_64-elf-ld -z max-page-size=0x1000 -o $@ -T $(linker_script) \
 	    $(kernel_object_files) $(symtab_gen_obj)
+	@echo "==> Finished $@"
 
 .PHONY: build-x86_64
 build-x86_64: $(kernel_bin) $(disk_img)
@@ -225,6 +235,7 @@ test-qemu-heavy: build-x86_64
 		python3 tests/deskelf_test.py --timeout 90 && \
 		python3 tests/netmon_test.py --timeout 120 && \
 		python3 tests/net_arp_test.py --timeout 120 && \
+		python3 tests/net_ping_test.py --timeout 180 && \
 		python3 tests/winman_partial_repaint_test.py --timeout 90 && \
 		python3 tests/winman_titlebar_double_click_test.py --timeout 90 && \
 		python3 tests/path_lookup_test.py --timeout 90 && \

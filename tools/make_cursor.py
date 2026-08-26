@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate rootfs/system/icons/cursor.bmp — the winman pointer sprite.
+"""Generate rootfs/system/icons/cursor.bmp , the winman pointer sprite.
 
 Emits a 32-bit BITMAPV4HEADER BMP with an explicit alpha mask, which is
 what an image editor produces when it exports RGBA. Run it to regenerate
@@ -31,7 +31,7 @@ MASK = [
     [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
 ]
 
-# BGRA, little-endian, premultiplied by nothing — straight alpha.
+# BGRA, little-endian, premultiplied by nothing , straight alpha.
 PALETTE = {
     0: b"\x00\x00\x00\x00",   # transparent
     1: b"\x00\x00\x00\xFF",   # opaque black
@@ -63,7 +63,7 @@ def build() -> bytes:
     )
     dib += struct.pack("<IIII",
                        0x00FF0000, 0x0000FF00, 0x000000FF, 0xFF000000)
-    dib += struct.pack("<I", 0x73524742)      # 'BGRs' — sRGB
+    dib += struct.pack("<I", 0x73524742)      # 'BGRs' , sRGB
     dib += b"\x00" * 36                        # CIE endpoints, unused
     dib += struct.pack("<III", 0, 0, 0)        # gamma, unused
 

@@ -1,4 +1,4 @@
-/* kernel/input/keyboard.c — PS/2 keyboard driver.
+/* kernel/input/keyboard.c , PS/2 keyboard driver.
  *
  * IRQ1 handler reads scancode set 1 bytes from port 0x60, tracks the
  * 0xE0 extended-prefix state, maps them to Linux KEY_* codes, and posts
@@ -36,7 +36,7 @@
 
 #define KBD_RING_SIZE 64
 #define KBD_RING_MASK (KBD_RING_SIZE - 1)
-/* KBD_RING_SIZE must be a power of two — we mask instead of % so the IRQ
+/* KBD_RING_SIZE must be a power of two , we mask instead of % so the IRQ
  * path doesn't get to know what a div instruction tastes like. */
 _Static_assert((KBD_RING_SIZE & KBD_RING_MASK) == 0, "ring size must be pow2");
 
@@ -148,7 +148,7 @@ static void kbd_handler(void) {
 
     /* Bit 7 is the make/break flag, bits 6-0 the key. So a release is the
      * press code with 0x80 set, which is why both tables are only 128
-     * entries — the release code indexes the same slot. */
+     * entries , the release code indexes the same slot. */
     int      pressed = !(sc & KBD_SC_BREAK);
     uint8_t  code    = sc & KBD_SC_CODE_MASK;
     uint16_t key     = extended ? sc_extended[code] : sc_normal[code];

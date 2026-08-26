@@ -1,9 +1,9 @@
-/* kernel/drivers/sound/sb16.h — SoundBlaster 16 DSP + ISA DMA driver.
+/* kernel/drivers/sound/sb16.h , SoundBlaster 16 DSP + ISA DMA driver.
  *
  * The card is discovered through the legacy ISA table in kernel/isa/isa.c,
  * so its I/O base is whatever that entry says (0x220 or 0x240). All port
- * access therefore goes through the base recorded at probe time — see the
- * SB16_REG_* offsets below — rather than a compile-time constant.
+ * access therefore goes through the base recorded at probe time , see the
+ * SB16_REG_* offsets below , rather than a compile-time constant.
  *
  * Implementation: kernel/drivers/sound/sb16.c.
  */
@@ -33,7 +33,7 @@
 /* DSP commands (written to SB16_REG_DSP_WRITE) */
 //
 // 0x41 | Set output sample rate | Followed by rate in Hz, high byte first
-// 0xB6 | 16-bit D/A             | Auto-init, FIFO on — see the bit table below
+// 0xB6 | 16-bit D/A             | Auto-init, FIFO on , see the bit table below
 // 0xD1 | Speaker on             | Connects the DAC to the output amp
 // 0xD3 | Speaker off            |
 #define SB16_DSP_SET_RATE     0x41

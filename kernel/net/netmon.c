@@ -1,10 +1,11 @@
-/* kernel/net/netmon.c — implementation of the NIC capture ring.
+/* kernel/net/netmon.c , implementation of the NIC capture ring.
  *
  * One global interface. TOS binds a single NIC today, and giving the ring
  * an index before there is a second card to put in it would be structure
  * without a user; netmon_bind() simply describes whichever driver called
  * it last.
  */
+#include "utilities/log.h"
 #include <devices/pit.h>
 #include <net/netmon.h>
 #include <sync/spinlock.h>
@@ -18,7 +19,7 @@ _Static_assert(offsetof(struct netmon_frame_user, data) == 32,
                "netmon_frame_user.data offset is userspace ABI");
 
 static struct {
-  spinlock_t lock;
+  struct spinlock lock;
   struct netmon_frame_user ring[NETMON_RING_FRAMES];
   uint64_t seq_next;
   uint64_t rx_frames, rx_bytes;
@@ -86,6 +87,10 @@ void netmon_record(int direction, const void *frame, uint32_t length) {
     monitor.rx_frames++;
     monitor.rx_bytes += length;
   }
+
+  log_write_fmt(KERNEL, LOG_INFO,"netmon: captured frame %d, %d bytes, %s\n",
+               slot->seq, slot->length,
+               slot->direction == NETMON_DIR_TX ? "TX" : "RX");
 
   spin_unlock_irqrestore(&monitor.lock, flags);
 }

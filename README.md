@@ -66,7 +66,7 @@ Requires an `x86_64-elf` cross toolchain, `nasm`, and WSL with `grub-mkimage`,
 mingw32-make -j12 build-x86_64
 ```
 
-Faster inner loop — compile and link the kernel only, no disk image or ISO:
+Faster inner loop , compile and link the kernel only, no disk image or ISO:
 
 ```bash
 mingw32-make -j12 kernel

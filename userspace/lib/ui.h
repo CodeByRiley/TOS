@@ -1,9 +1,9 @@
-/* userspace/lib/ui.h — immediate-mode widgets over lib/gfx.
+/* userspace/lib/ui.h , immediate-mode widgets over lib/gfx.
  *
  * No retained widget tree, no allocation, no callbacks: each frame the
  * caller redraws by calling ui_button() and friends, and a widget reports
- * what happened by its return value. That suits a poll loop — the shape
- * every wm client already has — and it means a window's appearance is
+ * what happened by its return value. That suits a poll loop , the shape
+ * every wm client already has , and it means a window's appearance is
  * always a pure function of the caller's own state.
  *
  * Typical frame:
@@ -50,7 +50,7 @@ struct ui_theme {
     int      scale;         /* text magnification                         */
 };
 
-/* Grey bevels and navy accents — the palette winman's chrome already
+/* Grey bevels and navy accents , the palette winman's chrome already
  * uses, so widgets sit next to it without clashing. */
 extern const struct ui_theme ui_theme_default;
 

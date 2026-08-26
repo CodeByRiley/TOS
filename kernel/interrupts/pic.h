@@ -1,4 +1,4 @@
-/* kernel/interrupts/pic.h — 8259 PIC surface.
+/* kernel/interrupts/pic.h , 8259 PIC surface.
  *
  * The PIC is remapped on boot so legacy IRQs 0..15 land at vectors
  * 0x20..0x2F (avoiding the CPU exception range 0..31). Once the LAPIC

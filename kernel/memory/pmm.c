@@ -1,4 +1,4 @@
-/* kernel/memory/pmm.c — bitmap physical-frame allocator.
+/* kernel/memory/pmm.c , bitmap physical-frame allocator.
  *
  * Single bitmap covering [0, highest_usable_addr) at 4 KiB granularity.
  * 1 = frame is taken / reserved; 0 = frame is free. A next-fit hint keeps
@@ -83,7 +83,7 @@ static u64t find_bitmap_region(struct MB2_TAG_MMAP *mmap, u8t *end,
   return 0;
 }
 
-/* Mark [base, base+length) as taken — rounds outward to whole frames. */
+/* Mark [base, base+length) as taken , rounds outward to whole frames. */
 static void mark_region_used(u64t base, u64t length) {
   u64t start = base / FRAME_SIZE;
   u64t end = (base + length + FRAME_SIZE - 1) / FRAME_SIZE;
@@ -96,7 +96,7 @@ static void mark_region_used(u64t base, u64t length) {
 }
 #endif
 
-/* Mark [base, base+length) as free — rounds inward to whole frames. */
+/* Mark [base, base+length) as free , rounds inward to whole frames. */
 static void mark_region_free(u64t base, u64t length) {
   u64t start = base / FRAME_SIZE;
   u64t end = (base + length) / FRAME_SIZE;

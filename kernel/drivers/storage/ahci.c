@@ -29,7 +29,7 @@ extern uint64_t *kernel_pml4;
 
 struct AHCI_DEVICE_DATA *g_ahci_dev = NULL;
 
-static inline void ahci_pause(void) { __asm__ volatile("pause"); }
+SINLINE void ahci_pause(void) { __asm__ volatile("pause"); }
 
 static void ahci_write32(const volatile void *abar, uint32_t off,
                          uint32_t val) {
@@ -330,7 +330,7 @@ static int ahci_init_port(struct AHCI_DEVICE_DATA *dev, int port) {
 
     /* Every address below is handed to the HBA for DMA, so it has to be a
      * real physical address. The kernel heap lives at its own VA base, not
-     * in the HHDM, so virt_to_phys() is meaningless on a kmalloc pointer —
+     * in the HHDM, so virt_to_phys() is meaningless on a kmalloc pointer ,
      * allocate raw frames and address them through the HHDM instead.
      *
      * A frame base is 4 KiB aligned, which satisfies the 1 KiB command-list

@@ -1,11 +1,11 @@
-/* userspace/bin/pkill/pkill.c — kill processes by pid or name.
+/* userspace/bin/pkill/pkill.c , kill processes by pid or name.
  *
  * usage: pkill <pid>
  *        pkill <name>      kills every process whose name contains <name>
  *
  * An all-digits argument is treated as a pid, anything else as a name
  * pattern. Name matching is substring, so `pkill sh` also hits `shutdown`
- * — list first with `plist <name>` if that matters.
+ * , list first with `plist <name>` if that matters.
  */
 #include <stdio.h>
 #include <stdlib.h>

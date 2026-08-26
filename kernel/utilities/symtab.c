@@ -1,4 +1,4 @@
-/* kernel/utilities/symtab.c — build-time-generated symbol table + resolver. */
+/* kernel/utilities/symtab.c , build-time-generated symbol table + resolver. */
 #include <stdint.h>
 #include <stddef.h>
 #include <utilities/symtab.h>

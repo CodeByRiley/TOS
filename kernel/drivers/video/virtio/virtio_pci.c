@@ -1,4 +1,4 @@
-/* kernel/virtio/virtio_pci.c — virtio 1.1 transport over PCI.
+/* kernel/virtio/virtio_pci.c , virtio 1.1 transport over PCI.
  *
  * Generic device-class-agnostic bringup: cap parse → MMIO mapping →
  * feature negotiation → virtqueue setup. Device-specific drivers
@@ -36,7 +36,7 @@ struct virtio_pci_cap_hdr {
 
 /* Map a contiguous physical MMIO range into a kernel virt slot. Round to
  * pages. Returns the kernel VA matching `phys` (preserves intra-page offset).
- * Pages are mapped uncacheable — virtio MMIO accesses must not be cached. */
+ * Pages are mapped uncacheable , virtio MMIO accesses must not be cached. */
 static uint64_t map_mmio(uint64_t phys, uint64_t length) {
     uint64_t page_off = phys & 0xFFFULL;
     uint64_t page_phys = phys & ~0xFFFULL;
@@ -237,7 +237,7 @@ int virtio_queue_setup(struct virtio_dev *dev, uint16_t qidx, struct virtq *vq) 
     c->queue_desc   = vq->desc_phys;
     c->queue_driver = vq->avail_phys;
     c->queue_device = vq->used_phys;
-    /* Don't enable yet — caller calls virtio_queue_enable after DRIVER_OK is
+    /* Don't enable yet , caller calls virtio_queue_enable after DRIVER_OK is
      * about to be issued. */
     return 0;
 }

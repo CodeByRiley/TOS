@@ -511,7 +511,7 @@ int main(int argc, char *argv[]) {
 
     /* Repaint gate. Redrawing on every pass invalidated the window 50 times
      * a second whatever the player was doing, and each invalidate makes the
-     * window manager recomposite — so an idle Muse was enough to starve the
+     * window manager recomposite , so an idle Muse was enough to starve the
      * rest of the desktop. Only the quantities below are actually visible,
      * so only a change in one of them can need a new frame. */
     struct frame_key {

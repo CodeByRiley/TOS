@@ -1,4 +1,4 @@
-/* userspace/bin/vmtest/vmtest.c — mmap / mprotect / munmap / stat tests.
+/* userspace/bin/vmtest/vmtest.c , mmap / mprotect / munmap / stat tests.
  *
  * Every case here checks a return value. None of them deliberately
  * violate a mapping: an unhandled user page fault currently panics the
@@ -115,7 +115,7 @@ static void test_prot(void) {
                    PROT_READ) != 0);
 
     /* ENFORCEMENT: after PROT_READ, `p[0] = 1` must kill this process and
-     * leave the kernel running. Not tested — today it panics the kernel. */
+     * leave the kernel running. Not tested , today it panics the kernel. */
 
     check("cleanup", munmap(p, len) == 0);
 }
@@ -173,7 +173,7 @@ static void test_stat(void) {
 
 /* shmem_unshare takes a pid and an address in THAT process's space, so a
  * missing range check would make it an arbitrary-unmap primitive against
- * any process — including this one, and including page tables the kernel
+ * any process , including this one, and including page tables the kernel
  * shares with every process.
  *
  * The two cases that point it at our own memory are deliberately
@@ -210,8 +210,8 @@ static void test_shmem_unshare(void) {
     check("that page is still mapped", page[0] == 0x5A);
 
     /* The kernel half, whose page tables every process shares. Nothing
-     * here can fault us — a kernel that obeyed would corrupt itself
-     * silently — so the return value is the only evidence available. */
+     * here can fault us , a kernel that obeyed would corrupt itself
+     * silently , so the return value is the only evidence available. */
     check("kernel-half address rejected",
           shmem_unshare((int)self, 0xFFFF800000000000ull, 1) != 0);
 

@@ -1,4 +1,4 @@
-/* kernel/utilities/log.h — kernel logging surface.
+/* kernel/utilities/log.h , kernel logging surface.
  *
  * Tagged log records are timestamped (PIT ticks) and routed to serial +
  * optionally an in-memory ring. Severity is `enum log_level`; subsystem
@@ -50,13 +50,13 @@ struct log_entry {
     int64          int_value;
 };
 
-/* Plain message — no payload. */
+/* Plain message , no payload. */
 void log_write(const char *message, uint8_t raw_type, uint8_t raw_level);
 
 /* Rich record. Caller fills in `entry` (including has_* flags). */
 void log_write_entry(struct log_entry *entry);
 
-/* CPU exception logger — pretty-prints the IDT vector, name, error code,
+/* CPU exception logger , pretty-prints the IDT vector, name, error code,
  * and faulting RIP. Page faults are serial-only because framebuffer output
  * may itself be the failing mapping. */
 void log_write_exception(uint64_t int_num, const char *name,

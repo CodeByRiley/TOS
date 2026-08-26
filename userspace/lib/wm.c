@@ -1,10 +1,10 @@
-/* userspace/lib/wm.c — libwm: client-side IPC for windows.
+/* userspace/lib/wm.c , libwm: client-side IPC for windows.
  *
  * Thin synchronous wrappers around ipc_send + ipc_recv. The server lives
  * in userspace/bin/winman/winman.c and speaks the same wire protocol
  * declared in wm.h.
  *
- * The "winman pid" is looked up via wm_pid() on every call — never
+ * The "winman pid" is looked up via wm_pid() on every call , never
  * cached, because winman is allowed to crash and respawn.
  */
 #include "wm.h"

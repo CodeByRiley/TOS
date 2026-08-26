@@ -1,4 +1,4 @@
-/* userspace/bin/pe_test/pe_test.c — freestanding PE32+ smoke test.
+/* userspace/bin/pe_test/pe_test.c , freestanding PE32+ smoke test.
  *
  * Built by mingw into a PE image based at 0x140000000, the default for a
  * 64-bit .exe. Its whole job is to prove the kernel's PE loader mapped an
@@ -16,7 +16,7 @@
  * a plain call.
  *
  * Nor into `long`. mingw is LLP64, so `long` is FOUR bytes here while the
- * kernel — built LP64 — reads eight. A pointer passed as long arrives
+ * kernel , built LP64 , reads eight. A pointer passed as long arrives
  * truncated to its low 32 bits, which for an image based at 0x140000000
  * means the kernel dereferences an address 4 GiB away from the one meant.
  * Everything crossing the syscall boundary is `sarg`, which is 64-bit
@@ -127,7 +127,7 @@ void _start(void) {
     check(".bss arrived zeroed", zeroed == 0);
     check(".rdata is readable", str_eq(readonly, "rdata"));
 
-    /* Writable sections have to be writable — a loader that mapped .data
+    /* Writable sections have to be writable , a loader that mapped .data
      * read-only would pass every check above and fail here. */
     initialised = 0x0123456789ABCDEFull;
     check(".data is writable", initialised == 0x0123456789ABCDEFull);

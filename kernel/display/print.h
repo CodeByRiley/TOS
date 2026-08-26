@@ -1,4 +1,4 @@
-/* kernel/display/print.h — VGA text-mode print helpers.
+/* kernel/display/print.h , VGA text-mode print helpers.
  *
  * Legacy 80x25 text-mode writers. Predate the framebuffer/TTY stack and
  * are kept around because early-boot code runs before the framebuffer is

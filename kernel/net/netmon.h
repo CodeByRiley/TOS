@@ -1,4 +1,4 @@
-/* kernel/net/netmon.h — NIC counters and a frame-capture ring.
+/* kernel/net/netmon.h , NIC counters and a frame-capture ring.
  *
  * A NIC driver calls netmon_record() for every frame it hands up or puts
  * on the wire; the capture lands in a fixed ring that userspace drains
@@ -9,7 +9,7 @@
  * scroll past mixed into unrelated kernel output.
  *
  * The ring never blocks a driver and never allocates. When userspace
- * falls behind, old frames are overwritten rather than new ones dropped —
+ * falls behind, old frames are overwritten rather than new ones dropped ,
  * a monitor that stalls should lose history, not stop the NIC. Readers
  * detect the loss themselves: every frame carries the sequence number it
  * was captured with, so a cursor that comes back further along than it

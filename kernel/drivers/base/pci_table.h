@@ -2,6 +2,7 @@
 #define PCI_TABLE_H
 
 #include <stdint.h>
+#include "utilities/types.h"
 #include "vendors/pci_ids.h"
 
 struct pci_device_desc {
@@ -32,7 +33,7 @@ static const struct pci_device_desc pci_known_devices[] = {
     { PCI_VENDOR_MARVELL, PCI_DEVICE_MARVELL_YUKON, "Marvell Yukon" },
 };
 
-static inline const char *pci_device_name(uint16_t vendor, uint16_t device)
+SINLINE const char *pci_device_name(uint16_t vendor, uint16_t device)
 {
     for (unsigned i = 0; i < (sizeof(pci_known_devices) / sizeof(pci_known_devices[0])); ++i) {
         if (pci_known_devices[i].vendor == vendor &&

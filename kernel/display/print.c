@@ -1,4 +1,4 @@
-/* kernel/display/print.c — legacy VGA text-mode writer.
+/* kernel/display/print.c , legacy VGA text-mode writer.
  *
  * 80x25 character cell grid at 0xB8000 (the BIOS text-mode framebuffer).
  * Pre-dates the framebuffer/TTY stack; kept around because early boot

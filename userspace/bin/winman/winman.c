@@ -28,7 +28,7 @@ static int last_title_click_y = 0;
 #define DOUBLE_CLICK_SLOP 4
 #define CLIENT_DIM_HARD_LIMIT 2048
 
-/* Close escalation. The close button is a request — the owner is expected to
+/* Close escalation. The close button is a request , the owner is expected to
  * tear its own window down so it can prompt about unsaved work first. An app
  * that ignores WM_EV_QUIT or has wedged would otherwise be unclosable, so a
  * second click while the first request is still outstanding destroys the
@@ -107,7 +107,7 @@ static int titlebar_click_is_double(int handle, int x, int y, u32 now) {
 }
 
 /* Try the on-disk cursor once at startup. Failure is not an error worth
- * stopping for — it just leaves the built-in mask in place. */
+ * stopping for , it just leaves the built-in mask in place. */
 static void cursor_load(void) {
   if (bmp_load(CURSOR_BMP_PATH, &cursor_img) == 0) {
     if (cursor_img.width > 0 && cursor_img.height > 0 &&
@@ -197,7 +197,7 @@ static int ascii_lower(int c) {
   return (c >= 'A' && c <= 'Z') ? c + 32 : c;
 }
 
-/* Case-insensitive compare — the volume is FAT, so DOOM.ELF and doom.elf are
+/* Case-insensitive compare , the volume is FAT, so DOOM.ELF and doom.elf are
  * the same file and must not both end up in the menu. */
 static int same_name_ci(const char *a, const char *b) {
   while (*a && *b) {
@@ -259,7 +259,7 @@ static void start_menu_scan_dir(const char *dir, int capacity) {
       if (len == 0 || entry[len - 1] == '/')
         continue;
 
-      /* Only the ELF executables — the .exe PE variants are the same
+      /* Only the ELF executables , the .exe PE variants are the same
        * programs under another name and would double up the menu. */
       if (len < 5 || !same_name_ci(entry + len - 4, ".elf"))
         continue;
@@ -284,7 +284,7 @@ static void start_menu_scan_dir(const char *dir, int capacity) {
 }
 
 /* Pinned entries first, then each executable directory in order. A missing
- * directory just yields nothing — readdir_path returns <= 0 and the scan
+ * directory just yields nothing , readdir_path returns <= 0 and the scan
  * moves on, so /usr/local/bin being empty or absent is not an error. */
 static void build_start_menu_entries(void) {
   start_menu_count = 0;
@@ -338,7 +338,7 @@ static int outer_h(const struct window *w) {
 /* Pre-expanded glyph row for the console (CONSOLE_FG/CONSOLE_BG are
  * constants): byte -> 8 pixels. Built once in con_alloc. 8 KiB BSS.
  * Per-row glyph render becomes a single memcpy(32 B) instead of 8 per-pixel
- * conditional writes — the dominant cost when winman drains the TTY ring. */
+ * conditional writes , the dominant cost when winman drains the TTY ring. */
 static uint32_t con_glyph_lut[256][FONT_GLYPH_W];
 
 static char trunc_titles[MAX_WINDOWS][TASKBAR_BTN_W + 1];
@@ -568,7 +568,7 @@ static int outer_w_dims(int cw) { return cw + 2 * BORDER_PX; }
 /* Outer height from a client height plus that window's status strip. The
  * status height is an explicit parameter rather than looked up inside,
  * because most callers already hold the window and the ones that don't must
- * be made to say which window they mean — a frame height that silently
+ * be made to say which window they mean , a frame height that silently
  * omits the strip leaves it unpainted or untestable. */
 static int outer_h_dims(int ch, int status_h) {
   return ch + TITLEBAR_PX + BORDER_PX + status_h;
@@ -640,7 +640,7 @@ static int taskbar_btn_limit(void) {
 
 /* Returns 1 + writes *out_handle when the click landed on a taskbar button,
  * 0 otherwise (including clicks on the taskbar strip background). Caller
- * should still treat strip clicks as "ate the input" — the strip is opaque
+ * should still treat strip clicks as "ate the input" , the strip is opaque
  * and never belongs to a client. */
 static int hit_taskbar(int mx, int my, int *out_handle) {
   int y = taskbar_y();
@@ -877,7 +877,7 @@ static void client_window_resize(int handle, int new_cw, int new_ch) {
   if (!surface)
     return;
 
-  /* Preserve the upper-left intersection of the old surface — same idea
+  /* Preserve the upper-left intersection of the old surface , same idea
    * as console_resize. The client can't paint until it receives the
    * resize notify, so racing it for these reads is acceptable. */
   if (w->surface) {
@@ -1280,7 +1280,7 @@ static void clock_format(void) {
   time_to_calendar(time(0), &now);
 
   /* 12-hour with AM/PM, matching the taskbar it is modelled on. Hour 0 is
-   * 12 AM and hour 12 is 12 PM — the modulo alone gets both wrong. */
+   * 12 AM and hour 12 is 12 PM , the modulo alone gets both wrong. */
   int hour12 = now.hour % 12;
   if (hour12 == 0)
     hour12 = 12;
@@ -1702,7 +1702,7 @@ static void con_alloc(void) {
 
   fill_dwords(con.win.surface, (size_t)cw * (size_t)ch, CONSOLE_BG);
 
-  /* Alt-screen backing buffer — same dimensions as the live surface so
+  /* Alt-screen backing buffer , same dimensions as the live surface so
    * memcpy push/pop is unconditional. Allocated once; never freed. */
   con_backing = (uint32_t *)aligned_page_alloc(pages, &con_backing_raw);
   if (!con_backing) {
@@ -1817,7 +1817,7 @@ static void blit_icon(int dst_x, int dst_y, int dst_w, int dst_h, int src_w,
 
 /* Render one entry in the stack (real window or console). Factored out so
  * compose() can iterate z_order without caring which kind it's drawing.
- * Minimized windows are skipped entirely — they keep their slot + taskbar
+ * Minimized windows are skipped entirely , they keep their slot + taskbar
  * entry but contribute no pixels until restored. */
 static void compose_handle(int handle) {
   if (is_minimized(handle))
@@ -1904,7 +1904,7 @@ static void compose(void) {
   if (clip_hits(0, taskbar_y(), fb_w, TASKBAR_PX))
     draw_taskbar();
   draw_start_menu();
-  /* Last, so the dialog sits above the taskbar and the start menu too —
+  /* Last, so the dialog sits above the taskbar and the start menu too ,
    * anything it did not cover would be clickable behind a modal. */
   draw_prompt();
 }
@@ -2308,7 +2308,7 @@ static int window_count(void) {
 }
 
 /* Tear down a window. Owner-check by client_pid is skipped when
- * client_pid == 0 — used by the reaper for dead-client cleanup, since the
+ * client_pid == 0 , used by the reaper for dead-client cleanup, since the
  * dead owner can no longer issue the destroy itself. */
 static void handle_destroy_internal(int handle, int client_pid_check) {
   struct window *w = find_handle(handle);
@@ -2512,7 +2512,7 @@ static void handle_set_title(int owner_pid, int handle, const char *title) {
  * the dialog genuinely modal rather than merely painted on top.
  *
  * Only one is allowed at a time. A second request while one is open is
- * refused with WM_PROMPT_CANCEL rather than queued — an app blocked in
+ * refused with WM_PROMPT_CANCEL rather than queued , an app blocked in
  * wm_prompt() cannot have issued it, so it came from a second app, and
  * stacking dialogs from unrelated apps has no sane z-order answer. */
 static struct prompt_state prompt;
@@ -2638,7 +2638,7 @@ static void handle_prompt_req(int owner_pid, int handle, int kind,
     return;
 
   if (prompt.active) {
-    /* Refuse rather than queue — see the note above. */
+    /* Refuse rather than queue , see the note above. */
     struct ipc_msg busy;
     memset(&busy, 0, sizeof(busy));
     busy.type = IPC_WM_PROMPT_RESP;
@@ -2694,7 +2694,7 @@ static void draw_prompt(void) {
     return;
 
   fb_fill_rect(px, py, pw, ph, PROMPT_BG);
-  /* Frame: light top/left, dark bottom/right — the same raised look the
+  /* Frame: light top/left, dark bottom/right , the same raised look the
    * taskbar buttons use. */
   fb_fill_rect(px, py, pw, 1, CHROME_TEXT);
   fb_fill_rect(px, py, 1, ph, CHROME_TEXT);
@@ -2741,7 +2741,7 @@ static void draw_prompt(void) {
 }
 
 /* Returns 1 when the dialog consumed the event. Every key and every click
- * is consumed while a prompt is up — that is what modal means. */
+ * is consumed while a prompt is up , that is what modal means. */
 static int prompt_handle_key(int keycode, int shift) {
   if (!prompt.active)
     return 0;
@@ -2895,7 +2895,7 @@ static void pump_ipc(void) {
 /* Translate input event from screen coords to the focused window's
  * client-area coords before forwarding. Clients draw into a surface that
  * starts at (0,0) so they shouldn't have to know their own position on
- * the desktop — winman is the only thing that does. */
+ * the desktop , winman is the only thing that does. */
 static void forward_input(int target_pid, int win_handle, const struct msg *m) {
   if (target_pid <= 0)
     return;
@@ -2938,7 +2938,7 @@ static void request_window_close(int handle, u32 now) {
 
   /* Second click on a window whose close request is still outstanding: the
    * owner had its chance to exit cleanly and did not take it, so take the
-   * window away. Passing 0 for the pid check makes this unconditional —
+   * window away. Passing 0 for the pid check makes this unconditional ,
    * the owner is not the one asking. */
   if (close_pending_handle == handle &&
       now - close_pending_tick < CLOSE_ESCALATE_TICKS) {
@@ -2967,8 +2967,8 @@ static void pump_input(void) {
     int forward = 1;
 
     /*
-     * Modal prompt. Takes precedence over everything below — including an
-     * in-flight drag — so no window can be moved, focused, or closed while
+     * Modal prompt. Takes precedence over everything below , including an
+     * in-flight drag , so no window can be moved, focused, or closed while
      * a dialog is waiting for an answer, and no keystroke leaks to the app
      * behind it. Mouse motion still falls through so the cursor keeps
      * tracking.
@@ -3423,7 +3423,7 @@ static void pump_input(void) {
 
         /* Console zoom lives here rather than in the shell. The shell now
          * receives ASCII from the TTY ring and never sees a raw keycode, so
-         * it cannot spot Ctrl+-/Ctrl+= any more — and winman owns the
+         * it cannot spot Ctrl+-/Ctrl+= any more , and winman owns the
          * console's scale anyway. */
         if (ctrl_held && m.param == KEY_MINUS) {
           con_set_scale(con.scale - 1);
@@ -3498,7 +3498,7 @@ int main(int argc, char **argv) {
   cursor_load();
   tb_load_start_icon();
   desktop_load();
-  /* After fb_h is known — the menu's capacity depends on the screen height. */
+  /* After fb_h is known , the menu's capacity depends on the screen height. */
   build_start_menu_entries();
   /* Populate before the first compose so the taskbar paints a real time
    * instead of a blank strip that fills in a second later. */
@@ -3593,7 +3593,7 @@ int main(int argc, char **argv) {
 
     /* Advance once per iteration, not once per repaint. This used to
      * live inside the `desktop_dirty && (++tick % 2)` test below, where
-     * short-circuit evaluation froze it on an idle desktop — turning
+     * short-circuit evaluation froze it on an idle desktop , turning
      * the reap check into a constant that either fired every frame or
      * never fired at all, depending on where it stopped. */
     tick++;
@@ -3605,7 +3605,7 @@ int main(int argc, char **argv) {
       reap_dead_windows();
 
     /* Clock. Polls the RTC on an interval rather than every frame, and only
-     * damages the strip when the rendered text differs — an idle desktop
+     * damages the strip when the rendered text differs , an idle desktop
      * stays idle for the 59 seconds when nothing has changed. */
     if ((uint32_t)tick % CLOCK_POLL_TICKS == 0)
       clock_tick();
@@ -3645,7 +3645,7 @@ int main(int argc, char **argv) {
       continue;
     }
 
-    /* Drag just ended this tick — wipe the lingering ghost outline
+    /* Drag just ended this tick , wipe the lingering ghost outline
      * before the normal compose path runs. desktop_dirty was set by
      * MOUSE_UP so the next branch will repaint everything anyway. */
     if (drag.have_ghost) {
