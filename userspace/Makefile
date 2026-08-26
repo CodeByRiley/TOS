@@ -246,10 +246,29 @@ $(TTF_BIN_ELFS): bin/%.elf: bin/%.o $(LIB_OBJS) $(TTF_OBJS)
 # --- musl-linked binaries ------------------------------------------------
 
 # link_tos_musl.sh owns the include paths and the crt1/crti/libc.a/crtn
-# ordering, and builds musl on demand if the archive is missing. Going
-# through it keeps one copy of those flags rather than a second set here
-# that could drift.
-$(LIBTOS_COBJS): %.tos.o: %.c
+# ordering. Going through it keeps one copy of those flags rather than a
+# second set here that could drift.
+
+# musl itself. The build tree is generated rather than committed (see
+# libc/.gitignore), so a clean checkout has to produce it before anything
+# can compile against it. Without this rule make stops dead at "No rule to
+# make target 'libc/build-musl-tos/lib/libc.a'", and building musl becomes
+# a manual step that only gets remembered after CI fails.
+#
+# build_tos_musl.sh configures on the first run only and is safe to
+# re-enter. MAKEFLAGS is cleared because the script drives musl's own
+# Makefile with a plain `make`, which would otherwise inherit this build's
+# jobserver and warn that it cannot reach it.
+$(MUSL_LIBC):
+	MAKEFLAGS= CC=$(USER_ELF_CC) "$(SHELL)" libc/build_tos_musl.sh
+
+# A .tos.o needs more than the archive. obj/include/bits holds alltypes.h
+# and syscall.h, which musl generates at configure time and which have no
+# counterpart in the source tree, so compiling against an unbuilt musl
+# fails on a missing include rather than on a missing library. Hanging the
+# dependency on libc.a covers both, and rebuilds these objects whenever
+# musl is rebuilt, which is what a change to those headers should do.
+$(LIBTOS_COBJS): %.tos.o: %.c $(MUSL_LIBC)
 	$(USER_ELF_CC) $(MUSL_CFLAGS) -c $< -o $@
 
 $(LIBTOS): $(LIBTOS_OBJS)
@@ -261,7 +280,7 @@ $(MUSL_BIN_ELFS): bin/%.elf: bin/%.c $(MUSL_LIBC) $(LIBTOS)
 # --- holyd rules ---------------------------------------------------------
 
 # HolyD headers use paths rooted at bin/holyd (for example, lexer/lexer.h).
-$(HOLYD_OBJS): %.tos.o: %.c
+$(HOLYD_OBJS): %.tos.o: %.c $(MUSL_LIBC)
 	$(USER_ELF_CC) $(HOLYD_CFLAGS) -c $< -o $@
 
 # Link holyd.elf. Objects, not a source, so link_tos_musl.sh gets them
