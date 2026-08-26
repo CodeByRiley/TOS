@@ -38,6 +38,14 @@
 #define SYS_WRITEV          20
 #define SYS_NANOSLEEP       35
 #define SYS_LINUX_GETPID    39
+
+/* Linux x86_64 socket numbers. musl issues these directly from socket(),
+ * bind(), sendto() and recvfrom(), so mirroring them is what lets ported
+ * code and the musl socket API work without a TOS-specific shim. */
+#define SYS_SOCKET          41
+#define SYS_SENDTO          44
+#define SYS_RECVFROM        45
+#define SYS_BIND            49
 #define SYS_FCNTL           72
 #define SYS_GETCWD          79
 #define SYS_CHDIR           80

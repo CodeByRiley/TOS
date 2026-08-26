@@ -160,6 +160,59 @@ int socket_recvfrom(struct socket *sock, void *buf, size_t len, struct sockaddr_
     return to_copy;
 }
 
+/* Unlink, drain, free. The queued packets each own a kmalloc'd payload, so
+ * dropping the socket without walking the queue leaks both. */
+void socket_close(struct socket *sock) {
+  if (!sock)
+    return;
+
+  uint64_t rflags = spin_lock_irqsave(&socket_list_lock);
+  struct socket **link = &socket_list;
+  while (*link && *link != sock)
+    link = &(*link)->next;
+  if (*link == sock)
+    *link = sock->next;
+  spin_unlock_irqrestore(&socket_list_lock, rflags);
+
+  /* Off the list now, so socket_handle_incoming can no longer find it and
+   * the queue cannot grow underneath this walk. */
+  struct packet_node *node = sock->rx_queue.head;
+  while (node) {
+    struct packet_node *next = node->next;
+    kfree(node->payload);
+    kfree(node);
+    node = next;
+  }
+
+  kfree(sock);
+}
+
+/* Linux's ephemeral range. Linear scan of the socket list: the table is a
+ * list of a handful of entries, and a bitmap would be structure without a
+ * user until something opens sockets in bulk. */
+port_t socket_alloc_ephemeral_port(void) {
+  static uint16_t next_port = 32768;
+
+  for (int attempt = 0; attempt < 28232; attempt++) {
+    uint16_t candidate = next_port;
+    next_port = (next_port >= 60999u) ? 32768u : (uint16_t)(next_port + 1u);
+
+    int taken = 0;
+    uint64_t rflags = spin_lock_irqsave(&socket_list_lock);
+    for (struct socket *s = socket_list; s; s = s->next) {
+      if (from_be16(s->local.port) == candidate) {
+        taken = 1;
+        break;
+      }
+    }
+    spin_unlock_irqrestore(&socket_list_lock, rflags);
+
+    if (!taken)
+      return to_be16(candidate);
+  }
+  return 0;
+}
+
 /* Deliver an IP payload to its bound socket. */
 void socket_handle_incoming(struct ipv4_addr src_ip, port_t src_port,
                             struct ipv4_addr dest_ip, port_t dest_port,

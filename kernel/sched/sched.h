@@ -33,6 +33,8 @@
 #define SCHED_PRIO_LEVELS 2
 
 #define TASK_MAX_FDS 32
+
+struct socket;
 #define TASK_CWD_MAX 256
 
 /* Arena bases come from loader/process.h , see the user address-space map. */
@@ -118,6 +120,12 @@ struct task {
   uint8_t fd_is_dir[TASK_MAX_FDS];
   uint32_t fd_dir_index[TASK_MAX_FDS];
   char fd_dir_path[TASK_MAX_FDS][TASK_CWD_MAX];
+  /* Sockets share the fd number space with files so that close(), and any
+   * ported code that keeps fds in one table, work without special cases.
+   * A slot holds a file or a socket, never both: fds[i] and fd_sockets[i]
+   * are mutually exclusive, and everything that walks fds[] must check
+   * fd_sockets[] too or it will treat a socket fd as a free slot. */
+  struct socket *fd_sockets[TASK_MAX_FDS];
   /* Per-task input ring (kbd/mouse events). Allocated on task spawn. */
   struct msg *input_ring;
   volatile int input_head;

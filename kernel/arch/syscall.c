@@ -38,6 +38,7 @@
 #include <memory/vmm.h>
 #include <msg/msg.h>
 #include <net/icmp.h>
+#include <net/ksocket.h>
 #include <net/netmon.h>
 #include <sched/sched.h>
 #include <utilities/log.h>
@@ -1450,7 +1451,18 @@ static long sys_lseek(int fd, long off, int whence) {
 
 static long sys_close(int fd) {
   struct task *t = task_current();
-  if (!t || fd < 3 || fd >= TASK_MAX_FDS || !t->fds[fd])
+  if (!t || fd < 3 || fd >= TASK_MAX_FDS)
+    return -1;
+
+  /* Sockets share this fd space, so close() has to release them or every
+   * socket a program opens outlives it. */
+  if (t->fd_sockets[fd]) {
+    socket_close(t->fd_sockets[fd]);
+    t->fd_sockets[fd] = 0;
+    return 0;
+  }
+
+  if (!t->fds[fd])
     return -1;
   kfree(t->fds[fd]);
   t->fds[fd] = 0;
@@ -1936,6 +1948,131 @@ static long sys_net_capture(uint64_t *cursor, struct netmon_frame_user *out,
  * waits: leaving the request struct mapped and re-read across a yield
  * would let another thread in the same process change the destination
  * after the packet had already gone. */
+/* ---------------- BSD sockets, at the Linux numbers --------------------
+ *
+ * musl's socket(), bind(), sendto() and recvfrom() issue syscalls 41, 49,
+ * 44 and 45 directly. Answering on those numbers is the whole point: it
+ * means ported code and musl's own socket API work untouched, rather than
+ * every caller needing a TOS-specific shim.
+ *
+ * Sockets live in the same fd table as files so close() needs no special
+ * case. A slot holds one or the other, never both. */
+
+static int sock_fd_alloc(struct task *t, struct socket *sock) {
+  for (int fd = 3; fd < TASK_MAX_FDS; fd++) {
+    if (t->fds[fd] || t->fd_sockets[fd])
+      continue;
+    t->fd_sockets[fd] = sock;
+    return fd;
+  }
+  return -1;
+}
+
+static struct socket *sock_from_fd(struct task *t, int fd) {
+  if (!t || fd < 3 || fd >= TASK_MAX_FDS)
+    return NULL;
+  return t->fd_sockets[fd];
+}
+
+static long sys_socket(int domain, int type, int protocol) {
+  struct task *t = task_current();
+  if (!t)
+    return -1;
+  if (domain != AF_INET)
+    return -1;
+  /* UDP only for now. Reporting failure beats handing back an fd that
+   * silently drops everything written to it. */
+  if (type != SOCK_DGRAM)
+    return -1;
+  if (protocol != 0 && protocol != (int)IPPROTO_UDP)
+    return -1;
+
+  struct socket *sock = socket_create(type, IPPROTO_UDP);
+  if (!sock)
+    return -1;
+
+  int fd = sock_fd_alloc(t, sock);
+  if (fd < 0) {
+    socket_close(sock);
+    return -1;
+  }
+  return fd;
+}
+
+static long sys_bind(int fd, const struct sockaddr_in *addr, uint32_t addrlen) {
+  struct task *t = task_current();
+  struct socket *sock = sock_from_fd(t, fd);
+  if (!sock || !addr || addrlen < sizeof(*addr))
+    return -1;
+  if (!user_buffer_ok(addr, sizeof(*addr), 0))
+    return -1;
+
+  struct sockaddr_in local;
+  memcpy(&local, addr, sizeof(local));
+  if (local.family != AF_INET)
+    return -1;
+
+  /* Port 0 means "pick one", which is what a client that only ever sends
+   * asks for. Without it the reply has no port to come back to. */
+  if (local.port == 0) {
+    local.port = socket_alloc_ephemeral_port();
+    if (local.port == 0)
+      return -1;
+  }
+
+  return socket_bind(sock, &local);
+}
+
+static long sys_sendto(int fd, const void *buf, size_t len, int flags,
+                       const struct sockaddr_in *dest, uint32_t addrlen) {
+  (void)flags;
+  struct task *t = task_current();
+  struct socket *sock = sock_from_fd(t, fd);
+  if (!sock || !buf || !dest || addrlen < sizeof(*dest))
+    return -1;
+  if (!user_buffer_ok(buf, len, 0) ||
+      !user_buffer_ok(dest, sizeof(*dest), 0))
+    return -1;
+
+  struct sockaddr_in remote;
+  memcpy(&remote, dest, sizeof(remote));
+  if (remote.family != AF_INET)
+    return -1;
+
+  /* An unbound sender still needs a source port for the reply. Binding
+   * lazily here is what makes the send-then-receive pattern work. */
+  if (sock->local.port == 0) {
+    struct sockaddr_in local;
+    memset(&local, 0, sizeof(local));
+    local.family = AF_INET;
+    local.port = socket_alloc_ephemeral_port();
+    if (local.port == 0 || socket_bind(sock, &local) != 0)
+      return -1;
+  }
+
+  return socket_sendto(sock, buf, len, &remote);
+}
+
+static long sys_recvfrom(int fd, void *buf, size_t len, int flags,
+                         struct sockaddr_in *src, uint32_t *addrlen) {
+  (void)flags;
+  struct task *t = task_current();
+  struct socket *sock = sock_from_fd(t, fd);
+  if (!sock || !buf)
+    return -1;
+  if (!user_buffer_ok(buf, len, 1))
+    return -1;
+  if (src && !user_buffer_ok(src, sizeof(*src), 1))
+    return -1;
+  if (addrlen && !user_buffer_ok(addrlen, sizeof(*addrlen), 1))
+    return -1;
+
+  long n = socket_recvfrom(sock, buf, len, src);
+  if (n > 0 && addrlen)
+    *addrlen = sizeof(*src);
+  return n;
+}
+
 static long sys_net_ping(struct net_ping_user *req) {
   if (!user_buffer_ok(req, sizeof(*req), 1))
     return -1;
@@ -2061,6 +2198,10 @@ long syscall_dispatch(struct syscall_frame *f) {
   /* r10, not rcx: the syscall instruction clobbers rcx with the return RIP,
    * so the ABI substitutes r10 for the fourth argument. */
   long a4 = (long)f->r10;
+  /* Six-argument calls (sendto, recvfrom) need these two; everything else
+   * simply ignores them. */
+  long a5 = (long)f->r8;
+  long a6 = (long)f->r9;
 
   long ret = -1;
   switch (num) {
@@ -2351,6 +2492,23 @@ long syscall_dispatch(struct syscall_frame *f) {
     break;
   case SYS_NET_PING:
     ret = sys_net_ping((struct net_ping_user *)(uintptr_t)a1);
+    break;
+  case SYS_SOCKET:
+    ret = sys_socket((int)a1, (int)a2, (int)a3);
+    break;
+  case SYS_BIND:
+    ret = sys_bind((int)a1, (const struct sockaddr_in *)(uintptr_t)a2,
+                   (uint32_t)a3);
+    break;
+  case SYS_SENDTO:
+    ret = sys_sendto((int)a1, (const void *)(uintptr_t)a2, (size_t)a3,
+                     (int)a4, (const struct sockaddr_in *)(uintptr_t)a5,
+                     (uint32_t)a6);
+    break;
+  case SYS_RECVFROM:
+    ret = sys_recvfrom((int)a1, (void *)(uintptr_t)a2, (size_t)a3, (int)a4,
+                       (struct sockaddr_in *)(uintptr_t)a5,
+                       (uint32_t *)(uintptr_t)a6);
     break;
   default:
     log_write_hex("unknown syscall =", num, KERNEL, LOG_ERROR);

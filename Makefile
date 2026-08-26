@@ -207,11 +207,13 @@ $(HOST_TEST_DIR)/holyd_compiler_test.exe: tests/holyd_compiler_test.c \
 		userspace/bin/holyd/lexer/lexer.c userspace/bin/holyd/lexer/lexer.h \
 		userspace/bin/holyd/parser/parser.c userspace/bin/holyd/parser/parser.h \
 		userspace/bin/holyd/ast/ast.c userspace/bin/holyd/ast/ast.h \
+		tests/holyd_ffi_stub.c userspace/bin/holyd/ffi.h \
 		| $(HOST_TEST_DIR)
 	$(HOST_CC) $(HOST_TEST_CFLAGS) -I userspace -I userspace/bin/holyd \
 		tests/holyd_compiler_test.c userspace/bin/holyd/compiler.c \
 		userspace/bin/holyd/eval.c userspace/bin/holyd/lexer/lexer.c \
 		userspace/bin/holyd/parser/parser.c userspace/bin/holyd/ast/ast.c \
+		tests/holyd_ffi_stub.c \
 		-o $@
 
 .PHONY: test test-host
@@ -236,6 +238,7 @@ test-qemu-heavy: build-x86_64
 		python3 tests/netmon_test.py --timeout 120 && \
 		python3 tests/net_arp_test.py --timeout 120 && \
 		python3 tests/net_ping_test.py --timeout 180 && \
+		python3 tests/net_udp_test.py --timeout 120 && \
 		python3 tests/winman_partial_repaint_test.py --timeout 90 && \
 		python3 tests/winman_titlebar_double_click_test.py --timeout 90 && \
 		python3 tests/path_lookup_test.py --timeout 90 && \

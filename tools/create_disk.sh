@@ -24,6 +24,7 @@ payloads=(
 	"rootfs/holyd/functions.hd::holyd/tests/functions.hd"
 	"rootfs/holyd/no_semis.hd::holyd/tests/no_semis.hd"
 	"rootfs/holyd/holyc_d_style.hd::holyd/tests/holyc_d_style.hd"
+	"rootfs/holyd/net.hd::holyd/tests/net.hd"
 
 	"rootfs/music/beethoven.wav::music/beethoven.wav"
 
@@ -56,6 +57,7 @@ payloads=(
 	"userspace/bin/faulter/faulter.elf::usr/bin/faulter.elf"
 	"userspace/bin/netmon/netmon.elf::usr/bin/netmon.elf"
 	"userspace/bin/ping/ping.elf::usr/bin/ping.elf"
+	"userspace/bin/udpecho/udpecho.elf::usr/bin/udpecho.elf"
 
 # System Apps
 	"userspace/bin/shutdown/shutdown.elf::system/bin/shutdown.elf"

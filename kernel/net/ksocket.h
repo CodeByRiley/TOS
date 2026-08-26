@@ -98,6 +98,14 @@ int socket_bind(struct socket *sock, const struct sockaddr_in *addr);
 int socket_recvfrom(struct socket *sock, void *buf, size_t len, struct sockaddr_in *src_addr);
 int socket_sendto(struct socket *sock, const void *buf, size_t len, const struct sockaddr_in *dest_addr);
 
+/* Unlink from the global table, drain any queued datagrams, and free.
+ * Without this every socket and every packet still queued on it leaked for
+ * the life of the kernel. */
+void socket_close(struct socket *sock);
+
+/* Pick an unused ephemeral port. Returns 0 when none is free. */
+port_t socket_alloc_ephemeral_port(void);
+
 // Called by the IP layer when a packet arrives
 void socket_handle_incoming(struct ipv4_addr src_ip, port_t src_port,
                             struct ipv4_addr dest_ip, port_t dest_port,

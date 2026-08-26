@@ -133,35 +133,50 @@ static Token identifier(Lexer* lexer) {
 
     int length = (int)(lexer->current - lexer->start);
 
-    if (length == 2 && string_match(lexer->start, "U0", 2)) return make_token(lexer, TOKEN_U0);
-    if (length == 2 && string_match(lexer->start, "I8", 2)) return make_token(lexer, TOKEN_I8);
-    if (length == 2 && string_match(lexer->start, "U8", 2)) return make_token(lexer, TOKEN_U8);
-    if (length == 3 && string_match(lexer->start, "I16", 3)) return make_token(lexer, TOKEN_I16);
-    if (length == 3 && string_match(lexer->start, "U16", 3)) return make_token(lexer, TOKEN_U16);
-    if (length == 3 && string_match(lexer->start, "I32", 3)) return make_token(lexer, TOKEN_I32);
-    if (length == 3 && string_match(lexer->start, "I64", 3)) return make_token(lexer, TOKEN_I64);
-    if (length == 3 && string_match(lexer->start, "U32", 3)) return make_token(lexer, TOKEN_U32);
-    if (length == 3 && string_match(lexer->start, "U64", 3)) return make_token(lexer, TOKEN_U64);
-    if (length == 3 && string_match(lexer->start, "F64", 3)) return make_token(lexer, TOKEN_F64);
-    if (length == 4 && string_match(lexer->start, "void", 4)) return make_token(lexer, TOKEN_VOID);
-    if (length == 3 && string_match(lexer->start, "int", 3)) return make_token(lexer, TOKEN_INT);
-    if (length == 4 && string_match(lexer->start, "uint", 4)) return make_token(lexer, TOKEN_UINT);
-    if (length == 4 && string_match(lexer->start, "long", 4)) return make_token(lexer, TOKEN_LONG);
-    if (length == 5 && string_match(lexer->start, "ulong", 5)) return make_token(lexer, TOKEN_ULONG);
-    if (length == 6 && string_match(lexer->start, "double", 6)) return make_token(lexer, TOKEN_DOUBLE);
-    if (length == 4 && string_match(lexer->start, "bool", 4)) return make_token(lexer, TOKEN_BOOL);
-    if (length == 6 && string_match(lexer->start, "string", 6)) return make_token(lexer, TOKEN_STRING_TYPE);
-    if (length == 4 && string_match(lexer->start, "auto", 4)) return make_token(lexer, TOKEN_AUTO);
-    if (length == 7 && string_match(lexer->start, "foreach", 7)) return make_token(lexer, TOKEN_FOREACH);
-    if (length == 3 && string_match(lexer->start, "for", 3)) return make_token(lexer, TOKEN_FOR);
-    if (length == 2 && string_match(lexer->start, "if", 2)) return make_token(lexer, TOKEN_IF);
-    if (length == 4 && string_match(lexer->start, "else", 4)) return make_token(lexer, TOKEN_ELSE);
-    if (length == 5 && string_match(lexer->start, "while", 5)) return make_token(lexer, TOKEN_WHILE);
-    if (length == 6 && string_match(lexer->start, "return", 6)) return make_token(lexer, TOKEN_RETURN);
-    if (length == 4 && string_match(lexer->start, "true", 4)) return make_token(lexer, TOKEN_TRUE);
-    if (length == 5 && string_match(lexer->start, "false", 5)) return make_token(lexer, TOKEN_FALSE);
-    if (length == 6 && string_match(lexer->start, "module", 6)) return make_token(lexer, TOKEN_MODULE);
-    if (length == 6 && string_match(lexer->start, "import", 6)) return make_token(lexer, TOKEN_IMPORT);
+    switch (length) {
+      case 2:
+        if (string_match(lexer->start, "U0", 2)) return make_token(lexer, TOKEN_U0);
+        if (string_match(lexer->start, "U8", 2)) return make_token(lexer, TOKEN_U8);
+        if (string_match(lexer->start, "I8", 2)) return make_token(lexer, TOKEN_I8);
+        if (string_match(lexer->start, "if", 2)) return make_token(lexer, TOKEN_IF);
+
+        break;
+      case 3:
+        if (string_match(lexer->start, "I16", 3)) return make_token(lexer, TOKEN_I16);
+        if (string_match(lexer->start, "U16", 3)) return make_token(lexer, TOKEN_U16);
+        if (string_match(lexer->start, "I32", 3)) return make_token(lexer, TOKEN_I32);
+        if (string_match(lexer->start, "I64", 3)) return make_token(lexer, TOKEN_I64);
+        if (string_match(lexer->start, "U32", 3)) return make_token(lexer, TOKEN_U32);
+        if (string_match(lexer->start, "U64", 3)) return make_token(lexer, TOKEN_U64);
+        if (string_match(lexer->start, "F64", 3)) return make_token(lexer, TOKEN_F64);
+        if (string_match(lexer->start, "int", 3)) return make_token(lexer, TOKEN_INT);
+        if (string_match(lexer->start, "for", 3)) return make_token(lexer, TOKEN_FOR);
+        break;
+      case 4:
+        if (string_match(lexer->start, "void", 4)) return make_token(lexer, TOKEN_VOID);
+        if (string_match(lexer->start, "uint", 4)) return make_token(lexer, TOKEN_UINT);
+        if (string_match(lexer->start, "true", 4)) return make_token(lexer, TOKEN_TRUE);
+        if (string_match(lexer->start, "long", 4)) return make_token(lexer, TOKEN_LONG);
+        if (string_match(lexer->start, "auto", 4)) return make_token(lexer, TOKEN_AUTO);
+        if (string_match(lexer->start, "bool", 4)) return make_token(lexer, TOKEN_BOOL);
+        if (string_match(lexer->start, "else", 4)) return make_token(lexer, TOKEN_ELSE);
+        break;
+      case 5:
+        if (string_match(lexer->start, "ulong", 5)) return make_token(lexer, TOKEN_ULONG);
+        if (string_match(lexer->start, "while", 5)) return make_token(lexer, TOKEN_WHILE);
+        if (string_match(lexer->start, "false", 5)) return make_token(lexer, TOKEN_FALSE);
+        break;
+      case 6:
+        if (string_match(lexer->start, "double", 6)) return make_token(lexer, TOKEN_DOUBLE);
+        if (string_match(lexer->start, "string", 6)) return make_token(lexer, TOKEN_STRING_TYPE);
+        if (string_match(lexer->start, "return", 6)) return make_token(lexer, TOKEN_RETURN);
+        if (string_match(lexer->start, "module", 6)) return make_token(lexer, TOKEN_MODULE);
+        if (string_match(lexer->start, "import", 6)) return make_token(lexer, TOKEN_IMPORT);
+        break;
+      case 7:
+        if (string_match(lexer->start, "foreach", 7)) return make_token(lexer, TOKEN_FOREACH);
+        break;
+    }
 
     return make_token(lexer, TOKEN_IDENTIFIER);
 }

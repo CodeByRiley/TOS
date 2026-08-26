@@ -1,17 +1,22 @@
 U8 main() {
-	I64 sock = UdpSocket();
+  I64 sock = UdpSocket();
 
-	if (sock == 0) {
-		Print("Couldn't open socket.\n");
-		return 1;
-	}
-	UdpBind(sock, 5000);
-	I64[] ip = [10,0,2,2];
-	UdpSend(sock, ip, 5001, "Hello From HolyD!\n");
+  if (sock == 0) {
+    PrintLn("Failed to create socket!");
+    return -1;
+  }
 
-	String msg = UdpRecv(sock);
-	Print("Received: %s\n", msg);
-	UdpClose(sock);
+  UdpBind(sock, 5000);
 
-	return 0;
+  // Dest IP: 10.0.2.2 (QEMU host)
+  I64[] ip = [10, 0, 2, 2];
+
+  UdpSend(sock, "Hello from HolyD!", ip, 5000);
+
+  // Wait for a reply
+  string reply = UdpReceive(sock);
+  Print("Got reply: ");
+  PrintLn(reply);
+
+  return 0;
 }

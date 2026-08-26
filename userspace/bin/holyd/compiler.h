@@ -3,34 +3,13 @@
 
 #include "ast/ast.h"
 #include "eval.h"
+#include <stdint.h>
 
 typedef enum {
-    BC_PUSH_INT,
-    BC_PUSH_FLOAT,
-    BC_PUSH_STRING,
-    BC_LOAD,
-    BC_DEFINE,
-    BC_STORE,
-    BC_ADD,
-    BC_SUB,
-    BC_MUL,
-    BC_DIV,
-    BC_EQ,
-    BC_NE,
-    BC_LT,
-    BC_GT,
-    BC_LE,
-    BC_GE,
-    BC_CONCAT,
-    BC_MAKE_ARRAY,
-    BC_ARRAY_LEN,
-    BC_ARRAY_GET,
-    BC_ARRAY_SET,
-    BC_JUMP,
-    BC_JUMP_IF_FALSE,
-    BC_CALL,
-    BC_POP,
-    BC_RETURN
+    BC_PUSH_INT, BC_PUSH_FLOAT, BC_PUSH_STRING, BC_LOAD, BC_DEFINE, BC_STORE,
+    BC_ADD, BC_SUB, BC_MUL, BC_DIV, BC_EQ, BC_NE, BC_LT, BC_GT, BC_LE, BC_GE,
+    BC_CONCAT, BC_MAKE_ARRAY, BC_ARRAY_LEN, BC_ARRAY_GET, BC_ARRAY_SET,
+    BC_JUMP, BC_JUMP_IF_FALSE, BC_CALL, BC_POP, BC_RETURN
 } BytecodeOp;
 
 typedef struct {
@@ -70,5 +49,9 @@ void HDProgramInit(HDProgram* program);
 int HDCompileProgram(ASTNode* ast, HDProgram* program);
 int HDRunProgram(HDProgram* program);
 void HDDumpProgram(HDProgram* program);
+
+HDValue int_value(long long v);
+HDValue string_value(const char* s, int len);
+HDValue float_value(double v);
 
 #endif

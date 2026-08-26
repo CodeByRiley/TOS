@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "ffi.h"
 
 typedef struct {
     HDProgram* program;
@@ -453,7 +454,7 @@ int HDCompileProgram(ASTNode* ast, HDProgram* program) {
     return !program->had_error;
 }
 
-static HDValue int_value(long long v) {
+HDValue int_value(long long v) {
     HDValue value;
     value.type = VAL_INT;
     value.i64 = v;
@@ -465,7 +466,7 @@ static HDValue int_value(long long v) {
     return value;
 }
 
-static HDValue string_value(const char* s, int len) {
+HDValue string_value(const char* s, int len) {
     HDValue value = int_value(0);
     value.type = VAL_STRING;
     value.str = s;
@@ -473,7 +474,7 @@ static HDValue string_value(const char* s, int len) {
     return value;
 }
 
-static HDValue float_value(double v) {
+HDValue float_value(double v) {
     HDValue value = int_value(0);
     value.type = VAL_FLOAT;
     value.f64 = v;
@@ -660,6 +661,19 @@ static int call_function(VM* vm, Instruction* ins, HDValue* stack, int* sp) {
         stack[(*sp)++] = int_value(0);
         return 1;
     }
+
+    NativeFn native_fn = ffi_lookup_native(ins->text, ins->text_len);
+        if (native_fn != NULL) {
+            if (*sp < ins->operand) {
+                printf("Runtime error: stack underflow in native call.\n");
+                return 0;
+            }
+            int first = *sp - ins->operand;
+            HDValue result = native_fn(ins->operand, &stack[first]);
+            *sp = first;
+            stack[(*sp)++] = result;
+            return 1;
+        }
 
     HDFunction* fn = find_function(vm->program, ins->text, ins->text_len);
     if (!fn) {

@@ -151,7 +151,12 @@ fetch a single byte over the network.
     `ipv4_output_framed` using the `IPV4_HEADROOM` convention.
   - Wire `IPPROTO_UDP` into the `ipv4_input` switch, which already has the
     slot waiting.
-  - Add the syscalls at 1142+: socket, bind, sendto, recvfrom, close. Validate
+  - Sockets answer on the Linux numbers, not TOS-specific ones: socket is
+    41, sendto 44, recvfrom 45, bind 49. musl issues those directly, so
+    mirroring them is what lets ported code and musl's own socket API
+    work untouched -- NetSurf's fetcher will arrive through them. socket,
+    bind, sendto and recvfrom are done; connect, listen, accept and the
+    sockopt calls are not. Validate
     every user pointer, and give sockets fd lifetime rules that survive a
     process being killed mid-recv.
   - Blocking receive needs a wait queue the driver poll task can wake;
