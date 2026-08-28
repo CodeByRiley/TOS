@@ -336,8 +336,22 @@ NETSURF_BROWSER_DIRS := \
 	$(NETSURF_SRC_DIR)/netsurf/desktop \
 	$(NETSURF_SRC_DIR)/netsurf/frontends/framebuffer
 
-NETSURF_SOURCES := $(shell C:/msys64/usr/bin/find.exe \
-	$(NETSURF_LIBRARY_DIRS) $(NETSURF_BROWSER_DIRS) \
+# NetSurf's own sources are a separate checkout that a plain clone of TOS does
+# not have. `:=` expands $(shell ...) while the Makefile is read, so an
+# unguarded find runs on every build and prints a screenful of "No such file or
+# directory" even at BUILD_NETSURF=0. Only walk the tree when the port is
+# actually being built, and take find from PATH , hardcoding one machine's
+# msys64 breaks every other machine. Override NETSURF_FIND if the first find on
+# your PATH is the Windows one.
+NETSURF_FIND ?= find
+NETSURF_SOURCE_DIRS := $(wildcard $(NETSURF_LIBRARY_DIRS) $(NETSURF_BROWSER_DIRS))
+
+ifeq ($(BUILD_NETSURF),1)
+ifeq ($(NETSURF_SOURCE_DIRS),)
+$(error BUILD_NETSURF=1 but $(NETSURF_SRC_DIR) holds no NetSurf sources , see README)
+endif
+NETSURF_SOURCES := $(shell $(NETSURF_FIND) \
+	$(NETSURF_SOURCE_DIRS) \
 	-type d \( -name test -o -name duktape \) -prune \
 	-o -type f -name '*.c' \
 	-not -name 'css_property_parser_gen.c' \
@@ -362,6 +376,7 @@ NETSURF_SOURCES := $(shell C:/msys64/usr/bin/find.exe \
 	-not -path '*/frontends/framebuffer/fbtk/text.c' \
 	-not -path '*/frontends/framebuffer/font_freetype.c' \
 	-print)
+endif
 
 NETSURF_NSFB_SOURCES := \
 	$(NETSURF_SRC_DIR)/libnsfb/src/libnsfb.c \

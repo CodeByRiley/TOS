@@ -30,9 +30,16 @@ You will need:
 - An `x86_64-elf` GCC/binutils cross-toolchain containing `gcc`, `ld`, `ar`, and `objcopy`. The kernel uses `-std=gnu23`, so the cross-compiler must be GCC 14 or newer.
 - NASM.
 - Python on Windows. The kernel build always runs `tools/gen_asm_offsets.py` and `tools/gen_symtab.py`; the `clangd` target also needs Python.
-- WSL with `grub-mkimage`, `xorriso`, `mcopy`/`mmd`, and `mkfs.fat`. Disk-image creation, ISO creation, and cleaning run through `wsl bash`.
+- WSL with `grub-mkimage` (BIOS/i386-pc modules, not EFI), `xorriso`, `mcopy`/`mmd`, and `mkfs.fat`. On Ubuntu that is `sudo apt install grub-pc-bin grub-common xorriso mtools dosfstools`. Disk-image creation, ISO creation, and cleaning run through `wsl bash`.
 - QEMU (`qemu-system-x86_64`) to run TOS.
 - `python3` inside WSL for the QEMU test suite.
+
+Two things trip people up on Windows:
+
+- **Use `mingw32-make`, not MSYS2's own `make`.** MSYS2's `make` reports a `/c/...` working directory that `wslpath` converts to the wrong place; the build stops with an error saying so.
+- **The disk-image, ISO, and clean steps always run in WSL, even when you start the build from an MSYS2 or Git Bash shell.** MSYS2 packages neither `xorriso` nor a usable i386-pc GRUB, so running them "natively" just picks up whatever unrelated `grub-mkimage` is on `PATH` and fails later with errors about `moddep.lst` or `kernel.img is miscompiled`. Set `TOS_NATIVE_TOOLS=1` only if your shell genuinely has the whole set.
+
+On Linux everything runs natively and no WSL is involved.
 
 Clone TOS and its HolyD submodule:
 
@@ -97,11 +104,19 @@ It supports these options:
 build/disk.img
 ```
 
-The build then populates the ISO staging directory under `boot/x86_64/iso/`, uses `grub-mkimage` to create the El Torito boot image, and uses `xorriso` to package:
+`tools/build_iso.sh` then populates the ISO staging directory under `boot/x86_64/iso/`, uses `grub-mkimage` to create the El Torito boot image, and uses `xorriso` to package:
 
 ```text
 dist/x86_64/kernel.iso
 ```
+
+The script looks for the i386-pc GRUB modules in the usual places (`/usr/lib/grub/i386-pc` and friends, plus the directory the `grub-mkimage` on `PATH` lives in), accepting only a directory that holds both `moddep.lst` and `cdboot.img`. If your GRUB is somewhere else, point it there:
+
+```bash
+GRUB_DIR=/path/to/grub/i386-pc bash tools/build_iso.sh
+```
+
+`grub-mkimage` and that directory must come from the same GRUB install. A mismatch surfaces as a missing `moddep.lst` or as `kernel.img is miscompiled: its start address is 0x0`.
 
 Run TOS with the full QEMU setup:
 

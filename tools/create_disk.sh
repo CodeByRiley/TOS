@@ -4,6 +4,20 @@ set -euo pipefail
 # Run from the repository root; every path below is repo-relative.
 cd "$(dirname "$0")/.."
 
+# mtools and dosfstools are the whole of this script. Name them up front
+# instead of dying two hundred payloads in with "mcopy: command not found"
+# and half an image already written.
+for tool in dd mkfs.fat mmd mdir mcopy; do
+	command -v "$tool" >/dev/null || {
+		echo "create_disk: $tool not found on PATH" >&2
+		echo "  Debian/Ubuntu: sudo apt install dosfstools mtools" >&2
+		echo "  Fedora:        sudo dnf install dosfstools mtools" >&2
+		echo "  Arch:          sudo pacman -S dosfstools mtools" >&2
+		echo "  On Windows this step is meant to run inside WSL; see README." >&2
+		exit 1
+	}
+done
+
 MIN_SIZE=64
 
 # Output image. Lives in build/ so `make clean` takes it with everything else.
