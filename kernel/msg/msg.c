@@ -1,7 +1,9 @@
 /* kernel/msg/msg.c , per-task input + IPC ring backends.
  *
- * Rings themselves live on the task struct (allocated in sched.c). This
- * module is the API that pushes/pops on them. Single-producer-single-
+ * Rings themselves hang off the task struct as struct task_input /
+ * struct task_ipc (allocated in sched.c), so a task that has neither costs
+ * two null pointers. This module is the API that pushes/pops on them, and
+ * treats a missing record as an empty ring. Single-producer-single-
  * consumer per ring (IRQs post, syscalls pop), so we get away without
  * locks on UP. SMP path would need atomic head/tail.
  *
@@ -36,11 +38,11 @@ void msg_init(void) {
 void msg_post_to(int pid, const struct msg *m) {
     if (pid <= 0) return;
     struct task *t = task_find(pid);
-    if (!t || !t->input_ring) return;
-    int next = (t->input_head + 1) & INPUT_RING_MASK;
-    if (next == t->input_tail) return;          /* drop on overflow */
-    t->input_ring[t->input_head] = *m;
-    t->input_head = next;
+    if (!t || !t->input || !t->input->ring) return;
+    int next = (t->input->head + 1) & INPUT_RING_MASK;
+    if (next == t->input->tail) return;          /* drop on overflow */
+    t->input->ring[t->input->head] = *m;
+    t->input->head = next;
 }
 
 void msg_post(const struct msg *m) {
@@ -56,40 +58,40 @@ void msg_post(const struct msg *m) {
 
 int msg_get(struct msg *out) {
     struct task *t = task_current();
-    if (!t || !t->input_ring) return 0;
-    if (t->input_tail == t->input_head) return 0;
-    *out = t->input_ring[t->input_tail];
-    t->input_tail = (t->input_tail + 1) & INPUT_RING_MASK;
+    if (!t || !t->input || !t->input->ring) return 0;
+    if (t->input->tail == t->input->head) return 0;
+    *out = t->input->ring[t->input->tail];
+    t->input->tail = (t->input->tail + 1) & INPUT_RING_MASK;
     return 1;
 }
 
 int msg_peek(struct msg *out) {
     struct task *t = task_current();
-    if (!t || !t->input_ring) return 0;
-    if (t->input_tail == t->input_head) return 0;
-    *out = t->input_ring[t->input_tail];
+    if (!t || !t->input || !t->input->ring) return 0;
+    if (t->input->tail == t->input->head) return 0;
+    *out = t->input->ring[t->input->tail];
     return 1;
 }
 
 int ipc_send(int target_pid, const struct ipc_msg *m, int from_pid) {
     if (target_pid <= 0 || !m) return -1;
     struct task *t = task_find(target_pid);
-    if (!t || !t->ipc_ring) return -1;
-    int next = (t->ipc_head + 1) & IPC_RING_MASK;
-    if (next == t->ipc_tail) return -1;         /* full , caller can retry */
+    if (!t || !t->ipc || !t->ipc->ring) return -1;
+    int next = (t->ipc->head + 1) & IPC_RING_MASK;
+    if (next == t->ipc->tail) return -1;         /* full , caller can retry */
     struct ipc_msg copy = *m;
     copy.from_pid = (uint32_t)from_pid;
-    t->ipc_ring[t->ipc_head] = copy;
-    t->ipc_head = next;
+    t->ipc->ring[t->ipc->head] = copy;
+    t->ipc->head = next;
     return 0;
 }
 
 int ipc_recv(struct ipc_msg *out) {
     struct task *t = task_current();
-    if (!t || !t->ipc_ring) return 0;
-    if (t->ipc_tail == t->ipc_head) return 0;
-    *out = t->ipc_ring[t->ipc_tail];
-    t->ipc_tail = (t->ipc_tail + 1) & IPC_RING_MASK;
+    if (!t || !t->ipc || !t->ipc->ring) return 0;
+    if (t->ipc->tail == t->ipc->head) return 0;
+    *out = t->ipc->ring[t->ipc->tail];
+    t->ipc->tail = (t->ipc->tail + 1) & IPC_RING_MASK;
     return 1;
 }
 

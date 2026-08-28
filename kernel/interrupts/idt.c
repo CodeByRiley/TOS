@@ -480,17 +480,18 @@ void isr_handler(struct interrupt_frame *r) {
       /* USER SPACE DEMAND PAGING */
       if (!(r->err_code & 0x1)) {
         struct task *t = task_current();
-        if (t && t->user_pml4) {
+        struct task_vm *vm = t ? t->vm : 0;
+        if (vm && vm->user_pml4) {
           for (int i = 0; i < MAX_USER_VMAS; i++) {
-            if (t->vmas[i].used && cr2 >= t->vmas[i].start &&
-                cr2 < t->vmas[i].end) {
+            if (vm->vmas[i].used && cr2 >= vm->vmas[i].start &&
+                cr2 < vm->vmas[i].end) {
               uint64_t page_addr = cr2 & ~0xFFFULL;
               uint64_t phys = pmm_alloc_frame();
 
               if (phys) {
                 memset((void *)phys_to_virt(phys), 0, 4096);
-                if (vmm_map_in(t->user_pml4, page_addr, phys,
-                               t->vmas[i].pte_flags) == 0)
+                if (vmm_map_in(vm->user_pml4, page_addr, phys,
+                               vm->vmas[i].pte_flags) == 0)
                   return;
                 pmm_free_frame(phys);
               }
