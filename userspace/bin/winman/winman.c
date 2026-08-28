@@ -336,7 +336,7 @@ static int outer_h(const struct window *w) {
 }
 
 /* Pre-expanded glyph row for the console (CONSOLE_FG/CONSOLE_BG are
- * constants): byte -> 8 pixels. Built once in con_alloc. 8 KiB BSS.
+ * constants): byte -> 8 pixels. Built in con_alloc_buffers. 8 KiB BSS.
  * Per-row glyph render becomes a single memcpy(32 B) instead of 8 per-pixel
  * conditional writes , the dominant cost when winman drains the TTY ring. */
 static uint32_t con_glyph_lut[256][FONT_GLYPH_W];
@@ -467,13 +467,38 @@ static int con_cell_h_for_scale(int scale) {
   return (con_ttf_ready ? con_ttf_cell_h : FONT_GLYPH_H) * scale;
 }
 
-static int con_cell_w(void) { return con_cell_w_for_scale(con.scale); }
-static int con_cell_h(void) { return con_cell_h_for_scale(con.scale); }
+/* Cell metrics are per-console: each one carries its own zoom level, so
+ * Ctrl+= in one shell does not resize the others. The font itself is shared
+ * , con_font/con_ttf_* are loaded once and describe the face, not a size. */
+static int con_cell_w(const struct console *c) {
+  return con_cell_w_for_scale(c->scale);
+}
+static int con_cell_h(const struct console *c) {
+  return con_cell_h_for_scale(c->scale);
+}
 
-static int con_font_px(void) {
-  int scale = con.scale < 1 ? 1 : con.scale;
+static int con_font_px(const struct console *c) {
+  int scale = c->scale < 1 ? 1 : c->scale;
   return CON_TTF_PX * scale;
 }
+
+/* Consoles are addressed by handle everywhere outside this file's console
+ * code, because that is what focus, z-order and hit-testing deal in. */
+static int is_console_handle(int handle) {
+  return handle >= HANDLE_CONSOLE_BASE &&
+         handle < HANDLE_CONSOLE_BASE + CON_MAX;
+}
+
+static struct console *con_for_handle(int handle) {
+  if (!is_console_handle(handle))
+    return 0;
+  struct console *c = &cons[handle - HANDLE_CONSOLE_BASE];
+  return c->win.in_use ? c : 0;
+}
+
+/* The console that currently has focus, or NULL when focus is on a client
+ * window or nothing. Keystrokes and console zoom go here. */
+static struct console *con_focused(void) { return con_for_handle(focused_handle); }
 
 static void con_try_load_ttf(void) {
   if (con_ttf_ready)
@@ -527,13 +552,14 @@ static void con_try_load_ttf(void) {
 }
 
 static int win_get_rect(int handle, int *x, int *y, int *cw, int *ch) {
-  if (handle == HANDLE_CONSOLE) {
-    if (!con.win.in_use)
+  if (is_console_handle(handle)) {
+    struct console *c = con_for_handle(handle);
+    if (!c)
       return 0;
-    *x = con.win.x;
-    *y = con.win.y;
-    *cw = con.win.client_w;
-    *ch = con.win.client_h;
+    *x = c->win.x;
+    *y = c->win.y;
+    *cw = c->win.client_w;
+    *ch = c->win.client_h;
     return 1;
   }
   for (int i = 0; i < MAX_WINDOWS; i++) {
@@ -549,9 +575,12 @@ static int win_get_rect(int handle, int *x, int *y, int *cw, int *ch) {
 }
 
 static void win_set_pos(int handle, int x, int y) {
-  if (handle == HANDLE_CONSOLE) {
-    con.win.x = x;
-    con.win.y = y;
+  if (is_console_handle(handle)) {
+    struct console *c = con_for_handle(handle);
+    if (c) {
+      c->win.x = x;
+      c->win.y = y;
+    }
     return;
   }
   for (int i = 0; i < MAX_WINDOWS; i++) {
@@ -592,9 +621,9 @@ static int in_titlebar_btn(int win_x, int win_y, int outer_w,
 }
 
 /* Enumerate the windows that should appear on the taskbar in stable order:
- * the console first (handle 0), then in-use client windows in their array
- * slot order. Order matches z-order today since neither has explicit raising.
- */
+ * the consoles first, in channel order, then in-use client windows in their
+ * array slot order. Order matches z-order today since neither has explicit
+ * raising. */
 struct tb_entry {
   int handle;
   const char *title;
@@ -602,9 +631,11 @@ struct tb_entry {
 
 static int build_taskbar_entries(struct tb_entry *out, int max) {
   int n = 0;
-  if (con.win.in_use && n < max) {
-    out[n].handle = HANDLE_CONSOLE;
-    out[n].title = con.win.title;
+  for (int i = 0; i < CON_MAX && n < max; i++) {
+    if (!cons[i].win.in_use)
+      continue;
+    out[n].handle = HANDLE_CONSOLE_BASE + i;
+    out[n].title = cons[i].win.title;
     n++;
   }
 
@@ -647,7 +678,7 @@ static int hit_taskbar(int mx, int my, int *out_handle) {
   if (my < y || my >= y + TASKBAR_PX)
     return 0;
 
-  struct tb_entry ents[1 + MAX_WINDOWS];
+  struct tb_entry ents[MAX_Z];
   int n = build_taskbar_entries(ents, (int)(sizeof(ents) / sizeof(ents[0])));
 
   int bx = TASKBAR_START_W + TASKBAR_BTN_GAP;
@@ -751,19 +782,19 @@ static void clamp_to_desktop(int *x, int *y, int cw, int ch) {
 /* Console resize: reallocate surface + backing buffer at new dims and copy
  * the still-visible region of the old surface into the new one so existing
  * glyphs survive. Cursor is clamped to the new grid. */
-static void console_resize(int new_cw, int new_ch) {
-  if (!con.win.in_use)
+static void console_resize(struct console *c, int new_cw, int new_ch) {
+  if (!c || !c->win.in_use)
     return;
   /* Snap to glyph grid so cells line up without trailing fractional row. */
-  int cell_w = con_cell_w();
-  int cell_h = con_cell_h();
+  int cell_w = con_cell_w(c);
+  int cell_h = con_cell_h(c);
   new_cw = (new_cw / cell_w) * cell_w;
   new_ch = (new_ch / cell_h) * cell_h;
   if (new_cw < MIN_CLIENT_W)
     new_cw = MIN_CLIENT_W;
   if (new_ch < MIN_CLIENT_H)
     new_ch = MIN_CLIENT_H;
-  if (new_cw == con.win.client_w && new_ch == con.win.client_h)
+  if (new_cw == c->win.client_w && new_ch == c->win.client_h)
     return;
 
   size_t pixel_bytes = (size_t)new_cw * (size_t)new_ch * 4;
@@ -800,40 +831,40 @@ static void console_resize(int new_cw, int new_ch) {
 
   /* Preserve the upper-left character-cell intersection. The surface is
    * then regenerated, avoiding partial glyphs at the resized edge. */
-  if (con.cells) {
-    int copy_cols = con.cols < new_cols ? con.cols : new_cols;
-    int copy_rows = con.rows < new_rows ? con.rows : new_rows;
+  if (c->cells) {
+    int copy_cols = c->cols < new_cols ? c->cols : new_cols;
+    int copy_rows = c->rows < new_rows ? c->rows : new_rows;
     for (int y = 0; y < copy_rows; y++) {
-      memcpy(new_cells + y * new_cols, con.cells + y * con.cols,
+      memcpy(new_cells + y * new_cols, c->cells + y * c->cols,
              (size_t)copy_cols);
     }
   }
 
-  if (con.win.surface_raw)
-    free(con.win.surface_raw);
-  if (con_backing_raw)
-    free(con_backing_raw);
-  if (con.cells)
-    free(con.cells);
-  if (con_saved_cells)
-    free(con_saved_cells);
+  if (c->win.surface_raw)
+    free(c->win.surface_raw);
+  if (c->backing_raw)
+    free(c->backing_raw);
+  if (c->cells)
+    free(c->cells);
+  if (c->saved_cells)
+    free(c->saved_cells);
 
-  con.win.surface = new_surf;
-  con.win.surface_raw = new_raw;
-  con.cells = new_cells;
-  con_backing = new_back;
-  con_backing_raw = new_back_raw;
-  con_saved_cells = new_saved;
-  con.win.client_w = new_cw;
-  con.win.client_h = new_ch;
-  con.cols = new_cols;
-  con.rows = new_rows;
-  if (con.cx >= con.cols)
-    con.cx = con.cols - 1;
-  if (con.cy >= con.rows)
-    con.cy = con.rows - 1;
-  con_saved_valid = 0;
-  con_redraw();
+  c->win.surface = new_surf;
+  c->win.surface_raw = new_raw;
+  c->cells = new_cells;
+  c->backing = new_back;
+  c->backing_raw = new_back_raw;
+  c->saved_cells = new_saved;
+  c->win.client_w = new_cw;
+  c->win.client_h = new_ch;
+  c->cols = new_cols;
+  c->rows = new_rows;
+  if (c->cx >= c->cols)
+    c->cx = c->cols - 1;
+  if (c->cy >= c->rows)
+    c->cy = c->rows - 1;
+  c->saved_valid = 0;
+  con_redraw(c);
 }
 
 /* Client window resize: allocate a fresh surface, copy the old visible
@@ -849,8 +880,8 @@ static void console_resize(int new_cw, int new_ch) {
 static void client_window_resize(int handle, int new_cw, int new_ch) {
   clamp_client_size(&new_cw, &new_ch);
 
-  if (handle == HANDLE_CONSOLE) {
-    console_resize(new_cw, new_ch);
+  if (is_console_handle(handle)) {
+    console_resize(con_for_handle(handle), new_cw, new_ch);
     return;
   }
 
@@ -1354,7 +1385,7 @@ static void draw_taskbar(void) {
   fb_fill_rect(TASKBAR_START_W + TASKBAR_BTN_GAP, y, 2, TASKBAR_PX,
                PRINT_COLOR_BLACK);
 
-  struct tb_entry ents[1 + MAX_WINDOWS];
+  struct tb_entry ents[MAX_Z];
   int n = build_taskbar_entries(ents, (int)(sizeof(ents) / sizeof(ents[0])));
 
   /* 3. Draw taskbar buttons */
@@ -1411,20 +1442,21 @@ static void draw_start_menu(void) {
   }
 }
 
-static void con_draw_glyph(int gx, int gy, char c) {
-  int cell_w = con_cell_w();
-  int cell_h = con_cell_h();
+static void con_draw_glyph(struct console *con, int gx, int gy, char c) {
+  int cell_w = con_cell_w(con);
+  int cell_h = con_cell_h(con);
   int px = gx * cell_w;
   int py = gy * cell_h;
-  if (px + cell_w > con.win.client_w)
+  if (px + cell_w > con->win.client_w)
     return;
-  if (py + cell_h > con.win.client_h)
+  if (py + cell_h > con->win.client_h)
     return;
 
   if (con_ttf_ready) {
     for (int y = 0; y < cell_h; y++) {
-      uint32_t *line = con.win.surface +
-                       (size_t)(py + y) * (size_t)con.win.client_w + (size_t)px;
+      uint32_t *line = con->win.surface +
+                       (size_t)(py + y) * (size_t)con->win.client_w +
+                       (size_t)px;
       fill_dwords(line, (size_t)cell_w, CONSOLE_BG);
     }
 
@@ -1432,19 +1464,19 @@ static void con_draw_glyph(int gx, int gy, char c) {
       return;
 
     struct gfx_surface s;
-    gfx_surface_init(&s, con.win.surface, con.win.client_w, con.win.client_h,
-                     con.win.client_w);
+    gfx_surface_init(&s, con->win.surface, con->win.client_w,
+                     con->win.client_h, con->win.client_w);
     struct gfx_rect prev =
         gfx_clip_push(&s, gfx_rect_make(px, py, cell_w, cell_h));
 
     /* Sit the baseline so the ascender/descender band is centred in the cell
      * instead of guessing at 3/4 of the way down. */
-    int scale = con.scale < 1 ? 1 : con.scale;
+    int scale = con->scale < 1 ? 1 : con->scale;
     int band = (con_ttf_ascent - con_ttf_descent) * scale;
     int baseline = py + (cell_h - band) / 2 + con_ttf_ascent * scale;
 
     ttf_draw_glyph_cell(&s, &con_font, px, baseline, cell_w, (unsigned char)c,
-                        con_font_px(), CONSOLE_FG);
+                        con_font_px(con), CONSOLE_FG);
     gfx_clip_set(&s, prev);
     return;
   }
@@ -1456,58 +1488,59 @@ static void con_draw_glyph(int gx, int gy, char c) {
   else
     glyph = font8x8[(int)c - FONT_FIRST];
 
-  if (con.scale == 1) {
+  if (con->scale == 1) {
     uint32_t *line =
-        con.win.surface + (size_t)py * (size_t)con.win.client_w + (size_t)px;
+        con->win.surface + (size_t)py * (size_t)con->win.client_w + (size_t)px;
     for (int r = 0; r < FONT_GLYPH_H; r++) {
       memcpy(line, con_glyph_lut[glyph[r]], FONT_GLYPH_W * sizeof(uint32_t));
-      line += con.win.client_w;
+      line += con->win.client_w;
     }
     return;
   }
 
   for (int r = 0; r < FONT_GLYPH_H; r++) {
-    for (int sy = 0; sy < con.scale; sy++) {
-      int y = py + r * con.scale + sy;
+    for (int sy = 0; sy < con->scale; sy++) {
+      int y = py + r * con->scale + sy;
       uint32_t *line =
-          con.win.surface + (size_t)y * (size_t)con.win.client_w + (size_t)px;
+          con->win.surface + (size_t)y * (size_t)con->win.client_w + (size_t)px;
       for (int col = 0; col < FONT_GLYPH_W; col++) {
         uint32_t color = ((glyph[r] >> col) & 1) ? CONSOLE_FG : CONSOLE_BG;
-        for (int sx = 0; sx < con.scale; sx++)
-          line[col * con.scale + sx] = color;
+        for (int sx = 0; sx < con->scale; sx++)
+          line[col * con->scale + sx] = color;
       }
     }
   }
 }
 
-static void con_redraw(void) {
-  if (!con.win.in_use || !con.win.surface || !con.cells)
+static void con_redraw(struct console *con) {
+  if (!con || !con->win.in_use || !con->win.surface || !con->cells)
     return;
-  fill_dwords(con.win.surface,
-              (size_t)con.win.client_w * (size_t)con.win.client_h, CONSOLE_BG);
-  for (int y = 0; y < con.rows; y++) {
-    for (int x = 0; x < con.cols; x++) {
-      char c = con.cells[y * con.cols + x];
+  fill_dwords(con->win.surface,
+              (size_t)con->win.client_w * (size_t)con->win.client_h,
+              CONSOLE_BG);
+  for (int y = 0; y < con->rows; y++) {
+    for (int x = 0; x < con->cols; x++) {
+      char c = con->cells[y * con->cols + x];
       if (c)
-        con_draw_glyph(x, y, c);
+        con_draw_glyph(con, x, y, c);
     }
   }
-  mark_dirty(con.win.x, con.win.y, outer_w_dims(con.win.client_w),
-             outer_h_dims(con.win.client_h, con.win.status_h));
+  mark_dirty(con->win.x, con->win.y, outer_w_dims(con->win.client_w),
+             outer_h_dims(con->win.client_h, con->win.status_h));
 }
 
-static int con_set_scale(int new_scale) {
-  if (!con.win.in_use)
+static int con_set_scale(struct console *con, int new_scale) {
+  if (!con || !con->win.in_use)
     return -1;
   if (new_scale < CON_SCALE_MIN)
     new_scale = CON_SCALE_MIN;
   if (new_scale > CON_SCALE_MAX)
     new_scale = CON_SCALE_MAX;
-  if (new_scale == con.scale)
-    return con.scale;
+  if (new_scale == con->scale)
+    return con->scale;
 
-  int new_cols = con.win.client_w / con_cell_w_for_scale(new_scale);
-  int new_rows = con.win.client_h / con_cell_h_for_scale(new_scale);
+  int new_cols = con->win.client_w / con_cell_w_for_scale(new_scale);
+  int new_rows = con->win.client_h / con_cell_h_for_scale(new_scale);
   if (new_cols <= 0 || new_rows <= 0)
     return -1;
 
@@ -1523,241 +1556,422 @@ static int con_set_scale(int new_scale) {
   memset(new_cells, 0, (size_t)new_cols * (size_t)new_rows);
   memset(new_saved, 0, (size_t)new_cols * (size_t)new_rows);
 
-  int copy_cols = con.cols < new_cols ? con.cols : new_cols;
-  int copy_rows = con.rows < new_rows ? con.rows : new_rows;
-  int src_y0 = con.cy >= copy_rows ? con.cy - copy_rows + 1 : 0;
+  int copy_cols = con->cols < new_cols ? con->cols : new_cols;
+  int copy_rows = con->rows < new_rows ? con->rows : new_rows;
+  int src_y0 = con->cy >= copy_rows ? con->cy - copy_rows + 1 : 0;
   int dst_y0 = 0;
   for (int y = 0; y < copy_rows; y++) {
     memcpy(new_cells + (dst_y0 + y) * new_cols,
-           con.cells + (src_y0 + y) * con.cols, (size_t)copy_cols);
+           con->cells + (src_y0 + y) * con->cols, (size_t)copy_cols);
   }
 
-  int new_cx = con.cx < new_cols ? con.cx : new_cols - 1;
-  int new_cy = con.cy - src_y0 + dst_y0;
+  int new_cx = con->cx < new_cols ? con->cx : new_cols - 1;
+  int new_cy = con->cy - src_y0 + dst_y0;
   if (new_cy < 0)
     new_cy = 0;
   if (new_cy >= new_rows)
     new_cy = new_rows - 1;
 
-  free(con.cells);
-  if (con_saved_cells)
-    free(con_saved_cells);
-  con.cells = new_cells;
-  con_saved_cells = new_saved;
-  con.cols = new_cols;
-  con.rows = new_rows;
-  con.cx = new_cx;
-  con.cy = new_cy;
-  con.scale = new_scale;
-  con_saved_valid = 0;
-  con_redraw();
-  return con.scale;
+  free(con->cells);
+  if (con->saved_cells)
+    free(con->saved_cells);
+  con->cells = new_cells;
+  con->saved_cells = new_saved;
+  con->cols = new_cols;
+  con->rows = new_rows;
+  con->cx = new_cx;
+  con->cy = new_cy;
+  con->scale = new_scale;
+  con->saved_valid = 0;
+  con_redraw(con);
+  return con->scale;
 }
 
-static void con_scroll(void) {
-  if (con.rows <= 1)
+static void con_scroll(struct console *con) {
+  if (con->rows <= 1)
     return;
-  memmove(con.cells, con.cells + con.cols,
-          (size_t)(con.rows - 1) * (size_t)con.cols);
-  memset(con.cells + (con.rows - 1) * con.cols, 0, (size_t)con.cols);
-  con_redraw();
+  memmove(con->cells, con->cells + con->cols,
+          (size_t)(con->rows - 1) * (size_t)con->cols);
+  memset(con->cells + (con->rows - 1) * con->cols, 0, (size_t)con->cols);
+  con_redraw(con);
 }
 
-static void con_newline(void) {
-  con.cx = 0;
-  con.cy++;
-  if (con.cy >= con.rows) {
-    con_scroll();
-    con.cy = con.rows - 1;
+static void con_newline(struct console *con) {
+  con->cx = 0;
+  con->cy++;
+  if (con->cy >= con->rows) {
+    con_scroll(con);
+    con->cy = con->rows - 1;
   }
 }
 
 /* Wipe the live console surface back to CONSOLE_BG and home the cursor.
  * Used by both TTY_CTRL_CLEAR and the entry path of TTY_CTRL_PUSH. */
-static void con_wipe(void) {
-  if (!con.win.in_use || !con.win.surface)
+static void con_wipe(struct console *con) {
+  if (!con->win.in_use || !con->win.surface)
     return;
-  fill_dwords(con.win.surface,
-              (size_t)con.win.client_w * (size_t)con.win.client_h, CONSOLE_BG);
-  if (con.cells)
-    memset(con.cells, 0, (size_t)con.cols * (size_t)con.rows);
-  con.cx = con.cy = 0;
-  mark_dirty(con.win.x, con.win.y, outer_w_dims(con.win.client_w),
-             outer_h_dims(con.win.client_h, con.win.status_h));
+  fill_dwords(con->win.surface,
+              (size_t)con->win.client_w * (size_t)con->win.client_h,
+              CONSOLE_BG);
+  if (con->cells)
+    memset(con->cells, 0, (size_t)con->cols * (size_t)con->rows);
+  con->cx = con->cy = 0;
+  mark_dirty(con->win.x, con->win.y, outer_w_dims(con->win.client_w),
+             outer_h_dims(con->win.client_h, con->win.status_h));
 }
 
-static void con_save(void) {
-  if (!con.win.in_use || !con.win.surface || !con_backing)
+static void con_save(struct console *con) {
+  if (!con->win.in_use || !con->win.surface || !con->backing)
     return;
-  size_t pixels = (size_t)con.win.client_w * (size_t)con.win.client_h;
-  memcpy(con_backing, con.win.surface, pixels * 4);
-  if (con.cells && con_saved_cells)
-    memcpy(con_saved_cells, con.cells, (size_t)con.cols * (size_t)con.rows);
-  con_saved_cx = con.cx;
-  con_saved_cy = con.cy;
-  con_saved_valid = 1;
+  size_t pixels = (size_t)con->win.client_w * (size_t)con->win.client_h;
+  memcpy(con->backing, con->win.surface, pixels * 4);
+  if (con->cells && con->saved_cells)
+    memcpy(con->saved_cells, con->cells, (size_t)con->cols * (size_t)con->rows);
+  con->saved_cx = con->cx;
+  con->saved_cy = con->cy;
+  con->saved_valid = 1;
 }
 
-static void con_restore(void) {
-  if (!con.win.in_use || !con.win.surface || !con_backing || !con_saved_valid)
+static void con_restore(struct console *con) {
+  if (!con->win.in_use || !con->win.surface || !con->backing ||
+      !con->saved_valid)
     return;
-  size_t pixels = (size_t)con.win.client_w * (size_t)con.win.client_h;
-  memcpy(con.win.surface, con_backing, pixels * 4);
-  if (con.cells && con_saved_cells)
-    memcpy(con.cells, con_saved_cells, (size_t)con.cols * (size_t)con.rows);
-  con.cx = con_saved_cx;
-  con.cy = con_saved_cy;
-  con_saved_valid = 0;
-  mark_dirty(con.win.x, con.win.y, outer_w_dims(con.win.client_w),
-             outer_h_dims(con.win.client_h, con.win.status_h));
+  size_t pixels = (size_t)con->win.client_w * (size_t)con->win.client_h;
+  memcpy(con->win.surface, con->backing, pixels * 4);
+  if (con->cells && con->saved_cells)
+    memcpy(con->cells, con->saved_cells, (size_t)con->cols * (size_t)con->rows);
+  con->cx = con->saved_cx;
+  con->cy = con->saved_cy;
+  con->saved_valid = 0;
+  mark_dirty(con->win.x, con->win.y, outer_w_dims(con->win.client_w),
+             outer_h_dims(con->win.client_h, con->win.status_h));
 }
 
-static void con_putc(char c) {
-  if (!con.win.in_use)
+static void con_putc(struct console *con, char c) {
+  if (!con->win.in_use)
     return;
 
   /* Control characters (newline, scroll, clear, etc.) call con_redraw/con_wipe,
    * which already mark the whole console dirty. We only need to mark the
    * specific cell for standard printable characters. */
   if (c == '\n') {
-    con_newline();
+    con_newline(con);
     return;
   }
   if (c == '\r') {
-    con.cx = 0;
+    con->cx = 0;
     return;
   }
   if (c == '\b') {
-    if (con.cx > 0) {
-      con.cx--;
-      con.cells[con.cy * con.cols + con.cx] = 0;
-      con_draw_glyph(con.cx, con.cy, ' ');
+    if (con->cx > 0) {
+      con->cx--;
+      con->cells[con->cy * con->cols + con->cx] = 0;
+      con_draw_glyph(con, con->cx, con->cy, ' ');
 
       /* Mark only the erased cell dirty */
-      int cell_x = con.win.x + BORDER_PX + con.cx * con_cell_w();
-      int cell_y = con.win.y + TITLEBAR_PX + con.cy * con_cell_h();
-      mark_dirty(cell_x, cell_y, con_cell_w(), con_cell_h());
+      int cell_x = con->win.x + BORDER_PX + con->cx * con_cell_w(con);
+      int cell_y = con->win.y + TITLEBAR_PX + con->cy * con_cell_h(con);
+      mark_dirty(cell_x, cell_y, con_cell_w(con), con_cell_h(con));
     }
     return;
   }
   if (c == '\t') {
     do {
-      con_putc(' ');
-    } while (con.cx % 8);
+      con_putc(con, ' ');
+    } while (con->cx % 8);
     return;
   }
   if (c == TTY_CTRL_CLEAR) {
-    con_wipe();
+    con_wipe(con);
     return;
   }
   if (c == TTY_CTRL_PUSH) {
-    con_save();
-    con_wipe();
+    con_save(con);
+    con_wipe(con);
     return;
   }
   if (c == TTY_CTRL_POP) {
-    con_restore();
+    con_restore(con);
     return;
   }
   if (c == TTY_CTRL_ZOOM_IN) {
-    con_set_scale(con.scale + 1);
+    con_set_scale(con, con->scale + 1);
     return;
   }
   if (c == TTY_CTRL_ZOOM_OUT) {
-    con_set_scale(con.scale - 1);
+    con_set_scale(con, con->scale - 1);
     return;
   }
 
-  if (con.cx >= con.cols)
-    con_newline();
+  if (con->cx >= con->cols)
+    con_newline(con);
 
-  con.cells[con.cy * con.cols + con.cx] = c;
-  con_draw_glyph(con.cx, con.cy, c);
+  con->cells[con->cy * con->cols + con->cx] = c;
+  con_draw_glyph(con, con->cx, con->cy, c);
 
-  int cell_x = con.win.x + BORDER_PX + con.cx * con_cell_w();
-  int cell_y = con.win.y + TITLEBAR_PX + con.cy * con_cell_h();
-  mark_dirty(cell_x, cell_y, con_cell_w(), con_cell_h());
+  int cell_x = con->win.x + BORDER_PX + con->cx * con_cell_w(con);
+  int cell_y = con->win.y + TITLEBAR_PX + con->cy * con_cell_h(con);
+  mark_dirty(cell_x, cell_y, con_cell_w(con), con_cell_h(con));
 
-  con.cx++;
+  con->cx++;
 }
 
-static void con_alloc(void) {
+/* Where console `slot` opens. Slot 0 takes the whole desktop inset by a
+ * margin, which is what the one built-in console always did. Later slots
+ * cascade down-right and shrink to match, so a second shell never opens
+ * exactly on top of the first and both stay fully on screen. */
+static void console_geometry(int slot, int *out_x, int *out_y, int *out_cw,
+                             int *out_ch) {
   int margin = 16;
-  int cw = fb_w - 2 * margin - 2 * BORDER_PX;
-  int ch = fb_h - 2 * margin - TITLEBAR_PX - BORDER_PX - TASKBAR_PX;
+  int step = slot * (TITLEBAR_PX + 8);
+  *out_x = margin + step;
+  *out_y = margin + step;
+  *out_cw = fb_w - 2 * margin - 2 * BORDER_PX - step;
+  *out_ch = fb_h - 2 * margin - TITLEBAR_PX - BORDER_PX - TASKBAR_PX - step;
+}
+
+/* Surface, alt-screen backing buffer and cell grid for one console. All four
+ * allocations succeed together or none of them do: a console holding two of
+ * the four would draw into a grid that does not match its surface. */
+static int con_alloc_buffers(struct console *con, int slot) {
+  int x, y, cw, ch;
+  console_geometry(slot, &x, &y, &cw, &ch);
   if (cw < 64 || ch < 64)
-    return;
+    return -1;
+
   con_try_load_ttf();
-  con.scale = CON_SCALE_MIN;
-  int cell_w = con_cell_w();
-  int cell_h = con_cell_h();
+  con->scale = CON_SCALE_MIN;
+  int cell_w = con_cell_w(con);
+  int cell_h = con_cell_h(con);
   cw = (cw / cell_w) * cell_w;
   ch = (ch / cell_h) * cell_h;
 
   size_t pixel_bytes = (size_t)cw * (size_t)ch * 4;
   size_t pages = (pixel_bytes + 4095) / 4096;
-  con.win.surface = (uint32_t *)aligned_page_alloc(pages, &con.win.surface_raw);
-  if (!con.win.surface)
-    return;
 
-  fill_dwords(con.win.surface, (size_t)cw * (size_t)ch, CONSOLE_BG);
+  void *surface_raw = 0, *backing_raw = 0;
+  uint32_t *surface = (uint32_t *)aligned_page_alloc(pages, &surface_raw);
+  uint32_t *backing = (uint32_t *)aligned_page_alloc(pages, &backing_raw);
+  int cols = cw / cell_w;
+  int rows = ch / cell_h;
+  char *cells = (char *)malloc((size_t)cols * (size_t)rows);
+  char *saved_cells = (char *)malloc((size_t)cols * (size_t)rows);
 
-  /* Alt-screen backing buffer , same dimensions as the live surface so
-   * memcpy push/pop is unconditional. Allocated once; never freed. */
-  con_backing = (uint32_t *)aligned_page_alloc(pages, &con_backing_raw);
-  if (!con_backing) {
-    free(con.win.surface_raw);
-    con.win.surface_raw = 0;
-    con.win.surface = 0;
-    return;
+  if (!surface || !backing || !cells || !saved_cells) {
+    if (surface_raw)
+      free(surface_raw);
+    if (backing_raw)
+      free(backing_raw);
+    if (cells)
+      free(cells);
+    if (saved_cells)
+      free(saved_cells);
+    return -1;
   }
 
+  fill_dwords(surface, (size_t)cw * (size_t)ch, CONSOLE_BG);
+  memset(cells, 0, (size_t)cols * (size_t)rows);
+  memset(saved_cells, 0, (size_t)cols * (size_t)rows);
   build_con_glyph_lut();
-  con.win.client_w = cw;
-  con.win.client_h = ch;
-  con.cols = cw / cell_w;
-  con.rows = ch / cell_h;
-  con.cells = (char *)malloc((size_t)con.cols * (size_t)con.rows);
-  con_saved_cells = (char *)malloc((size_t)con.cols * (size_t)con.rows);
-  if (!con.cells || !con_saved_cells) {
-    if (con.cells)
-      free(con.cells);
-    if (con_saved_cells)
-      free(con_saved_cells);
-    free(con_backing_raw);
-    free(con.win.surface_raw);
-    con.cells = 0;
-    con_saved_cells = 0;
-    con_backing = 0;
-    con_backing_raw = 0;
-    con.win.surface = 0;
-    con.win.surface_raw = 0;
+
+  con->win.surface = surface;
+  con->win.surface_raw = surface_raw;
+  con->backing = backing;
+  con->backing_raw = backing_raw;
+  con->cells = cells;
+  con->saved_cells = saved_cells;
+  con->win.client_w = cw;
+  con->win.client_h = ch;
+  con->win.x = x;
+  con->win.y = y;
+  con->cols = cols;
+  con->rows = rows;
+  con->cx = con->cy = 0;
+  con->saved_valid = 0;
+  return 0;
+}
+
+static void con_set_title(struct console *con, int slot) {
+  /* "Console", "Console 2", "Console 3" , the first one keeps the bare name
+   * it has always had, so the common single-console desktop is unchanged. */
+  char buf[16];
+  int n = 0;
+  const char *base = "Console";
+  while (base[n]) {
+    buf[n] = base[n];
+    n++;
+  }
+  if (slot > 0) {
+    buf[n++] = ' ';
+    buf[n++] = (char)('1' + slot);
+  }
+  buf[n] = 0;
+
+  size_t i = 0;
+  while (buf[i] && i < sizeof(con->win.title) - 1) {
+    con->win.title[i] = buf[i];
+    i++;
+  }
+  con->win.title[i] = 0;
+}
+
+/* Open a console window with a shell running on its own TTY channel.
+ * Returns NULL when every slot is taken, when a channel cannot be claimed,
+ * or when the shell fails to start , in which case nothing is left behind.
+ *
+ * Slot 0 is the exception at the channel level only: it mirrors TTY_KERNEL,
+ * which the kernel opened at boot and never closes, so there is nothing to
+ * allocate or release for it. It still gets its own shell from here, which
+ * is what makes closing it possible , winman knows the pid. */
+static struct console *console_open(void) {
+  int slot = -1;
+  for (int i = 0; i < CON_MAX; i++) {
+    if (!cons[i].win.in_use) {
+      slot = i;
+      break;
+    }
+  }
+  if (slot < 0) {
+    printf("winman: console open refused , all %d slots in use\n", CON_MAX);
+    return 0;
+  }
+
+  struct console *con = &cons[slot];
+  memset(con, 0, sizeof(*con));
+
+  int tty = 0;
+  if (slot > 0) {
+    long claimed = tty_alloc();
+    if (claimed < 0) {
+      printf("winman: console open failed , no free TTY channel\n");
+      return 0;
+    }
+    tty = (int)claimed;
+  }
+
+  if (con_alloc_buffers(con, slot) != 0) {
+    printf("winman: console open failed , surface alloc\n");
+    if (slot > 0)
+      tty_free(tty);
+    memset(con, 0, sizeof(*con));
+    return 0;
+  }
+
+  con->tty = tty;
+  con->win.handle = HANDLE_CONSOLE_BASE + slot;
+  con_set_title(con, slot);
+  con->win.in_use = 1;
+
+  char *argv[] = {(char *)"sh", 0};
+  long pid = tty_spawn("/system/bin/sh.elf", argv, tty);
+  if (pid <= 0) {
+    printf("winman: console open failed , sh spawn returned %ld\n", pid);
+    con->win.in_use = 0;
+    free(con->win.surface_raw);
+    free(con->backing_raw);
+    free(con->cells);
+    free(con->saved_cells);
+    if (slot > 0)
+      tty_free(tty);
+    memset(con, 0, sizeof(*con));
+    return 0;
+  }
+  con->pid = (int)pid;
+
+  z_bring_to_front(con->win.handle);
+  focused_handle = con->win.handle;
+  mark_dirty(con->win.x, con->win.y, outer_w_dims(con->win.client_w),
+             outer_h_dims(con->win.client_h, con->win.status_h));
+  printf("winman: console slot=%d tty=%d sh pid=%d\n", slot, tty, con->pid);
+  return con;
+}
+
+/* Tear a console down: kill its shell, give the channel back, free the
+ * buffers, drop the window. Safe to call for a console whose shell is
+ * already gone , that is how the reaper closes one the user exited out of. */
+static void console_close(struct console *con) {
+  if (!con || !con->win.in_use)
+    return;
+
+  int slot = (int)(con - cons);
+  int handle = con->win.handle;
+  int old_x = con->win.x, old_y = con->win.y;
+  int old_ow = outer_w_dims(con->win.client_w);
+  int old_oh = outer_h_dims(con->win.client_h, con->win.status_h);
+
+  if (con->pid > 0)
+    kill(con->pid, 9);
+  /* Channel 0 belongs to the kernel; the others were ours to hand back. */
+  if (con->tty > 0)
+    tty_free(con->tty);
+
+  if (con->win.surface_raw)
+    free(con->win.surface_raw);
+  if (con->backing_raw)
+    free(con->backing_raw);
+  if (con->cells)
+    free(con->cells);
+  if (con->saved_cells)
+    free(con->saved_cells);
+
+  memset(con, 0, sizeof(*con));
+  z_remove(handle);
+
+  if (close_pending_handle == handle)
+    close_pending_handle = -1;
+
+  if (focused_handle == handle) {
+    focused_handle = z_count > 0 ? z_order[0] : 0;
+    mark_dirty(0, taskbar_y(), fb_w, TASKBAR_PX);
+  }
+
+  mark_dirty(old_x, old_y, old_ow, old_oh);
+  printf("winman: console slot=%d closed\n", slot);
+}
+
+/* True for the shell binary, whatever directory it was found in. */
+static int path_is_shell(const char *path) {
+  if (!path)
+    return 0;
+  const char *base = path;
+  for (const char *p = path; *p; p++) {
+    if (*p == '/' || *p == '\\')
+      base = p + 1;
+  }
+  return strcmp(base, "sh.elf") == 0;
+}
+
+/* Launch from the desktop or the start menu. A shell is not an ordinary
+ * spawn: without a console of its own it inherits winman's TTY channel,
+ * so its output lands in whichever console winman is attached to and it
+ * never receives a keystroke. Give it a window and a channel instead. */
+static void launch_program(const char *path) {
+  if (path_is_shell(path)) {
+    console_open();
     return;
   }
-  memset(con.cells, 0, (size_t)con.cols * (size_t)con.rows);
-  memset(con_saved_cells, 0, (size_t)con.cols * (size_t)con.rows);
-  con.win.x = margin;
-  con.win.y = margin;
-  con.cx = con.cy = 0;
-  const char *t = "Console";
-  size_t tn = 0;
-  while (t[tn] && tn < sizeof(con.win.title) - 1) {
-    con.win.title[tn] = t[tn];
-    tn++;
-  }
-  con.win.title[tn] = 0;
-  con.win.in_use = 1;
-  z_bring_to_front(HANDLE_CONSOLE);
+
+  char *argv[] = {(char *)path, 0};
+  long pid = spawn(path, argv);
+  if (pid > 0)
+    printf("winman: spawned %s pid %ld\n", path, pid);
+  else
+    printf("winman: failed to spawn %s (code %ld)\n", path, pid);
 }
 
 static void drain_tty_into_console(void) {
   char buf[256];
-  long n;
-  while ((n = tty_drain(buf, sizeof(buf))) > 0) {
-    for (long i = 0; i < n; i++)
-      con_putc(buf[i]);
-    if (n < (long)sizeof(buf))
-      break;
+  for (int i = 0; i < CON_MAX; i++) {
+    struct console *con = &cons[i];
+    if (!con->win.in_use)
+      continue;
+    long n;
+    while ((n = tty_drain(con->tty, buf, sizeof(buf))) > 0) {
+      for (long j = 0; j < n; j++)
+        con_putc(con, buf[j]);
+      if (n < (long)sizeof(buf))
+        break;
+    }
   }
 }
 
@@ -1822,20 +2036,21 @@ static void blit_icon(int dst_x, int dst_y, int dst_w, int dst_h, int src_w,
 static void compose_handle(int handle) {
   if (is_minimized(handle))
     return;
-  if (handle == HANDLE_CONSOLE) {
-    if (!con.win.in_use)
+  if (is_console_handle(handle)) {
+    struct console *con = con_for_handle(handle);
+    if (!con)
       return;
-    if (!clip_hits(con.win.x, con.win.y, outer_w_dims(con.win.client_w),
-                   outer_h_dims(con.win.client_h, con.win.status_h)))
+    if (!clip_hits(con->win.x, con->win.y, outer_w_dims(con->win.client_w),
+                   outer_h_dims(con->win.client_h, con->win.status_h)))
       return;
     struct window cw = {0};
-    cw.x = con.win.x;
-    cw.y = con.win.y;
-    cw.client_w = con.win.client_w;
-    cw.client_h = con.win.client_h;
-    cw.surface = con.win.surface;
-    memcpy(cw.title, con.win.title, sizeof(cw.title) - 1);
-    draw_chrome(&cw, focused_handle == HANDLE_CONSOLE);
+    cw.x = con->win.x;
+    cw.y = con->win.y;
+    cw.client_w = con->win.client_w;
+    cw.client_h = con->win.client_h;
+    cw.surface = con->win.surface;
+    memcpy(cw.title, con->win.title, sizeof(cw.title) - 1);
+    draw_chrome(&cw, focused_handle == handle);
     blit_surface(&cw);
     return;
   }
@@ -2209,9 +2424,16 @@ static struct window *find_slot(void) {
   return 0;
 }
 
+/* Consoles answer here too: their `struct window` carries the same geometry,
+ * title and min/max state, so drag, minimize, maximize and the taskbar work
+ * on them without a second code path. What is console-specific , the cell
+ * grid, the TTY channel, the shell pid , lives in struct console and is
+ * reached through con_for_handle instead. */
 static struct window *find_handle(int handle) {
-  if (handle == HANDLE_CONSOLE)
-    return con.win.in_use ? &con.win : NULL;
+  if (is_console_handle(handle)) {
+    struct console *c = con_for_handle(handle);
+    return c ? &c->win : NULL;
+  }
 
   for (int i = 0; i < MAX_WINDOWS; i++) {
     if (windows[i].in_use && windows[i].handle == handle)
@@ -2311,6 +2533,15 @@ static int window_count(void) {
  * client_pid == 0 , used by the reaper for dead-client cleanup, since the
  * dead owner can no longer issue the destroy itself. */
 static void handle_destroy_internal(int handle, int client_pid_check) {
+  /* Consoles look like windows to find_handle, but tearing one down that way
+   * would free the surface and leave the cell grid, the alt-screen buffer and
+   * the TTY channel behind. Route them to the path that knows about those. */
+  struct console *c = con_for_handle(handle);
+  if (c) {
+    console_close(c);
+    return;
+  }
+
   struct window *w = find_handle(handle);
   if (!w) {
     printf("winman: handle_destroy_internal: no window found for handle=%d\n",
@@ -2487,6 +2718,30 @@ static void reap_dead_windows(void) {
       int h = windows[i].handle;
       printf("winman: reap window %d owner_pid=%d (dead)\n", h, owner);
       handle_destroy_internal(h, 0);
+    }
+  }
+
+  /* Same for consoles: a shell that ran off the end of `exit` leaves a window
+   * nothing can type into. Unlike client windows, a missing row is treated as
+   * dead here , the shell is winman's own child, so if it is not in the table
+   * it is gone, and there is no IPC_PEER_EXITED for a process that never
+   * registered as a WM client. */
+  for (int i = 0; i < CON_MAX; i++) {
+    struct console *c = &cons[i];
+    if (!c->win.in_use || c->pid <= 0)
+      continue;
+    int terminal = 1;
+    for (long j = 0; j < n; j++) {
+      if (procs[j].pid == c->pid) {
+        int s = procs[j].state;
+        terminal = (s == PROC_STATE_ZOMBIE || s == PROC_STATE_DEAD);
+        break;
+      }
+    }
+    if (terminal) {
+      printf("winman: reap console slot=%d sh pid=%d (exited)\n", i, c->pid);
+      c->pid = 0; /* already gone , console_close has nothing to kill */
+      console_close(c);
     }
   }
 }
@@ -2932,6 +3187,18 @@ static void forward_input(int target_pid, int win_handle, const struct msg *m) {
 }
 
 static void request_window_close(int handle, u32 now) {
+  /* A console has no client to ask politely: winman owns the window and
+   * started the shell, so the close button acts immediately. Nothing here
+   * needs the kernel to stay alive , the init task no longer waits on any
+   * shell , so closing the last one is allowed. */
+  struct console *c = con_for_handle(handle);
+  if (c) {
+    printf("winman: close button -> console handle=%d tty=%d\n", handle,
+           c->tty);
+    console_close(c);
+    return;
+  }
+
   struct window *w = find_handle(handle);
   if (!w || w->owner_pid <= 0)
     return;
@@ -3169,19 +3436,7 @@ static void pump_input(void) {
         int clicked_item = relative_y / START_MENU_ITEM_H;
 
         if (clicked_item >= 0 && clicked_item < start_menu_count) {
-          struct start_entry *prog = &start_menu_programs[clicked_item];
-
-          char *argv[] = {(char *)prog->path, 0};
-
-          long pid = spawn(prog->path, argv);
-
-          if (pid > 0) {
-            printf("winman: start menu spawned pid %ld\n", pid);
-          } else {
-            printf("winman: failed to spawn %s "
-                   "(code %ld)\n",
-                   prog->path, pid);
-          }
+          launch_program(start_menu_programs[clicked_item].path);
         }
 
         start_menu_open = false;
@@ -3285,9 +3540,9 @@ static void pump_input(void) {
         mark_dirty(0, taskbar_y(), fb_w, TASKBAR_PX);
 
         /*
-         * The console consumes its input locally.
+         * A console consumes its input locally.
          */
-        if (hit_handle == HANDLE_CONSOLE)
+        if (is_console_handle(hit_handle))
           forward = 0;
       }
 
@@ -3318,19 +3573,7 @@ static void pump_input(void) {
 
           if (clicked_icon == last_icon_clicked &&
               current_tick - last_icon_click_tick < DOUBLE_CLICK_TICKS) {
-            struct program *prog = &desktop_icons[clicked_icon].program;
-
-            char *argv[] = {(char *)prog->path, 0};
-
-            long pid = spawn(prog->path, argv);
-
-            if (pid > 0) {
-              printf("winman: spawned pid %ld\n", pid);
-            } else {
-              printf("winman: failed to spawn %s "
-                     "(code %ld)\n",
-                     prog->path, pid);
-            }
+            launch_program(desktop_icons[clicked_icon].program.path);
 
             /*
              * Prevent a triple-click from launching twice.
@@ -3373,10 +3616,9 @@ static void pump_input(void) {
         alt_pressed = 1;
       }
 
-      // Alt+F4 closes the focused window
-      if (m.param == KEY_F4 && alt_pressed && focused_handle > 0 &&
-          focused_handle != HANDLE_CONSOLE) {
-
+      /* Alt+F4 closes the focused window, console or client. It used to skip
+       * the console because there was no way to close one; now there is. */
+      if (m.param == KEY_F4 && alt_pressed && focused_handle > 0) {
         request_window_close(focused_handle, (u32)m.when);
         forward = 0; // Consume the event
         continue;
@@ -3410,9 +3652,13 @@ static void pump_input(void) {
 
     /*
      * Console input is handled by the window manager rather than
-     * forwarded to a client process.
+     * forwarded to a client process. Which console gets the keystroke is
+     * decided by focus, and it is injected into that console's own TTY
+     * channel , which is what keeps two shells from reading each other's
+     * typing.
      */
-    if (focused_handle == HANDLE_CONSOLE) {
+    struct console *focus_con = con_focused();
+    if (focus_con) {
       if (m.type == MSG_KEY_DOWN) {
         if (m.param == KEY_LEFTSHIFT || m.param == KEY_RIGHTSHIFT) {
           shift_held = 1;
@@ -3424,19 +3670,20 @@ static void pump_input(void) {
         /* Console zoom lives here rather than in the shell. The shell now
          * receives ASCII from the TTY ring and never sees a raw keycode, so
          * it cannot spot Ctrl+-/Ctrl+= any more , and winman owns the
-         * console's scale anyway. */
+         * console's scale anyway. Scale is per-console: zooming one leaves
+         * the others alone. */
         if (ctrl_held && m.param == KEY_MINUS) {
-          con_set_scale(con.scale - 1);
+          con_set_scale(focus_con, focus_con->scale - 1);
           continue;
         }
         if (ctrl_held && m.param == KEY_EQUAL) {
-          con_set_scale(con.scale + 1);
+          con_set_scale(focus_con, focus_con->scale + 1);
           continue;
         }
 
         char c = keymap_to_ascii(m.param, shift_held);
         if (c != 0) {
-          tty_inject(c); // Push to the kernel's TTY input buffer!
+          tty_inject(focus_con->tty, c);
         }
       } else if (m.type == MSG_KEY_UP) {
         if (m.param == KEY_LEFTSHIFT || m.param == KEY_RIGHTSHIFT) {
@@ -3506,9 +3753,16 @@ int main(int argc, char **argv) {
 
   memset(windows, 0, sizeof(windows));
   focused_handle = 0;
-  con_alloc();
-  printf("winman: con.win.in_use=%d surface=%p w=%d h=%d\n", con.win.in_use,
-         (void *)con.win.surface, con.win.client_w, con.win.client_h);
+  /* The boot console. Its shell is started from here rather than by the
+   * kernel so winman owns the pid and the close button has something to
+   * kill; the kernel only runs a shell of its own when no WM registers. */
+  struct console *boot_con = console_open();
+  if (boot_con)
+    printf("winman: console tty=%d surface=%p w=%d h=%d\n", boot_con->tty,
+           (void *)boot_con->win.surface, boot_con->win.client_w,
+           boot_con->win.client_h);
+  else
+    printf("winman: boot console failed to open\n");
   present_full_desktop();
   printf("winman: ready\n");
 
@@ -3575,7 +3829,8 @@ int main(int argc, char **argv) {
     {
       static uint64_t taskbar_sig_prev;
       uint64_t sig = (uint64_t)(uint32_t)focused_handle * 1000003u;
-      sig = sig * 31 + (uint64_t)con.win.in_use;
+      for (int i = 0; i < CON_MAX; i++)
+        sig = sig * 31 + (uint64_t)cons[i].win.in_use;
       for (int i = 0; i < MAX_WINDOWS; i++) {
         sig = sig * 31 + (uint64_t)windows[i].in_use;
         if (!windows[i].in_use)

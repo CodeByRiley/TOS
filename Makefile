@@ -41,13 +41,45 @@ USERSPACE_CLEAN ?= 0
 BUILD_DOOM ?= 0
 BUILD_NETSURF ?= 0
 
+# The disk image, the ISO and clean need POSIX tools that Windows does not
+# ship and MSYS2 does not package: xorriso, mtools, and a GRUB install with
+# i386-pc modules. Sitting in an MSYS2 or Git Bash shell is therefore not a
+# reason to run them natively , that shell has bash but not the tools, and it
+# picks up whatever unrelated grub happens to be on PATH, which fails much
+# later with things like "kernel.img is miscompiled". On Windows these steps
+# always go through WSL.
+#
+# TOS_NATIVE_TOOLS=1 opts out, for a shell that genuinely has all of them.
+TOS_NATIVE_TOOLS ?= 0
+
+# mingw32-make sees OS=Windows_NT; MSYS2's own make does not, but it does set
+# MSYSTEM. Either one means we are on Windows and the tools live in WSL.
+windows_host := $(if $(filter Windows_NT,$(OS))$(MSYSTEM),1,)
+
+ifeq ($(windows_host),1)
+  ifeq ($(TOS_NATIVE_TOOLS),1)
+    run_linux = $(1)
+  else
+    # wslpath only understands drive-letter paths, so mingw32-make's
+    # C:/... CURDIR works and MSYS2 make's /c/... one silently converts to
+    # the wrong directory. Catch that here rather than in a build 40 lines on.
+    ifeq ($(findstring :,$(CURDIR)),)
+      $(error CURDIR is "$(CURDIR)", which wslpath cannot convert. Build with \
+        mingw32-make (MinGW), not MSYS2's own make)
+    endif
+    run_linux = wsl bash -lc "cd \"\$$(wslpath -a '$(CURDIR)')\" && $(1)"
+  endif
+else
+  # Linux: native.
+  run_linux = $(1)
+endif
+
 nvidia_firmware_files := $(wildcard rootfs/firmware/*.bin)
 # The .hd scripts live in the HolyD submodule now, not under rootfs.
 holyd_sample_files := $(wildcard userspace/bin/holyd/tests/*.hd) \
                       $(wildcard userspace/bin/holyd/samples/*.hd)
 icon_files := $(wildcard rootfs/system/icons/*.bmp)
 rootfs_payload_files := rootfs/readme.txt \
-                        rootfs/music/beethoven.wav \
                         $(icon_files) \
                         $(holyd_sample_files) \
                         $(nvidia_firmware_files)
@@ -104,8 +136,7 @@ endif
 $(disk_img): userspace tools/create_disk.sh $(rootfs_payload_files) | $(kernel_bin)
 	@echo "Creating Disk Image"
 	@mkdir -p $(dir $@)
-	@wsl bash -lc "cd \"\$$(wslpath '$(CURDIR)')\" && \
-		bash tools/create_disk.sh"
+	@$(call run_linux,bash tools/create_disk.sh)
 	@test -s "$@"
 	@echo "Disk Image Finished"
 
@@ -145,28 +176,7 @@ $(kernel_bin): $(kernel_object_files) $(symtab_gen_obj) $(linker_script)
 
 .PHONY: build-x86_64
 build-x86_64: $(kernel_bin) $(disk_img)
-	mkdir -p $(iso_dir)/boot/grub && \
-	cp $(kernel_bin) $(iso_dir)/boot/kernel.bin && \
-	cp $(disk_img)   $(iso_dir)/boot/disk.img && \
-	wsl bash -c "\
-		cd \$$(wslpath '$(CURDIR)') && \
-		grub-mkimage \
-			-d /usr/lib/grub/i386-pc \
-			-O i386-pc \
-			-o /tmp/core.img \
-			-p /boot/grub \
-			biosdisk iso9660 normal multiboot2 all_video && \
-		cat /usr/lib/grub/i386-pc/cdboot.img /tmp/core.img \
-			> $(iso_dir)/boot/grub/eltorito.img && \
-		xorriso -as mkisofs \
-			-b boot/grub/eltorito.img \
-			-no-emul-boot \
-			-boot-load-size 4 \
-			-boot-info-table \
-			-o dist/x86_64/kernel.iso \
-			$(iso_dir) \
-	"
-
+	$(call run_linux,bash tools/build_iso.sh)
 
 # --- host + QEMU regression suites -------------------------------------
 HOST_CC ?= gcc
@@ -292,6 +302,11 @@ test-qemu-heavy: build-x86_64
 
 test-heavy: test-host test-qemu-heavy
 
+clean_paths := build dist \
+	$(iso_dir)/boot/kernel.bin \
+	$(iso_dir)/boot/disk.img \
+	$(iso_dir)/boot/grub/eltorito.img
+
 clean:
-	wsl bash -c "cd \$$(wslpath '$(CURDIR)') && rm -rf build dist $(iso_dir)/boot/kernel.bin $(iso_dir)/boot/disk.img $(iso_dir)/boot/grub/eltorito.img"
+	$(call run_linux,rm -rf $(clean_paths))
 	$(MAKE) -C userspace clean

@@ -122,8 +122,8 @@ long sleep_ticks(unsigned long n) {
     return syscall1(SYS_SLEEP_TICKS, (sysarg_t)n);
 }
 
-void tty_inject(char c) {
-    syscall1(SYS_TTY_INJECT, (long)c);
+void tty_inject(int tty, char c) {
+    syscall2(SYS_TTY_INJECT, (sysarg_t)tty, (sysarg_t)(long)c);
 }
 
 long tty_read_input(char *buf, unsigned long max) {
@@ -188,8 +188,18 @@ long shmem_unshare(int target_pid, uint64_t in_va, long npages) {
 long wm_register(void) { return syscall0(SYS_WM_REGISTER); }
 long wm_pid(void)      { return syscall0(SYS_WM_PID); }
 
-long tty_drain(char *buf, long max) {
-    return syscall2(SYS_TTY_DRAIN, (sysarg_t)(uintptr_t)buf, max);
+long tty_drain(int tty, char *buf, long max) {
+    return syscall3(SYS_TTY_DRAIN, (sysarg_t)tty, (sysarg_t)(uintptr_t)buf,
+                    (sysarg_t)max);
+}
+
+long tty_alloc(void) { return syscall0(SYS_TTY_ALLOC); }
+
+long tty_free(int tty) { return syscall1(SYS_TTY_FREE, (sysarg_t)tty); }
+
+long tty_spawn(const char *path, char *const argv[], int tty) {
+    return syscall3(SYS_TTY_SPAWN, (sysarg_t)(uintptr_t)path,
+                    (sysarg_t)(uintptr_t)argv, (sysarg_t)tty);
 }
 
 /* Diagnostics */

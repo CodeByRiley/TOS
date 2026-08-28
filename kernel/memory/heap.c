@@ -33,6 +33,16 @@ struct block {
     struct block *prev;
 };
 
+/* Payload alignment rests on three things: HEAP_BASE and every grown region
+ * start being page-aligned, the header being a multiple of the alignment,
+ * and kmalloc rounding every request up to it. Break any one and payloads
+ * drift out of alignment. */
+#define KMALLOC_ALIGN 16
+_Static_assert(sizeof(struct block) % KMALLOC_ALIGN == 0,
+               "block header must not break payload alignment");
+_Static_assert(HEAP_BASE % KMALLOC_ALIGN == 0,
+               "heap base must not break payload alignment");
+
 static struct block *head = 0;
 static struct block *tail = 0;
 static uint64_t      heap_end = 0;
@@ -92,7 +102,11 @@ static void list_append(uint64_t region_start, size_t region_bytes) {
 
 void *kmalloc(size_t size) {
     if (size == 0) return 0;                       /* zero-byte: politely decline */
-    size = (size + 7) & ~7ULL;                     /* 8-byte align */
+    /* 16, not 8: x86-64's widest scalar alignment, and the alignment fxsave
+     * and fxrstor fault without. struct task_context carries an ALIGNED(16)
+     * fxstate and is allocated from here, so an 8-byte-aligned payload would
+     * fault on the first context switch into that task. */
+    size = (size + (KMALLOC_ALIGN - 1)) & ~(size_t)(KMALLOC_ALIGN - 1);
 
     for (;;) {
         for (struct block *b = head; b; b = b->next) {

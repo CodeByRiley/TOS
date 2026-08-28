@@ -130,9 +130,18 @@ _Static_assert(sizeof(struct stat_user) == 24,
 #define SYS_SHMEM_UNSHARE  1045
 #define SYS_WM_REGISTER    1065
 #define SYS_WM_PID         1066
-#define SYS_TTY_DRAIN      1067
-#define SYS_TTY_INJECT     1068
-#define SYS_TTY_READ_INPUT 1069
+/* DRAIN and INJECT name their channel explicitly: winman mirrors several at
+ * once and is itself on none of them. READ_INPUT has no index because stdin
+ * is always the caller's own channel. */
+#define SYS_TTY_DRAIN      1067  /* (idx, buf, max)  */
+#define SYS_TTY_INJECT     1068  /* (idx, ch)        */
+#define SYS_TTY_READ_INPUT 1069  /* (buf, max)       */
+/* Console multiplexing. ALLOC claims a spare channel, FREE gives it back,
+ * and SPAWN starts a program already bound to one , a plain SYS_SPAWN would
+ * inherit winman's channel instead. */
+#define SYS_TTY_ALLOC      1070  /* ()               */
+#define SYS_TTY_FREE       1071  /* (idx)            */
+#define SYS_TTY_SPAWN      1072  /* (path, argv, idx)*/
 /* Diagnostics */
 /* Consumed by userspace btop. */
 #define SYS_PROC_LIST      1022

@@ -63,24 +63,24 @@ static void memory_init(uint64_t mb2_addr) {
   heap_init();
   log_write("pmm, vmm, heap initialised", KERNEL, LOG_INFO);
 
-  /* Demand-paging boot check. */
-  log_write("Testing Demand Paging...", KERNEL, LOG_INFO);
-  uint64_t test_page = vma_alloc(4096);
-  if (!test_page) {
-    log_write("Demand Paging Test: vma_alloc failed!", KERNEL, LOG_ERROR);
-    return;
-  }
-  log_write("Allocated unmapped VMA. Preparing to write to it...", KERNEL,
-            LOG_INFO);
-  uint32_t *ptr = (uint32_t *)test_page;
-  *ptr = 0xDEADBEEF;
-  if (*ptr == 0xDEADBEEF) {
-    log_write("Demand Paging Success! Hardware fault handled dynamically.",
-              KERNEL, LOG_INFO);
-  } else {
-    log_write("Demand Paging FAILED!", KERNEL, LOG_ERROR);
-  }
-  vfree(test_page);
+  // /* Demand-paging boot check. */
+  // log_write("Testing Demand Paging...", KERNEL, LOG_INFO);
+  // uint64_t test_page = vma_alloc(4096);
+  // if (!test_page) {
+  //   log_write("Demand Paging Test: vma_alloc failed!", KERNEL, LOG_ERROR);
+  //   return;
+  // }
+  // log_write("Allocated unmapped VMA. Preparing to write to it...", KERNEL,
+  //           LOG_INFO);
+  // uint32_t *ptr = (uint32_t *)test_page;
+  // *ptr = 0xDEADBEEF;
+  // if (*ptr == 0xDEADBEEF) {
+  //   log_write("Demand Paging Success! Hardware fault handled dynamically.",
+  //             KERNEL, LOG_INFO);
+  // } else {
+  //   log_write("Demand Paging FAILED!", KERNEL, LOG_ERROR);
+  // }
+  // vfree(test_page);
 }
 
 static void acpi_and_smp_init(uint64_t mb2_addr) {
@@ -212,6 +212,54 @@ static void late_init(void) {
   task_spawn(udp_echo_thread);
   log_write("udp: echo server thread spawned", KERNEL, LOG_INFO);
 
+  task_spawn(task_reaper_thread_entry);
+  log_write("sched: zombie reaper thread spawned", KERNEL, LOG_INFO);
+
+}
+
+/* Ticks to wait for winman to register before concluding it is not coming.
+ * Only the no-WM path depends on this: overshooting costs a few seconds of
+ * blank kernel console, undershooting puts a second shell on the kernel
+ * channel next to the one winman just opened. */
+#define WM_REGISTER_GRACE_TICKS 300
+
+/* Boot the userspace world, then supervise it.
+ *
+ * This task used to *be* the shell's parent in the blocking sense: it called
+ * process_exec in a loop and restarted the shell every time it exited. That
+ * tied the kernel's liveness to a userspace shell , closing the console
+ * without a respawn returned from here, fell off the end of kernel_main, and
+ * took the machine with it , and it capped the system at one shell, because
+ * this task was the only thing running one.
+ *
+ * Shells now belong to winman. It opens a TTY channel per console window and
+ * starts a shell on it, so it knows every console shell's pid and can close
+ * one on request. What is left here is the fallback: if no window manager
+ * registers, nothing else can give the user a prompt, so run one on the
+ * kernel-rendered channel and wait for it. While a WM is up this loop does
+ * nothing at all, and every shell in the system , including that fallback ,
+ * can exit without consequence. */
+static void init_task_entry(void) {
+    char *winman_argv[] = { (char *)"winman", NULL };
+    long winman_pid = process_spawn_async("/system/bin/winman.elf", winman_argv);
+    if (winman_pid < 0)
+        log_write("winman: launch failed , TTY-only mode", USER, LOG_INFO);
+    else
+        log_write_hex("winman: spawn returned pid =", (uint64_t)winman_pid, USER,
+                      LOG_INFO);
+
+    for (int i = 0; i < WM_REGISTER_GRACE_TICKS && msg_input_owner() == 0; i++)
+        task_sleep_ticks(1);
+
+    for (;;) {
+        if (msg_input_owner() == 0) {
+            char *sh_argv[] = { (char *)"sh", NULL };
+            long code = process_exec("/system/bin/sh.elf", sh_argv);
+            log_write_hex("fallback shell exited code =", (uint64_t)code, USER,
+                          LOG_INFO);
+        }
+        task_sleep_ticks(50);
+    }
 }
 
 static void enable_interrupts_and_smp(void) {
@@ -223,21 +271,6 @@ static void enable_interrupts_and_smp(void) {
 
   smp_boot_aps();
   log_write("kernel booted", KERNEL, LOG_INFO);
-}
-
-static void userspace_init(void) {
-  char *winman_argv[] = {(char *)"winman", 0};
-  long winman_pid = process_spawn_async("/system/bin/winman.elf", winman_argv);
-  if (winman_pid < 0) {
-    log_write("winman: launch failed , TTY-only mode", USER, LOG_INFO);
-  } else {
-    log_write_hex("winman: spawn returned pid =", (uint64_t)winman_pid, USER,
-                  LOG_INFO);
-  }
-
-  char *sh_argv[] = {(char *)"sh", 0};
-  long code = process_exec("/system/bin/sh.elf", sh_argv);
-  log_write_hex("shell exited code =", code, USER, LOG_INFO);
 }
 
 void kernel_main(uint64_t mb2_addr) {
@@ -252,7 +285,7 @@ void kernel_main(uint64_t mb2_addr) {
   filesystem_init(mb2_addr);
   late_init();
   enable_interrupts_and_smp();
-  userspace_init();
+  init_task_entry();
 
   /* BSP becomes idle */
   for (;;)

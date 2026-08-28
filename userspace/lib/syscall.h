@@ -92,6 +92,9 @@
 #define SYS_TTY_DRAIN        	 1067
 #define SYS_TTY_INJECT         1068
 #define SYS_TTY_READ_INPUT     1069
+#define SYS_TTY_ALLOC          1070
+#define SYS_TTY_FREE           1071
+#define SYS_TTY_SPAWN          1072
 #define SYS_PROC_LIST        	 1022
 #define SYS_MEM_STATS        	 1023
 #define SYS_CON_PUSH         	 1062
@@ -477,10 +480,14 @@ long  get_pid(void);
  * `ts` points at a struct timespec. Prefer clock_gettime() from
  * <include/time.h>, which types the argument properly. */
 long  sys_clock_gettime(int clock_id, void *ts);
-void  tty_inject(char c);
+/* Push one ASCII character into TTY channel `tty`'s input ring. Winman
+ * calls this for the console window that has focus; the channel is named
+ * explicitly because winman itself is on a different one. */
+void  tty_inject(int tty, char c);
 
-/* Drain characters winman injected for the console owner. Non-blocking;
- * returns the count read, 0 when nothing is queued.
+/* Drain characters winman injected for this process's console. Non-blocking;
+ * returns the count read, 0 when nothing is queued. The channel is implicit:
+ * it is always the caller's own (task->tty, inherited at spawn).
  *
  * Console applications must read here rather than poll kbd_poll: the raw
  * keyboard ring is filled for every keystroke regardless of window focus,
@@ -511,7 +518,20 @@ long  shmem_unshare(int target_pid, uint64_t in_va, long npages);
  * winman is allowed to crash and respawn. */
 long  wm_register(void);
 long  wm_pid(void);
-long  tty_drain(char *buf, long max);
+/* Read TTY channel `tty`'s pending output. Winman calls this once per live
+ * console window per frame and renders what comes back. */
+long  tty_drain(int tty, char *buf, long max);
+
+/* Console multiplexing, restricted to the process holding the WM role.
+ *
+ * tty_alloc claims a spare channel (1..TTY_MAX-1) and returns its index, or
+ * -1 when they are all taken. tty_free gives one back and discards whatever
+ * was still buffered on it. tty_spawn is spawn() with the child pinned to a
+ * channel rather than inheriting the caller's , without it a shell launched
+ * by winman would land on winman's own console. */
+long  tty_alloc(void);
+long  tty_free(int tty);
+long  tty_spawn(const char *path, char *const argv[], int tty);
 
 /* Diagnostics. proc_list returns the number of rows filled; mem_stats
  * returns 0 on success. */

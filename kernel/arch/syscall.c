@@ -208,16 +208,16 @@ static long sys_futex_wait(uint32_t *addr, uint32_t expected);
 static long sys_futex_wake(uint32_t *addr);
 
 static int fd_alloc_for(struct task *t, struct fat_file *f) {
-  if (!t || !f)
+  if (!t || !t->files || !f)
     return -1;
   for (int i = 3; i < TASK_MAX_FDS; i++) {
-    if (!t->fds[i]) {
-      t->fds[i] = f;
-      t->fd_is_dir[i] = 0;
-      t->fd_dir_index[i] = 0;
-      t->fd_dir_path[i][0] = 0;
-      return i;
-    }
+    struct task_fd *slot = &t->files->fd[i];
+    if (slot->type != TASK_FD_UNUSED)
+      continue;
+    task_fd_clear(slot); /* drops any directory path left by the last owner */
+    slot->type = TASK_FD_FILE;
+    slot->file = f;
+    return i;
   }
   return -1;
 }
@@ -234,7 +234,7 @@ static long sys_fb_info(struct fb_info *out) {
 
 static long sys_fb_map(void) {
   struct task *t = task_current();
-  if (t && t->user_pml4) {
+  if (task_pml4(t)) {
     int owner = msg_input_owner();
     if (owner != t->pid) {
       if (t->input_owner_restore_pid < 0) {
@@ -250,13 +250,13 @@ static long sys_fb_map(void) {
      making a resize that merely exposes more rows proportional to the growth. */
   uint32_t pages = framebuffer_num_pages();
   uint32_t first_missing = 0;
-  if (t && t->user_pml4) {
+  if (task_pml4(t)) {
     uint32_t lo = 0, hi = pages;
     while (lo < hi) {
       uint32_t mid = lo + (hi - lo) / 2;
       uint64_t va = USER_FB_BASE + (uint64_t)mid * 4096;
       uint64_t phys = framebuffer_phys_for_page(mid);
-      if (phys && vmm_translate_in(t->user_pml4, va) == phys)
+      if (phys && vmm_translate_in(t->vm->user_pml4, va) == phys)
         lo = mid + 1;
       else
         hi = mid;
@@ -297,22 +297,22 @@ static int fb_source_span(uint64_t source_pitch, uint64_t *source_bytes) {
 static long sys_fb_register(const void *pixels, uint64_t source_pitch) {
   struct task *task = task_current();
   uint64_t source_bytes;
-  if (!task || !task->user_pml4 || msg_input_owner() != task->pid || !pixels ||
+  if (!task_pml4(task) || msg_input_owner() != task->pid || !pixels ||
       fb_source_span(source_pitch, &source_bytes) != 0 ||
       !user_buffer_ok(pixels, source_bytes, 0)) {
     return -1;
   }
 
-  return framebuffer_register_user(task->user_pml4, task->pid,
+  return framebuffer_register_user(task->vm->user_pml4, task->pid,
                                    (uint64_t)(uintptr_t)pixels,
                                    (uint32_t)source_pitch, source_bytes);
 }
 
 static long sys_fb_unregister(void) {
   struct task *task = task_current();
-  if (!task || !task->user_pml4)
+  if (!task_pml4(task))
     return -1;
-  return framebuffer_unregister_user(task->user_pml4, task->pid);
+  return framebuffer_unregister_user(task->vm->user_pml4, task->pid);
 }
 
 static long sys_fb_present(const void *pixels, uint64_t source_pitch,
@@ -320,14 +320,14 @@ static long sys_fb_present(const void *pixels, uint64_t source_pitch,
                            uint64_t rect_count) {
   struct task *task = task_current();
   uint64_t source_bytes;
-  if (!task || !task->user_pml4 || msg_input_owner() != task->pid || !pixels ||
+  if (!task_pml4(task) || msg_input_owner() != task->pid || !pixels ||
       !user_rects || rect_count == 0 || rect_count > FB_PRESENT_MAX_RECTS ||
       fb_source_span(source_pitch, &source_bytes) != 0) {
     return -1;
   }
 
   int registered = framebuffer_user_buffer_registered(
-      task->user_pml4, task->pid, (uint64_t)(uintptr_t)pixels,
+      task->vm->user_pml4, task->pid, (uint64_t)(uintptr_t)pixels,
       (uint32_t)source_pitch, source_bytes);
   if ((!registered && !user_buffer_ok(pixels, source_bytes, 0)) ||
       !user_buffer_ok(user_rects, rect_count * sizeof(*user_rects), 0)) {
@@ -339,7 +339,7 @@ static long sys_fb_present(const void *pixels, uint64_t source_pitch,
    * stable until the synchronous copy completes. */
   struct fb_rect rects[FB_PRESENT_MAX_RECTS];
   memcpy(rects, user_rects, rect_count * sizeof(*user_rects));
-  return framebuffer_present_user(task->user_pml4, task->pid,
+  return framebuffer_present_user(task->vm->user_pml4, task->pid,
                                   (uint64_t)(uintptr_t)pixels,
                                   (uint32_t)source_pitch, rects,
                                   (uint32_t)rect_count);
@@ -377,10 +377,10 @@ static int user_range_ok(uint64_t base, uint64_t bytes) {
 }
 
 static struct user_vma *user_vma_at(struct task *task, uint64_t address) {
-  if (!task)
+  if (!task || !task->vm)
     return 0;
   for (int i = 0; i < MAX_USER_VMAS; i++) {
-    struct user_vma *vma = &task->vmas[i];
+    struct user_vma *vma = &task->vm->vmas[i];
     if (vma->used && address >= vma->start && address < vma->end)
       return vma;
   }
@@ -388,11 +388,11 @@ static struct user_vma *user_vma_at(struct task *task, uint64_t address) {
 }
 
 static struct user_vma *user_vma_free_slot(struct task *task) {
-  if (!task)
+  if (!task || !task->vm)
     return 0;
   for (int i = 0; i < MAX_USER_VMAS; i++) {
-    if (!task->vmas[i].used)
-      return &task->vmas[i];
+    if (!task->vm->vmas[i].used)
+      return &task->vm->vmas[i];
   }
   return 0;
 }
@@ -401,7 +401,9 @@ static struct user_vma *user_vma_free_slot(struct task *task) {
  * Kernel copy-in/copy-out must not rely on taking a nested supervisor-mode
  * page fault halfway through a filesystem or display operation. */
 static int user_page_prepare(struct task *task, uint64_t page, int writable) {
-  uint64_t entry = vmm_entry_in(task->user_pml4, page);
+  if (!task || !task->vm)
+    return 0;
+  uint64_t entry = vmm_entry_in(task->vm->user_pml4, page);
   if (entry) {
     return (entry & VMM_USER) && (!writable || (entry & VMM_WRITE));
   }
@@ -416,7 +418,7 @@ static int user_page_prepare(struct task *task, uint64_t page, int writable) {
   if (!phys)
     return 0;
   memset((void *)phys_to_virt(phys), 0, 4096);
-  if (vmm_map_in(task->user_pml4, page, phys, vma->pte_flags) != 0) {
+  if (vmm_map_in(task->vm->user_pml4, page, phys, vma->pte_flags) != 0) {
     pmm_free_frame(phys);
     return 0;
   }
@@ -433,7 +435,7 @@ static int user_buffer_ok(const void *pointer, uint64_t bytes, int writable) {
   struct task *task = task_current();
   uint64_t base = (uint64_t)(uintptr_t)pointer;
   uint64_t end = base + bytes;
-  if (!task || !task->user_pml4 || base < USER_VA_MIN || end < base)
+  if (!task_pml4(task) || base < USER_VA_MIN || end < base)
     return 0;
 
   int in_general_range = end <= USER_VA_MAX;
@@ -455,14 +457,16 @@ static int user_buffer_ok(const void *pointer, uint64_t bytes, int writable) {
 
 /* Every page in the range must be free for a MAP_FIXED to succeed. */
 static int range_is_unmapped(struct task *t, uint64_t base, uint64_t bytes) {
+  if (!t || !t->vm)
+    return 0;
   uint64_t end = base + bytes;
   for (int i = 0; i < MAX_USER_VMAS; i++) {
-    struct user_vma *vma = &t->vmas[i];
+    struct user_vma *vma = &t->vm->vmas[i];
     if (vma->used && base < vma->end && end > vma->start)
       return 0;
   }
   for (uint64_t off = 0; off < bytes; off += 4096) {
-    if (vmm_translate_in(t->user_pml4, base + off))
+    if (vmm_translate_in(t->vm->user_pml4, base + off))
       return 0;
   }
   return 1;
@@ -472,9 +476,11 @@ static int range_is_unmapped(struct task *t, uint64_t base, uint64_t bytes) {
  * hole, including duplicate munmap calls, so arena_alloc can never return two
  * overlapping ranges from stale free-list entries. */
 static void hole_add(struct task *t, uint64_t base, uint64_t bytes) {
+  if (!t || !t->vm)
+    return;
   uint64_t end = base + bytes;
   for (int i = 0; i < TASK_MMAP_HOLES; i++) {
-    struct vm_hole *h = &t->mmap_holes[i];
+    struct vm_hole *h = &t->vm->mmap_holes[i];
     if (!h->len)
       continue;
     uint64_t hole_end = h->base + h->len;
@@ -491,9 +497,9 @@ static void hole_add(struct task *t, uint64_t base, uint64_t bytes) {
   }
 
   for (int i = 0; i < TASK_MMAP_HOLES; i++) {
-    if (!t->mmap_holes[i].len) {
-      t->mmap_holes[i].base = base;
-      t->mmap_holes[i].len = end - base;
+    if (!t->vm->mmap_holes[i].len) {
+      t->vm->mmap_holes[i].base = base;
+      t->vm->mmap_holes[i].len = end - base;
       return;
     }
   }
@@ -505,8 +511,10 @@ static void hole_add(struct task *t, uint64_t base, uint64_t bytes) {
  * arena is exhausted , never a valid address, since the arena starts well
  * above USER_VA_MIN. */
 static uint64_t arena_alloc(struct task *t, uint64_t bytes) {
+  if (!t || !t->vm)
+    return 0;
   for (int i = 0; i < TASK_MMAP_HOLES; i++) {
-    struct vm_hole *h = &t->mmap_holes[i];
+    struct vm_hole *h = &t->vm->mmap_holes[i];
     if (!h->len || h->len < bytes)
       continue;
     uint64_t base = h->base;
@@ -515,10 +523,10 @@ static uint64_t arena_alloc(struct task *t, uint64_t bytes) {
     return base;
   }
 
-  uint64_t base = t->mmap_next_va;
+  uint64_t base = t->vm->mmap_next_va;
   if (base + bytes < base || base + bytes > USER_MMAP_LIMIT)
     return 0;
-  t->mmap_next_va = base + bytes;
+  t->vm->mmap_next_va = base + bytes;
   return base;
 }
 
@@ -527,9 +535,11 @@ static uint64_t arena_alloc(struct task *t, uint64_t bytes) {
  * before changing anything so munmap remains all-or-nothing for metadata. */
 static int user_vma_remove_range(struct task *task, uint64_t start,
                                  uint64_t end) {
+  if (!task || !task->vm)
+    return -1;
   struct user_vma *split = 0;
   for (int i = 0; i < MAX_USER_VMAS; i++) {
-    struct user_vma *vma = &task->vmas[i];
+    struct user_vma *vma = &task->vm->vmas[i];
     if (vma->used && start > vma->start && end < vma->end) {
       split = user_vma_free_slot(task);
       if (!split)
@@ -539,7 +549,7 @@ static int user_vma_remove_range(struct task *task, uint64_t start,
   }
 
   for (int i = 0; i < MAX_USER_VMAS; i++) {
-    struct user_vma *vma = &task->vmas[i];
+    struct user_vma *vma = &task->vm->vmas[i];
     if (!vma->used || start >= vma->end || end <= vma->start)
       continue;
 
@@ -575,7 +585,7 @@ static long sys_mmap(uint64_t addr, long len, int prot, int flags) {
     return -1;
 
   struct task *t = task_current();
-  if (!t || !t->user_pml4)
+  if (!task_pml4(t))
     return -1;
 
   uint64_t pte_flags = prot_to_pte(prot);
@@ -620,14 +630,14 @@ static long sys_mprotect(uint64_t addr, long len, int prot) {
   if (len <= 0 || (addr & 4095)) return -1;
 
   struct task *t = task_current();
-  if (!t || !t->user_pml4) return -1;
+  if (!task_pml4(t)) return -1;
 
   uint64_t pte_flags = prot_to_pte(prot);
   if (!pte_flags) return -1;
 
   uint64_t bytes = ((uint64_t)len + 4095) & ~4095ULL;
   if (bytes < (uint64_t)len || !user_range_ok(addr, bytes)) return -1;
-  if (framebuffer_registered_range_overlaps(t->user_pml4, addr, bytes)) return -1;
+  if (framebuffer_registered_range_overlaps(t->vm->user_pml4, addr, bytes)) return -1;
 
   for (uint64_t off = 0; off < bytes; off += 4096) {
     if (!user_page_prepare(t, addr + off, 0))
@@ -635,7 +645,7 @@ static long sys_mprotect(uint64_t addr, long len, int prot) {
   }
 
   for (uint64_t off = 0; off < bytes; off += 4096) {
-    if (vmm_protect_in(t->user_pml4, addr + off, pte_flags) != 0)
+    if (vmm_protect_in(t->vm->user_pml4, addr + off, pte_flags) != 0)
       return -1;
   }
 
@@ -659,7 +669,7 @@ static long sys_munmap(uint64_t addr, long len) {
     return -1;
 
   struct task *t = task_current();
-  if (!t || !t->user_pml4)
+  if (!task_pml4(t))
     return -1;
 
   uint64_t bytes = ((uint64_t)len + 4095) & ~4095ULL;
@@ -671,10 +681,10 @@ static long sys_munmap(uint64_t addr, long len) {
 
   for (uint64_t off = 0; off < bytes; off += 4096) {
     uint64_t va = addr + off;
-    uint64_t entry = vmm_entry_in(t->user_pml4, va);
+    uint64_t entry = vmm_entry_in(t->vm->user_pml4, va);
     if (!entry)
       continue;
-    vmm_unmap_in(t->user_pml4, va);
+    vmm_unmap_in(t->vm->user_pml4, va);
     /* Mask to bits 12-51: VMM_NX lives at bit 63, so stripping the low
      * flag bits alone would hand the PMM an address with it still set. */
     if (!(entry & VMM_SHARED))
@@ -751,7 +761,7 @@ int syscall_prepare_return(struct syscall_frame *f) {
   const uint64_t user_cs = GDT_USER_CODE | GDT_RPL_USER;
   const uint64_t user_ss = GDT_USER_DATA | GDT_RPL_USER;
 
-  if (!f || !task || !task->user_pml4)
+  if (!f || !task_pml4(task))
     return -1;
   if (f->cs != user_cs || f->ss != user_ss)
     return -1;
@@ -759,7 +769,7 @@ int syscall_prepare_return(struct syscall_frame *f) {
       !user_return_address_ok(f->rsp, 1))
     return -1;
 
-  uint64_t rip_entry = vmm_entry_in(task->user_pml4, f->rip);
+  uint64_t rip_entry = vmm_entry_in(task->vm->user_pml4, f->rip);
   if (!(rip_entry & VMM_PRESENT) || !(rip_entry & VMM_USER) ||
       (rip_entry & VMM_NX))
     return -1;
@@ -769,12 +779,20 @@ int syscall_prepare_return(struct syscall_frame *f) {
   return 0;
 }
 
+/* The console a process talks to. Inherited from its parent at spawn, so a
+ * shell and everything it launches share one terminal, and two shells never
+ * share theirs. */
+static int caller_tty(void) {
+  struct task *t = task_current();
+  return t ? t->tty : TTY_KERNEL;
+}
+
 static long sys_write(long fd, const void *buf, long n) {
   if (!buf || n < 0 || !user_buffer_ok(buf, (uint64_t)n, 0))
     return -1;
 
   if (fd == 1 || fd == 2) {
-    tty_write((const char *)buf, (size_t)n);
+    tty_write_ch(caller_tty(), (const char *)buf, (size_t)n);
 
     const char *p = (const char *)buf;
     for (long i = 0; i < n; i++)
@@ -784,10 +802,10 @@ static long sys_write(long fd, const void *buf, long n) {
   }
 
   struct task *t = task_current();
-  if (!t || fd < 3 || fd >= TASK_MAX_FDS || !t->fds[fd] || t->fd_is_dir[fd])
+  if (!t || fd < 3 || fd >= TASK_MAX_FDS || !task_fd_file(t, fd) || task_fd_is_dir(t, fd))
     return -1;
 
-  return (long)fat_write(t->fds[fd], buf, (size_t)n);
+  return (long)fat_write(task_fd_file(t, fd), buf, (size_t)n);
 }
 
 // #endregion FILE I/O HANDLERS
@@ -861,20 +879,22 @@ static long sys_mouse_pos(int32_t *x, int32_t *y, uint8_t *buttons) {
 static long sys_con_write(const char *buf, long n) {
   if (!buf || n < 0)
     return -1;
-  tty_write(buf, (size_t)n);
+  tty_write_ch(caller_tty(), buf, (size_t)n);
   return n;
 }
 
 static long sys_con_clear(void) {
-  tty_clear();
+  tty_clear_ch(caller_tty());
   return 0;
 }
 
-static long sys_con_push(void) { return tty_push(); }
+static long sys_con_push(void) { return tty_push_ch(caller_tty()); }
 
-static long sys_con_pop(void) { return tty_pop(); }
+static long sys_con_pop(void) { return tty_pop_ch(caller_tty()); }
 
-static long sys_con_zoom(long delta) { return tty_zoom((int)delta); }
+static long sys_con_zoom(long delta) {
+  return tty_zoom_ch(caller_tty(), (int)delta);
+}
 
 static long sys_sleep_ticks(long n) {
   if (n <= 0) {
@@ -992,35 +1012,35 @@ static long sys_shmem_share(long target_pid, uint64_t in_va, long npages,
     return -1;
 
   struct task *me = task_current();
-  if (!me || !me->user_pml4)
+  if (!task_pml4(me))
     return -1;
 
   struct task *target = task_find((int)target_pid);
-  if (!target || !target->user_pml4)
+  if (!task_pml4(target))
     return -1;
-  if (target->shmem_next_va == 0)
-    target->shmem_next_va = 0x0000000080000000ULL; /* defensive */
+  if (target->vm->shmem_next_va == 0)
+    target->vm->shmem_next_va = 0x0000000080000000ULL; /* defensive */
 
-  uint64_t target_va = target->shmem_next_va;
+  uint64_t target_va = target->vm->shmem_next_va;
   /* VMM_SHARED marks the PTE so the target's exit cleanup (free_user_pml4)
    * skips pmm_free_frame on these phys frames , the caller still owns them. */
   uint64_t flags = VMM_PRESENT | VMM_WRITE | VMM_USER | VMM_SHARED;
 
   for (long i = 0; i < npages; i++) {
-    uint64_t phys = vmm_translate_in(me->user_pml4, in_va + (uint64_t)i * 4096);
+    uint64_t phys = vmm_translate_in(me->vm->user_pml4, in_va + (uint64_t)i * 4096);
     if (!phys)
       return -1;
-    if (vmm_map_in(target->user_pml4, target_va + (uint64_t)i * 4096, phys,
+    if (vmm_map_in(target->vm->user_pml4, target_va + (uint64_t)i * 4096, phys,
                    flags) != 0) {
       return -1;
     }
   }
 
-  target->shmem_next_va = target_va + (uint64_t)npages * 4096;
+  target->vm->shmem_next_va = target_va + (uint64_t)npages * 4096;
   /* These frames are now co-mapped by a task that will not free them.
    * Recording that keeps the automatic reaper from releasing our address
    * space underneath the receiver. */
-  me->shmem_shared_out += (int)npages;
+  me->vm->shmem_shared_out += (int)npages;
   *out_target_va = target_va;
   return 0;
 }
@@ -1044,11 +1064,11 @@ static long sys_shmem_unshare(long target_pid, uint64_t va, long npages) {
     return -1;
 
   struct task *me = task_current();
-  if (!me || !me->user_pml4)
+  if (!task_pml4(me))
     return -1;
 
   struct task *target = task_find((int)target_pid);
-  if (!target || !target->user_pml4)
+  if (!task_pml4(target))
     return -1;
 
   /* Confine the range to the shmem arena, where sys_shmem_share places
@@ -1073,10 +1093,10 @@ static long sys_shmem_unshare(long target_pid, uint64_t va, long npages) {
   long removed = 0;
   for (long i = 0; i < npages; i++) {
     uint64_t target_va = va + (uint64_t)i * 4096;
-    uint64_t entry = vmm_entry_in(target->user_pml4, target_va);
+    uint64_t entry = vmm_entry_in(target->vm->user_pml4, target_va);
     if (!entry || !(entry & VMM_SHARED))
       continue;
-    vmm_unmap_in(target->user_pml4, target_va);
+    vmm_unmap_in(target->vm->user_pml4, target_va);
     removed++;
   }
 
@@ -1085,10 +1105,10 @@ static long sys_shmem_unshare(long target_pid, uint64_t va, long npages) {
    * frames" and declines to reap; a count driven negative would let this
    * task be reaped and free_user_pml4 hand those frames back to the PMM
    * while a receiver was still writing through them. */
-  if (removed >= me->shmem_shared_out)
-    me->shmem_shared_out = 0;
+  if (removed >= me->vm->shmem_shared_out)
+    me->vm->shmem_shared_out = 0;
   else
-    me->shmem_shared_out -= (int)removed;
+    me->vm->shmem_shared_out -= (int)removed;
 
   return 0;
 }
@@ -1110,10 +1130,45 @@ static long sys_wm_register(void) {
 
 static long sys_wm_pid(void) { return msg_input_owner(); }
 
-static long sys_tty_drain(char *out, long max) {
+static long sys_tty_drain(long idx, char *out, long max) {
   if (!out || max <= 0)
     return 0;
-  return (long)tty_drain(out, (size_t)max);
+  return (long)tty_drain_ch((int)idx, out, (size_t)max);
+}
+
+/* Claim a spare console channel. Only the process holding the WM role gets
+ * one: channels are a fixed, small resource and the window manager is the
+ * only thing that can render one, so handing them to arbitrary callers just
+ * lets any program exhaust the table. */
+static long sys_tty_alloc(void) {
+  struct task *t = task_current();
+  if (!t || t->pid != msg_input_owner())
+    return -1;
+  return tty_alloc();
+}
+
+static long sys_tty_free(long idx) {
+  struct task *t = task_current();
+  if (!t || t->pid != msg_input_owner())
+    return -1;
+  if (idx <= TTY_KERNEL || idx >= TTY_MAX)
+    return -1;
+  tty_release((int)idx);
+  return 0;
+}
+
+static long sys_tty_spawn(const char *path, char *const argv[], long idx) {
+  struct task *t = task_current();
+  if (!t || t->pid != msg_input_owner())
+    return -1;
+  if (!path)
+    return -1;
+
+  char resolved[TASK_CWD_MAX];
+  if (resolve_path(path, resolved, sizeof(resolved)) != 0)
+    return -1;
+
+  return process_spawn_async_tty(resolved, argv, (int)idx);
 }
 
 /* Drain the keystrokes winman has injected for whoever owns the console.
@@ -1126,7 +1181,7 @@ static long sys_tty_drain(char *out, long max) {
 static long sys_tty_read_input(char *out, long max) {
   if (!out || max <= 0)
     return 0;
-  return (long)tty_read_input(out, (size_t)max);
+  return (long)tty_read_input_ch(caller_tty(), out, (size_t)max);
 }
 
 /* Block-wait `seconds` using PIT ticks (10ms each at 100Hz). */
@@ -1239,7 +1294,7 @@ static int resolve_path(const char *path, char *out, size_t max) {
     return -1;
 
   struct task *t = task_current();
-  if (!t)
+  if (!t || !t->files)
     return -1;
 
   size_t len = 0;
@@ -1249,8 +1304,8 @@ static int resolve_path(const char *path, char *out, size_t max) {
 
   if (!path_is_absolute(path)) {
     len = 0;
-    while (len < max - 1 && t->cwd[len]) {
-      out[len] = t->cwd[len];
+    while (len < max - 1 && t->files->cwd[len]) {
+      out[len] = t->files->cwd[len];
       len++;
     }
     out[len] = 0;
@@ -1304,14 +1359,18 @@ static long sys_open(const char *path, int flags) {
       kfree(f);
       return -1;
     }
-    t->fd_is_dir[fd] = 1;
-    t->fd_dir_index[fd] = 0;
-    size_t i = 0;
-    while (i < sizeof(t->fd_dir_path[fd]) - 1 && resolved[i]) {
-      t->fd_dir_path[fd][i] = resolved[i];
-      i++;
+    /* Directory fds carry their path so readdir and stat can re-walk it.
+     * That path is now a per-slot allocation rather than a fixed 256-byte
+     * array in every one of the 32 slots, so it can fail. */
+    struct task_fd *slot = task_fd_slot(t, fd);
+    if (task_fd_set_dir_path(slot, resolved) != 0) {
+      task_fd_clear(slot);
+      kfree(f);
+      return -1;
     }
-    t->fd_dir_path[fd][i] = 0;
+    slot->type = TASK_FD_DIRECTORY;
+    slot->file = f;
+    slot->dir_index = 0;
     return fd;
   }
 
@@ -1370,10 +1429,10 @@ static long sys_read(int fd, void *buf, size_t n) {
   }
 
   /* Handle normal files (fd >= 3) */
-  if (!t || fd < 3 || fd >= TASK_MAX_FDS || !t->fds[fd] || t->fd_is_dir[fd])
+  if (!t || fd < 3 || fd >= TASK_MAX_FDS || !task_fd_file(t, fd) || task_fd_is_dir(t, fd))
     return -1;
 
-  struct fat_file *file = t->fds[fd];
+  struct fat_file *file = task_fd_file(t, fd);
   size_t available = file->pos < file->size ? file->size - file->pos : 0;
   size_t transfer = n < available ? n : available;
   if (!user_buffer_ok(buf, transfer, 1))
@@ -1383,10 +1442,10 @@ static long sys_read(int fd, void *buf, size_t n) {
 
 // static long sys_read(int fd, void *buf, size_t n) {
 //   struct task *t = task_current();
-//   if (!t || fd < 3 || fd >= TASK_MAX_FDS || !t->fds[fd] || t->fd_is_dir[fd])
+//   if (!t || fd < 3 || fd >= TASK_MAX_FDS || !task_fd_file(t, fd) || task_fd_is_dir(t, fd))
 //     return -1;
 
-//   struct fat_file *file = t->fds[fd];
+//   struct fat_file *file = task_fd_file(t, fd);
 //   size_t available = file->pos < file->size ? file->size - file->pos : 0;
 //   size_t transfer = n < available ? n : available;
 //   if (!user_buffer_ok(buf, transfer, 1))
@@ -1460,16 +1519,16 @@ static long sys_stat(const char *path, struct linux_kstat *out) {
  * this fd , and keeps working if the name is unlinked while open. */
 static long sys_fstat_raw(int fd, struct stat_user *out) {
   struct task *t = task_current();
-  if (!t || !out || fd < 3 || fd >= TASK_MAX_FDS || !t->fds[fd])
+  if (!t || !out || fd < 3 || fd >= TASK_MAX_FDS || !task_fd_file(t, fd))
     return -1;
 
-  if (t->fd_is_dir[fd]) {
+  if (task_fd_is_dir(t, fd)) {
     struct fat_stat fs;
-    if (fat_stat(t->fd_dir_path[fd], &fs) != 0)
+    if (fat_stat(task_fd_slot(t, fd)->dir_path, &fs) != 0)
       return -1;
     stat_from_fat(&fs, out);
   } else {
-    struct fat_file *f = t->fds[fd];
+    struct fat_file *f = task_fd_file(t, fd);
     out->size = f->size;
     out->first_cluster = f->first_cluster;
     out->type = STAT_TYPE_FILE;
@@ -1480,17 +1539,17 @@ static long sys_fstat_raw(int fd, struct stat_user *out) {
 
 static long sys_fstat(int fd, struct linux_kstat *out) {
   struct task *t = task_current();
-  if (!t || !out || fd < 3 || fd >= TASK_MAX_FDS || !t->fds[fd])
+  if (!t || !out || fd < 3 || fd >= TASK_MAX_FDS || !task_fd_file(t, fd))
     return -1;
   if (!user_buffer_ok(out, sizeof(*out), 1))
     return -1;
 
   struct fat_stat fs;
-  if (t->fd_is_dir[fd]) {
-    if (fat_stat(t->fd_dir_path[fd], &fs) != 0)
+  if (task_fd_is_dir(t, fd)) {
+    if (fat_stat(task_fd_slot(t, fd)->dir_path, &fs) != 0)
       return -1;
   } else {
-    struct fat_file *f = t->fds[fd];
+    struct fat_file *f = task_fd_file(t, fd);
     fs.size = f->size;
     fs.first_cluster = f->first_cluster;
     fs.attr = 0;
@@ -1502,9 +1561,9 @@ static long sys_fstat(int fd, struct linux_kstat *out) {
 
 static long sys_lseek(int fd, long off, int whence) {
   struct task *t = task_current();
-  if (!t || fd < 3 || fd >= TASK_MAX_FDS || !t->fds[fd] || t->fd_is_dir[fd])
+  if (!t || fd < 3 || fd >= TASK_MAX_FDS || !task_fd_file(t, fd) || task_fd_is_dir(t, fd))
     return -1;
-  struct fat_file *f = t->fds[fd];
+  struct fat_file *f = task_fd_file(t, fd);
   uint32_t target;
   if (whence == 0)
     target = (uint32_t)off;
@@ -1523,29 +1582,31 @@ static long sys_close(int fd) {
   if (!t || fd < 3 || fd >= TASK_MAX_FDS)
     return -1;
 
+  struct task_fd *slot = task_fd_slot(t, fd);
+  if (!slot)
+    return -1;
+
   /* Sockets share this fd space, so close() has to release them or every
    * socket a program opens outlives it. */
-  if (t->fd_sockets[fd]) {
-    socket_close(t->fd_sockets[fd]);
-    t->fd_sockets[fd] = 0;
+  if (slot->type == TASK_FD_SOCKET) {
+    socket_close(slot->socket);
+    task_fd_clear(slot);
     return 0;
   }
 
-  if (!t->fds[fd])
+  if (slot->type != TASK_FD_FILE && slot->type != TASK_FD_DIRECTORY)
     return -1;
-  kfree(t->fds[fd]);
-  t->fds[fd] = 0;
-  t->fd_is_dir[fd] = 0;
-  t->fd_dir_index[fd] = 0;
-  t->fd_dir_path[fd][0] = 0;
+  if (slot->file)
+    kfree(slot->file);
+  task_fd_clear(slot);
   return 0;
 }
 
 static long sys_readdir(uint32_t *index, char *buf, size_t n) {
   struct task *t = task_current();
-  if (!t)
+  if (!t || !t->files)
     return -1;
-  return fat_read_dir(t->cwd, index, buf, n);
+  return fat_read_dir(t->files->cwd, index, buf, n);
 }
 
 static long sys_readdir_path(const char *path, uint32_t *index, char *buf,
@@ -1562,7 +1623,7 @@ static size_t align_up_size(size_t value, size_t alignment) {
 
 static long sys_getdents64(int fd, void *user_buf, size_t len) {
   struct task *t = task_current();
-  if (!t || fd < 3 || fd >= TASK_MAX_FDS || !t->fds[fd] || !t->fd_is_dir[fd])
+  if (!t || fd < 3 || fd >= TASK_MAX_FDS || !task_fd_is_dir(t, fd))
     return -1;
   if (!user_buf || len < sizeof(struct linux_dirent64) + 2 ||
       !user_buffer_ok(user_buf, len, 1))
@@ -1571,10 +1632,10 @@ static long sys_getdents64(int fd, void *user_buf, size_t len) {
   char *out = (char *)user_buf;
   size_t written = 0;
   for (;;) {
-    uint32_t before = t->fd_dir_index[fd];
+    uint32_t before = task_fd_slot(t, fd)->dir_index;
     char name[FAT_DIRENT_MAX];
     int is_dir = 0;
-    long rc = fat_read_dir_one(t->fd_dir_path[fd], &t->fd_dir_index[fd],
+    long rc = fat_read_dir_one(task_fd_slot(t, fd)->dir_path, &task_fd_slot(t, fd)->dir_index,
                                name, sizeof(name), &is_dir);
     if (rc == 0)
       break;
@@ -1585,14 +1646,14 @@ static long sys_getdents64(int fd, void *user_buf, size_t len) {
     size_t reclen = align_up_size(offsetof(struct linux_dirent64, d_name) +
                                   name_len + 1, 8);
     if (reclen > len - written) {
-      t->fd_dir_index[fd] = before;
+      task_fd_slot(t, fd)->dir_index = before;
       break;
     }
 
     struct linux_dirent64 *de = (struct linux_dirent64 *)(out + written);
     memset(de, 0, reclen);
-    de->d_ino = t->fd_dir_index[fd] ? t->fd_dir_index[fd] : 1;
-    de->d_off = (int64_t)t->fd_dir_index[fd];
+    de->d_ino = task_fd_slot(t, fd)->dir_index ? task_fd_slot(t, fd)->dir_index : 1;
+    de->d_off = (int64_t)task_fd_slot(t, fd)->dir_index;
     de->d_reclen = (uint16_t)reclen;
     de->d_type = is_dir ? DT_DIR : DT_REG;
     memcpy(de->d_name, name, name_len + 1);
@@ -1658,7 +1719,7 @@ static long sys_writev(int fd, const struct linux_iovec *iov, long iovcnt) {
 static int fd_is_known(struct task *t, int fd) {
   if (!t || fd < 0 || fd >= TASK_MAX_FDS)
     return 0;
-  return fd < 3 || t->fds[fd] != 0;
+  return fd < 3 || task_fd_file(t, fd) != 0;
 }
 
 static long sys_fcntl(int fd, int cmd, long arg) {
@@ -1672,7 +1733,7 @@ static long sys_fcntl(int fd, int cmd, long arg) {
   case F_SETFL:
     return 0;
   case F_GETFL:
-    return (fd >= 3 && t->fd_is_dir[fd]) ? O_DIRECTORY : 0;
+    return (fd >= 3 && task_fd_is_dir(t, fd)) ? O_DIRECTORY : 0;
   case F_DUPFD:
     (void)arg;
     return -1;
@@ -1888,7 +1949,7 @@ static long sys_mkdir(const char *path) {
 
 static long sys_chdir(const char *path) {
   struct task *t = task_current();
-  if (!t || !path)
+  if (!t || !t->files || !path)
     return -1;
 
   char resolved[TASK_CWD_MAX];
@@ -1904,28 +1965,28 @@ static long sys_chdir(const char *path) {
 
   size_t i = 0;
   while (i < TASK_CWD_MAX - 1 && resolved[i]) {
-    t->cwd[i] = resolved[i];
+    t->files->cwd[i] = resolved[i];
     i++;
   }
-  t->cwd[i] = 0;
+  t->files->cwd[i] = 0;
   return 0;
 }
 
 static long sys_getcwd(char *buf, size_t size) {
   struct task *t = task_current();
-  if (!t || !buf || size == 0)
+  if (!t || !t->files || !buf || size == 0)
     return -1;
   if (!user_buffer_ok(buf, size, 1))
     return -1;
 
   size_t i = 0;
-  while (i + 1 < size && t->cwd[i]) {
-    buf[i] = t->cwd[i];
+  while (i + 1 < size && t->files->cwd[i]) {
+    buf[i] = t->files->cwd[i];
     i++;
   }
   buf[i] = 0;
 
-  if (t->cwd[i])
+  if (t->files->cwd[i])
     return -1;
 
   return (long)(uintptr_t)buf;
@@ -2029,9 +2090,12 @@ static long sys_net_capture(uint64_t *cursor, struct netmon_frame_user *out,
 
 static int sock_fd_alloc(struct task *t, struct socket *sock) {
   for (int fd = 3; fd < TASK_MAX_FDS; fd++) {
-    if (t->fds[fd] || t->fd_sockets[fd])
+    struct task_fd *slot = task_fd_slot(t, fd);
+    if (!slot || slot->type != TASK_FD_UNUSED)
       continue;
-    t->fd_sockets[fd] = sock;
+    task_fd_clear(slot);
+    slot->type = TASK_FD_SOCKET;
+    slot->socket = sock;
     return fd;
   }
   return -1;
@@ -2040,7 +2104,7 @@ static int sock_fd_alloc(struct task *t, struct socket *sock) {
 static struct socket *sock_from_fd(struct task *t, int fd) {
   if (!t || fd < 3 || fd >= TASK_MAX_FDS)
     return NULL;
-  return t->fd_sockets[fd];
+  return task_fd_socket(t, fd);
 }
 
 static long sys_socket(int domain, int type, int protocol) {
@@ -2179,28 +2243,28 @@ static long sys_arch_prctl(long code, uint64_t addr) {
 static long sys_thread_create(uint64_t entry, uint64_t user_stack, uint64_t u_arg) {
     struct task *t = task_spawn_thread(entry, user_stack);
     if (!t) return -1;
-    t->user_arg = u_arg;
+    t->context->user_arg = u_arg;
     return t->pid;
 }
 
 static long sys_thread_exit(void) {
     struct task *t = task_current();
-    if (!t) return -1;
+    if (!t || !t->vm || !t->vm->pml4_ref_count) return -1;
 
     /* Threads share one PML4, so the last one out frees it. The decrement
      * must be atomic: two threads exiting concurrently would otherwise both
      * read the same count and either double-free or leak the address space. */
-    int new_count = __atomic_sub_fetch(t->pml4_ref_count, 1, __ATOMIC_ACQ_REL);
+    int new_count = __atomic_sub_fetch(t->vm->pml4_ref_count, 1, __ATOMIC_ACQ_REL);
 
     if (new_count <= 0) {
-        kfree(t->pml4_ref_count);
-        t->pml4_ref_count = 0;
+        kfree(t->vm->pml4_ref_count);
+        t->vm->pml4_ref_count = 0;
         task_exit(0);            /* tears down the address space too */
     } else {
         /* Detach from the shared PML4 first , task_exit_thread must not
          * reap an address space its siblings are still running on. */
-        t->user_pml4 = 0;
-        t->pml4_ref_count = 0;
+        t->vm->user_pml4 = 0;
+        t->vm->pml4_ref_count = 0;
         task_exit_thread();
     }
 
@@ -2226,14 +2290,14 @@ static long sys_thread_join(long tid) {
  * what stops the caller sleeping through a wake it already missed. */
 static long sys_futex_wait(uint32_t *addr, uint32_t expected) {
     struct task *t = task_current();
-    if (!t || !t->user_pml4) return -1;
+    if (!task_pml4(t)) return -1;
     if (!addr) return -1;
 
     if ((uint64_t)addr >= USER_VA_MAX) return -1;
 
     /* Futexes key on the physical frame, so two tasks with the same page
      * mapped at different VAs still queue on the same futex. */
-    uint64_t phys = vmm_translate_in(t->user_pml4, (uint64_t)addr);
+    uint64_t phys = vmm_translate_in(t->vm->user_pml4, (uint64_t)addr);
     if (!phys) return -1;
     phys &= VMM_ADDR_MASK;
 
@@ -2249,10 +2313,10 @@ static long sys_futex_wait(uint32_t *addr, uint32_t expected) {
 /* Wake exactly one waiter. Callers needing wake-all must loop. */
 static long sys_futex_wake(uint32_t *addr) {
     struct task *me = task_current();
-    if (!me || !me->user_pml4) return -1;
+    if (!task_pml4(me)) return -1;
     if (!addr) return -1;
 
-    uint64_t phys = vmm_translate_in(me->user_pml4, (uint64_t)addr);
+    uint64_t phys = vmm_translate_in(me->vm->user_pml4, (uint64_t)addr);
     if (!phys) return -1;
     phys &= VMM_ADDR_MASK;
 
@@ -2460,14 +2524,25 @@ long syscall_dispatch(struct syscall_frame *f) {
     ret = sys_wm_pid();
     break;
   case SYS_TTY_DRAIN:
-    ret = sys_tty_drain((char *)(uintptr_t)a1, (uintptr_t)a2);
+    ret = sys_tty_drain((long)a1, (char *)(uintptr_t)a2, (uintptr_t)a3);
     break;
   case SYS_TTY_INJECT:
-    tty_inject_input((char)a1); // Push the ASCII char into the TTY ring
+    /* Push the ASCII char into channel a1's input ring. */
+    tty_inject_input_ch((int)a1, (char)a2);
     ret = 0;
     break;
   case SYS_TTY_READ_INPUT:
     ret = sys_tty_read_input((char *)(uintptr_t)a1, (uintptr_t)a2);
+    break;
+  case SYS_TTY_ALLOC:
+    ret = sys_tty_alloc();
+    break;
+  case SYS_TTY_FREE:
+    ret = sys_tty_free((long)a1);
+    break;
+  case SYS_TTY_SPAWN:
+    ret = sys_tty_spawn((const char *)(uintptr_t)a1,
+                        (char *const *)(uintptr_t)a2, (long)a3);
     break;
   case SYS_FB_INFO:
     ret = sys_fb_info((struct fb_info *)(uintptr_t)a1);

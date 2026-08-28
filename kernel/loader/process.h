@@ -53,6 +53,13 @@ long process_exec(const char *path, char *const argv[]);
  * loads the image on the BSP loader task. The task is visible as LOADING until
  * activation and is reaped normally if loading fails. */
 long process_spawn_async(const char *path, char *const argv[]);
+
+/* As process_spawn_async, but pins the child to TTY channel `tty` instead of
+ * inheriting the caller's. This is how winman starts a shell on a console it
+ * just opened: the child must not land on winman's own channel, and it has
+ * to be set before the image runs, not after. Out-of-range or closed
+ * channels are rejected with -1 rather than silently falling back to 0. */
+long process_spawn_async_tty(const char *path, char *const argv[], int tty);
 /* Cancel a queued or in-progress async load. Used by kill(). */
 int process_cancel_async(int pid, long code);
 long process_kill(long pid, int signal);
