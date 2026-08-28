@@ -226,6 +226,14 @@ TOS-specific features are provided by:
 userspace/lib/libtos.a
 ```
 
+These programs are not included by default
+
+- [DoomGeneric](https://github.com/ozkl/doomgeneric)
+
+	Note: Doom Generic does not provide any DOOM assets, you will need to provide DOOM1.wad
+	
+- [NetSurf](https://www.netsurf-browser.org/)
+
 `libtos` handles the framebuffer, Winman IPC, console I/O, drawing, fonts, audio, input, and system inspection.
 
 An older hand-written libc is still used by programs that cannot yet use musl, including the native TOS thread test and the DOOM port. PE builds use a separate MinGW-compatible startup and syscall layer.
