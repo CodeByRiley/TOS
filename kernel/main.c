@@ -37,6 +37,7 @@
 
 extern struct AHCI_DEVICE_DATA *g_ahci_dev;
 extern uint64_t *kernel_pml4;
+static uint8_t bsp_syscall_kstack[16384] ALIGNED(16);
 
 static void early_console_init(void) {
   print_clear();
@@ -83,19 +84,28 @@ static void memory_init(uint64_t mb2_addr) {
 }
 
 static void acpi_and_smp_init(uint64_t mb2_addr) {
+  uint8_t bsp_lapic_id = 0;
+  int cpu_count = 1;
+
   if (acpi_init(mb2_addr) == 0) {
     lapic_init(acpi_lapic_phys());
-    percpu_init_bsp((uint8_t)lapic_id());
-    percpu_set_count(acpi_cpu_count());
-    gdt_load_tss_this_cpu(0);
+    bsp_lapic_id = (uint8_t)lapic_id();
+    cpu_count = acpi_cpu_count();
   } else {
     log_write("ACPI: SMP unavailable, staying UP", KERNEL, LOG_INFO);
   }
+
+  /* GS-relative syscall entry is required even on the UP/no-ACPI path. */
+  percpu_init_bsp(bsp_lapic_id);
+  percpu_set_count(cpu_count);
+  gdt_load_tss_this_cpu(0);
 }
 
 static void ipc_and_sched_init(void) {
   msg_init();
   log_write("message queue initialised", KERNEL, LOG_INFO);
+  syscall_init_this_cpu(
+      (uint64_t)(bsp_syscall_kstack + sizeof(bsp_syscall_kstack)));
   sched_init();
   log_write("scheduler initialised", KERNEL, LOG_INFO);
 }
@@ -202,9 +212,6 @@ static void late_init(void) {
   task_spawn(udp_echo_thread);
   log_write("udp: echo server thread spawned", KERNEL, LOG_INFO);
 
-  log_write("syscall: initializing", KERNEL, LOG_INFO);
-  static uint8_t syscall_kstack[16384] ALIGNED(16);
-  syscall_init((uint64_t)(syscall_kstack + sizeof(syscall_kstack)));
 }
 
 static void enable_interrupts_and_smp(void) {

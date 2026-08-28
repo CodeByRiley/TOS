@@ -12,6 +12,7 @@
 #include <acpi/acpi.h>
 #include <arch/gdt.h>
 #include <arch/percpu.h>
+#include <arch/syscall.h>
 #include <devices/lapic.h>
 #include <devices/pit.h>
 #include <interrupts/idt.h>
@@ -262,10 +263,12 @@ void ap_main(uint32_t cpu_id) {
     gdt_load_tss_this_cpu((int)cpu_id);
     idt_load_this_cpu();
 
+    struct cpu_local *me = percpu_get((int)cpu_id);
+    syscall_init_this_cpu(me->kernel_rsp_top);
+
     /* Bring up the local APIC on this CPU (BSP already mapped the MMIO). */
     lapic_enable_this_cpu();
 
-    struct cpu_local *me = percpu_get((int)cpu_id);
     __atomic_add_fetch(&online_workers, 1, __ATOMIC_ACQ_REL);
     __atomic_store_n(&me->online, 1, __ATOMIC_RELEASE);
 

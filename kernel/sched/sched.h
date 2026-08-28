@@ -91,7 +91,6 @@ struct task {
   uint64_t saved_rsp;             /* kernel rsp at last context_switch     */
   uint64_t cr3;                   /* page-table root for this task         */
   uint64_t syscall_kstack_top;    /* SYSCALL entry stack (kernel_rsp_top)  */
-  uint64_t user_rsp_saved;        /* user rsp at last syscall entry        */
   uint64_t user_entry;            /* used by user-task first-run trampoline*/
   uint64_t user_rsp_initial;      /* used by user-task first-run trampoline*/
   uint64_t user_arg;                 /* argument for user task                */

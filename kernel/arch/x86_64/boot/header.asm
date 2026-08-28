@@ -1,6 +1,6 @@
 ; kernel/arch/x86_64/boot/header.asm , Multiboot2 header.
 ;
-; Magic, checksum, and an advisory 1920x1080x32 framebuffer request.
+; Magic, checksum and multiboot2 header.
 
 section .multiboot_header progbits alloc noexec nowrite align=8
 align 8
@@ -16,9 +16,9 @@ fb_tag_start:
 	dw 5                              ; type = framebuffer request
 	dw 0                              ; flags (0 = required)
 	dd fb_tag_end - fb_tag_start      ; size
-	dd 1920                        		; width (0 = bootloader chooses)
-	dd 1080                          	; height
-	dd 32                             ; bpp
+	dd 0                        		  ; width, 0 is no preference so the bootloader will choose
+	dd 0                          	  ; height
+	dd 0                              ; bpp
 fb_tag_end:
 
 	; end tag

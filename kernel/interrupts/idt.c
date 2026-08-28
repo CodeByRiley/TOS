@@ -39,10 +39,12 @@ extern void isr255(void);
 #define VEC_SMP_WORK_IPI 240
 #define VEC_LAPIC_SPURIOUS 255
 
-/* IST index 1 is the double-fault stack installed by gdt_install_tss. Any
- * other vector uses ist=0, meaning "keep the current stack". */
+/* Dedicated fatal-entry stacks installed by gdt_install_tss. Other vectors
+ * use ist=0, meaning "keep the current stack". */
 #define IST_DOUBLE_FAULT 1
+#define IST_NMI 2
 #define VEC_DOUBLE_FAULT 8
+#define VEC_NMI 2
 
 static void idt_set_ist(int vec, uint64_t handler, uint8_t ist) {
   idt[vec].offset_low = handler & 0xFFFF;
@@ -67,6 +69,8 @@ void idt_init(void) {
    * a stack overflow or a bad rsp0 otherwise reboots with no output. */
   idt_set_ist(VEC_DOUBLE_FAULT, isr_stub_table[VEC_DOUBLE_FAULT],
               IST_DOUBLE_FAULT);
+  /* NMI must not push onto a user RSP during the SWAPGS/IRETQ return window. */
+  idt_set_ist(VEC_NMI, isr_stub_table[VEC_NMI], IST_NMI);
   idtr.limit = sizeof(idt) - 1;
   idtr.base = (uint64_t)&idt;
   __asm__ volatile("lidt %0" : : "m"(idtr));

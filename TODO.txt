@@ -1,239 +1,567 @@
-# TOS TODOs
+# TOS roadmap
 
-Priorities are based on the current tree. Keep each item small enough to land
-with its tests; the "done when" line is the acceptance criterion.
+Last reconciled with the source tree on 2026-08-28.
 
-## P0 - Stabilise the current userspace work
+This file is a prioritized engineering roadmap, not a list of every feature an
+operating system could have. Each checkbox should be small enough to land with
+its regression coverage. Check an item only when its **Done when** condition is
+true; partial work belongs in the sub-bullets or in the commit that advances it.
 
-- [ ] Finish and validate the musl/HolyD migration.
-  - Run a clean `mingw32-make build-x86_64`, `mingw32-make test-host`, and
-    `mingw32-make test-heavy`, followed by both musl smoke tests.
-  - Investigate every failure before committing the current userspace and
-    syscall changes.
-  - Done when a clean checkout builds the ISO and all host/QEMU tests pass.
+## How priorities work
 
-- [ ] Put the musl smoke tests in the normal regression suite.
-  - Add `tests/musl_smoke_test.py` and `tests/musl_posix_smoke_test.py` to an
-    appropriate Make target after their binaries have been packaged.
-  - Keep a smaller target for developers who only want the host tests.
-  - Done when CI or `test-heavy` cannot pass while a basic musl program fails
-    to start, use files, or exit.
+- **P0 — baseline:** work needed to make the current tree reproducible and
+  trustworthy. A regression here makes unrelated development unreliable.
+- **P1 — correctness:** bugs that can corrupt memory, leak resources, kill the
+  kernel from ring 3, or make an API lie about what it did.
+- **P2 — active networking line:** the dependency chain from today's UDP stack
+  to a useful NetSurf fetcher.
+- **P3 — compatibility and user-visible work:** broader musl/POSIX support and
+  features that are valuable but do not block the current baseline.
+- **P4 — architectural work:** larger changes that should start only after
+  their lower-level dependencies and stress tests are in place.
 
-- [ ] Define a reproducible policy for generated userspace artifacts.
-  - Decide whether the tracked `.exe` files and `userspace/lib/libtos.a` are
-    release inputs or build outputs. If they are outputs, ignore/remove them;
-    if they are inputs, add a deterministic rebuild/check target.
-  - Done when an ordinary build does not leave unexplained binary-only diffs.
+Three rules apply across every priority:
 
-## P1 - Correctness and isolation
+1. Prefer standard Linux/POSIX ABI entry points when musl already issues them.
+   A TOS-only shim is appropriate only for a genuinely TOS-specific service
+   such as Winman or framebuffer presentation.
+2. Add the cheapest deterministic host test first, then an end-to-end QEMU test
+   where hardware, privilege transitions, or process lifetime are part of the
+   behavior.
+3. Keep optional ports optional. A clean recursive clone must continue to
+   produce a bootable image without local WADs, NetSurf sources, music, NVIDIA
+   firmware, or other ignored payloads.
 
-- [ ] Add regression tests for ring-3 faults without crashing TOS.
-  - The exception path already kills a faulting user task; update the stale
-    comments in `vmtest` and test that behaviour explicitly.
-  - Cover a null write and a write through a read-only `mprotect` mapping,
-    then prove the shell or a second process still runs.
-  - Done when a QEMU test observes the expected child failure and continued
-    kernel liveness.
+The main dependency chains are:
 
-- [ ] Fix memory-safety bugs in the hand-rolled libc used by legacy programs.
-  - Make `realloc` track the old allocation size and copy only
-    `min(old_size, new_size)` bytes.
-  - Clamp `fprintf`, `vfprintf`, and `vprintf` writes to the bytes actually
-    stored in their scratch buffers when `vsnprintf` reports truncation.
-  - Add host tests for shrinking/growing allocations and output longer than
-    1 KiB.
-  - Done when ASan-enabled host tests show no over-read or buffer overrun.
+```text
+reproducible baseline -> reliable port work
 
-- [ ] Replace silent libc stubs with truthful behaviour.
-  - Make `assert` print the failed expression/location and terminate through
-    `abort`.
-  - Implement x86_64 `setjmp`/`longjmp`, or make unsupported callers fail
-    immediately instead of spinning forever.
-  - Return useful `errno` values/messages from remaining wrappers.
-  - Done when failure paths terminate predictably and have focused tests.
+UDP hardening -> DHCP -> DNS -> TCP -> HTTP -> TLS -> useful NetSurf
 
-- [ ] Add the next port-driven POSIX syscall tranche.
-  - Start with filesystem/FD calls identified in the musl README: `access`,
-    `readlink`, `dup`/`dup2`, `pipe`, and `rename`.
-  - Implement one coherent group at a time, including user-pointer validation,
-    fd lifetime rules, libc coverage, and a QEMU smoke test.
-  - Done when the next chosen real application runs without compatibility
-    shims for that group.
+open-file descriptions -> dup/pipe -> terminal semantics -> larger musl ports
 
-- [ ] Add real pthread support for musl programs.
-  - Implement the required `clone` semantics, TLS setup, child-tid clearing,
-    futex wakeups, and thread address-space lifetime rules before switching
-    `thread.elf` away from the TOS-specific thread ABI.
-  - Follow with signal masks and robust futex handling as musl reaches them.
-  - Done when a musl pthread create/join/stress test survives repeated runs on
-    multiple CPUs without leaked tasks or page tables.
+UHCI reference -> xHCI core -> enumeration -> HID -> broader USB classes
+```
 
-## P2 - User-visible capabilities
+## P0 — make the current baseline a contract
 
-- [ ] Connect DOOM to the existing PCM audio syscalls.
-  - Replace `userspace/games/doom/sound_stub.c` with a mixer that converts
-    DOOM sound effects to signed 16-bit stereo and streams them with
-    `audio_open`/`audio_write`.
-  - Start with sound effects; music synthesis can be a separate task.
-  - Done when effects play without underruns and audio ownership is released
-    after DOOM exits or faults.
+- [ ] Add one clean-checkout release test.
+  - Run from a fresh recursive clone or disposable worktree with no
+    `build/`, `dist/`, musl build tree, or prebuilt userspace objects.
+  - Exercise `mingw32-make build-x86_64`, `test-host`, and `test-heavy`,
+    followed by the HolyD and musl smoke tests.
+  - Assert that the HolyD submodule is populated at the recorded commit and
+    that the resulting ISO and FAT image are non-empty.
+  - Keep the ordinary inner loop fast; make this a separate `test-release`
+    or CI job rather than adding clean rebuilds to `test-host`.
+  - **Done when:** a clean recursive checkout can run one command that proves
+    it builds, boots, exercises the full regression suite, and leaves no
+    unexplained tracked changes.
 
-- [ ] Implement a modern USB host-controller path.
-  - Prefer xHCI first because QEMU and current hardware expose it; keep UHCI as
-    the working reference and leave EHCI/OHCI as separate follow-ups.
-  - Split the work into controller reset/rings, enumeration/control transfers,
-    then HID keyboard/mouse support.
-  - Done when the same USB HID smoke test passes under xHCI and UHCI.
+- [ ] Put both musl smoke tests in the normal QEMU regression graph.
+  - Add build rules for `muslhello.elf` and `muslposix.elf` instead of
+    requiring the manual link commands in `userspace/libc/README.md`.
+  - Package them deterministically, then run
+    `tests/musl_smoke_test.py` and `tests/musl_posix_smoke_test.py` from
+    `test-qemu-heavy`.
+  - Keep their assertions focused on startup/TLS, stdio, files, directories,
+    time, memory, and clean process exit so a failure identifies the ABI slice
+    that regressed.
+  - **Done when:** `test-heavy` cannot pass while either basic static musl
+    program fails to start or use its covered POSIX calls.
 
-- [ ] Advance HolyD to its next coherent language milestone.
-  - Reconcile `userspace/bin/holyd/HOLYD.todo` with features already completed
-    in the current tree (`--help`, `-tokens`, floats, array assignment, and
-    stricter parse failures).
-  - Next implement expression completeness as one tested slice: logical and
-    bitwise operators, shifts, compound assignment, and ternary expressions.
-  - Follow with `break`/`continue` and `switch`; keep native code generation
-    until the VM language and type model are stable.
-  - Done when host tests cover precedence, short-circuit side effects, bytecode
-    execution, interpreter parity, and rejected invalid syntax.
+- [ ] Define and enforce the generated-artifact policy.
+  - Classify `userspace/bin/{hello,ls,pe_test}/*.exe`,
+    `userspace/lib/libtos.a`, and `diskback.back.img` as either source
+    inputs, release snapshots, or build output.
+  - The preferred source-tree policy is to generate binaries. If snapshots
+    remain tracked for a concrete reason, document it and add a
+    `verify-generated` target that rebuilds them and fails on a byte diff.
+  - Include the HolyD submodule state in the cleanliness check without treating
+    ignored `.tos.o` and `.tos.d` files as source changes.
+  - **Done when:** two builds from the same source/toolchain are explainable,
+    and a normal build does not leave mysterious binary-only diffs.
 
-## P3 - Networking stack, the active line of work
+- [ ] Add a toolchain preflight check.
+  - Check the Windows/MSYS tools, `x86_64-elf-*` binutils, NASM, WSL image
+    tools, Python, QEMU, and the initialized submodule before a long build.
+  - Report the missing executable and which stage needs it. Do not hardcode
+    one developer's installation paths.
+  - **Done when:** a fresh contributor gets one actionable error before any
+    partial build instead of failing later inside musl, WSL, or ISO creation.
 
-Numbered after P2 because it is a sequence, not because it is less
-urgent: this is what `feat/netmon` is for, and NetSurf is blocked on all
-of it.
+- [ ] Make every C/assembly ABI boundary mechanically verifiable.
+  - Done: the dead `enter_user`/`user_exit_jump` launcher is gone. The only
+    remaining hand-built ring-3 entry is `arch_enter_user`
+    (`kernel/arch/x86_64/cpu/user_entry.asm`), which is one-way and has no
+    saved context, nesting counter or return path.
+  - Done: `kernel/arch/offsets.c` is compiled with `-S` and scraped by
+    `tools/gen_asm_offsets.py` into `build/generated/asm_offsets.inc`, so the
+    `cpu_local`, `syscall_frame` and `interrupt_frame` displacements used by
+    `syscall.asm`, `isr.asm` and `user_entry.asm` come from `offsetof()`. No
+    `.asm` file open-codes a struct offset or a GDT selector any more.
+  - Stop relying on unverified trailer distances for the flat AP trampoline.
+    Export or check the patch-slot positions used by `smp.c`, and reject an
+    oversized blob before copying it over low memory.
+  - Add a small disassembly/layout check to the release test so changing a
+    structure, push order, or trampoline slot fails at build time rather than
+    during a privilege transition or AP startup.
+  - **Done when:** no dead assembly is linked and every numeric contract shared
+    with C is generated from one source or independently checked by the build.
 
-The link and address layers landed already. `kernel/net/` now holds
-`netif`, `eth`, `arp`, `ipv4`, and `icmp`; the e1000 driver carries no protocol
-code and registers an interface instead; `tests/net_arp_test.py` proves TOS
-originates frames rather than only answering them (gratuitous ARP at link-up,
-then gateway resolution and the reply landing in the cache).
+## P1 — correctness, isolation, and lifetime safety
 
-Two things drive the order below. Each item is the cheapest change that makes
-the next one testable, and NetSurf is the consumer that decides when the stack
-is actually finished , it renders `data:` and `resource:` URLs today and cannot
-fetch a single byte over the network.
+- [ ] Add regression coverage for fatal ring-3 faults.
+  - The exception path already calls `task_exit(-11)` for blameable user
+    faults; `userspace/bin/vmtest/vmtest.c` still claims those faults panic
+    the kernel.
+  - Add a child program or mode that writes through null, writes through a
+    read-only `mprotect` mapping, executes an NX mapping, and triggers an
+    invalid opcode.
+  - After each failure, prove the task disappears, its parent observes the
+    expected status, memory returns to baseline, and the shell or a second
+    program remains alive.
+  - Keep NMI, double fault, and machine check on the kernel-panic path; they
+    are not the interrupted user's fault.
+  - **Done when:** a QEMU test distinguishes user-task termination from a
+    kernel panic and covers both page-fault and non-page-fault exceptions.
 
-- [ ] Cover the two layers that shipped without tests.
-  - ICMP echo reply and the ARP pending-queue flush have no coverage. SLIRP
-    will not forward a host ping to the guest, and nothing yet hands the queue
-    a payload to park, so neither is reachable from a boot test.
-  - Write host tests against `tests/host_kernel_stubs.c` instead: a corrupt
-    echo-request checksum must be rejected rather than echoed; cache eviction
-    must pick the entry nearest its deadline; retry exhaustion must drop the
-    parked frames; one reply must flush every frame queued behind that entry.
-  - `sync/spinlock.h` uses `cli`/`pushfq`, so the host build needs a stub
-    spinlock in the same style as the existing kernel stubs.
-  - Done when `arp.c` and `icmp.c` have host tests in `test-host`, and
-    deliberately inverting the checksum comparison fails them.
+- [ ] Make task teardown close every file-descriptor kind.
+  - `sys_close` handles `fd_sockets[]`, but `task_close_fds` currently
+    frees only `fds[]`. A killed or faulting socket owner therefore leaks its
+    socket and queued datagrams.
+  - Replace the parallel cleanup assumptions with one helper used by explicit
+    `close`, process exit, failed spawn, and forced kill.
+  - Protect socket lifetime against an incoming packet racing
+    `socket_close`; unlinking from the global list is not enough if an input
+    path already holds the pointer.
+  - Audit audio ownership, Winman surfaces, framebuffer registrations, input
+    ownership, and shared mappings in the same exit-order test.
+  - **Done when:** repeatedly killing tasks with open files and sockets returns
+    descriptor, heap, socket-queue, PMM, and Winman counts to their baselines.
 
-- [ ] Fix `kernel/net/ksocket.c` before building anything on it.
-  - It has no callers and no syscalls behind it, so nothing here is a
-    regression risk , but the bugs are wrong behaviour, not missing features,
-    and inheriting them into UDP would be much more expensive to find later.
-  - `ring_buffer_push` tests `ring_buffer_full` and then writes `len` bytes
-    regardless, walking past the tail and silently corrupting queued data.
-  - A byte ring is the wrong shape for datagrams: two 100-byte packets read
-    back as one 200-byte blob, and the source address is taken from
-    `sock->remote`, which the most recent sender overwrote. Replace it with
-    fixed-size slots carrying length plus source address per datagram.
-  - `socket_sendto` returns `len` having transmitted nothing.
-  - No lock on the socket list or the receive queue; `socket_recvfrom` returns
-    0 instead of blocking; there is no `socket_close`, so every socket and its
-    buffer leaks for the life of the kernel.
-  - Reconcile the duplicate definitions in `ksocket.h` against `net/inet.h`
-    (`ipv4_addr`, `IPPROTO_*`) rather than leaving two sources of truth.
-  - Done when the datagram queue has host tests covering oversized writes, a
-    full queue, message boundaries, and per-datagram source addresses.
+- [ ] Replace the shared-memory exit leak with explicit ownership records.
+  - `shmem_shared_out` is only a page count. The automatic reaper skips a
+    dead owner while it is positive, but receiver exit cannot identify and
+    release the owner's count. That can leave the dead task unreapable.
+  - Track each shared mapping by owner, receiver, source range, target range,
+    and page count. Remove the record on explicit unshare or either task's
+    teardown.
+  - Decide where physical-page references live. A mapping record or frame
+    reference count is safer than relying on `VMM_SHARED` plus one process
+    being the implicit owner.
+  - Update the stale comment in `kernel/sched/sched.h` once the lifetime
+    model is true.
+  - **Done when:** stress tests kill owner and receiver in both orders, with
+    and without explicit unshare, and task slots plus PMM counts always recover.
 
-- [ ] Turn the socket layer into working UDP.
-  - Add `udp.c` under `kernel/net/`: header, checksum over the pseudo-header,
-    `udp_input` demultiplexing to a bound socket, `udp_output` through
-    `ipv4_output_framed` using the `IPV4_HEADROOM` convention.
-  - Wire `IPPROTO_UDP` into the `ipv4_input` switch, which already has the
-    slot waiting.
-  - Sockets answer on the Linux numbers, not TOS-specific ones: socket is
-    41, sendto 44, recvfrom 45, bind 49. musl issues those directly, so
-    mirroring them is what lets ported code and musl's own socket API
-    work untouched -- NetSurf's fetcher will arrive through them. socket,
-    bind, sendto and recvfrom are done; connect, listen, accept and the
-    sockopt calls are not. Validate
-    every user pointer, and give sockets fd lifetime rules that survive a
-    process being killed mid-recv.
-  - Blocking receive needs a wait queue the driver poll task can wake;
-    `socket_handle_incoming` is where the wakeup belongs.
-  - Test loopback between two processes first, then against SLIRP's echo path
-    with `tests/net_arp_test.py`'s pcap parser asserting on the wire.
-  - Note the queue limits in the header rather than pretending there are none.
-  - Done when two processes exchange datagrams under SMP stress with no loss
-    beyond the documented queue depth, and a captured datagram has a checksum
-    the parser validates.
+- [ ] Replace best-effort user-pointer access with copy helpers.
+  - Introduce page-walking `copy_from_user`, `copy_to_user`, and bounded
+    string-copy helpers that validate the caller's PML4 and permissions one
+    page at a time.
+  - Stop directly dereferencing user pointers after only a range/mapping
+    check, especially in filesystem paths, socket addresses, iovecs, futexes,
+    process argv, and structures written back to userspace.
+  - Define partial-copy behavior and return consistent negative errno values.
+  - Test unmapped pointers, read-only output buffers, integer wraparound, a
+    valid first page followed by an invalid second page, and strings without a
+    terminator.
+  - **Done when:** malformed syscall pointers return an error or kill only the
+    caller; they never fault while the kernel holds a lock or crash TOS.
 
-- [ ] Take the address from DHCP instead of the source.
-  - `10.0.2.30`, the mask, and the gateway are hardcoded in `e1000.c`.
-    `netif_set_ipv4` and `arp_flush` already exist for exactly this handover.
-  - Discover, request, and honour the lease; re-announce with `arp_announce`
-    once it is taken, since the binding other hosts cached is now stale.
-  - Keep a static fallback for the case where no server answers, so a
-    direct-cable or misconfigured setup still boots to a usable link.
-  - Done when TOS takes SLIRP's offered address with the hardcoded constants
-    removed, and the pcap shows the four-packet exchange followed by a
-    gratuitous ARP for the new address.
+- [ ] Harden the x86-64 syscall entry and return contract.
+  - Done: the global `kernel_rsp_top`/`user_rsp_save` words are gone. Entry
+    finds its stack through `gs:` in `cpu_local`, uses the user-RSP slot only
+    for the two instructions before the stack swap, and then pushes a complete
+    ring-3 `iretq` image into the task's own syscall frame. `syscall_init_this_cpu`
+    programs EFER/STAR/LSTAR/SFMASK per CPU, on the BSP and from `ap_main`.
+  - Done: `stage_for` stages only the next kernel stack, `cpu_local.current`,
+    FS_BASE and that CPU's TSS RSP0. `task::user_rsp_saved` and the symmetric
+    scratch capture are removed, so a completed frame needs no mutable CPU
+    state to return.
+  - Done: SFMASK is symbolic and clears TF, IF, DF, NT and AC;
+    `syscall_prepare_return` independently sanitizes the RFLAGS image that
+    `iretq` will consume and checks CS/SS, the RIP and RSP ranges, and that RIP
+    is a present, user, executable mapping in the caller's PML4. A frame that
+    fails validation kills the caller on its own kernel stack instead of
+    returning.
+  - Done: the GS policy is `swapgs` at every boundary. GS_BASE is `cpu_local`
+    in the kernel and KERNEL_GS_BASE holds the user value (zero until a user GS
+    base is exposed). `isr_common` swaps based on the saved CS; NMI, #DF and
+    #MC take a paranoid entry that reads IA32_GS_BASE instead, because a
+    `swapgs; iretq` return window has CPL 0 with a user GS.
+  - Remaining: add a measured `sysretq` fast path for canonical safe frames.
+    `iretq` is the correctness-first choice and is what ships today; sysretq is
+    only worth its RCX-canonicality handling if syscall entry cost shows up in
+    a profile.
+  - Remaining: stage `next->gs_base` into KERNEL_GS_BASE from `stage_for` when
+    a per-task user GS base is actually exposed.
+  - **Done when:** adversarial flags and return frames cannot fault on a kernel
+    stack, and concurrent syscalls on separate CPUs never share stack scratch.
 
-- [ ] Resolve names.
-  - A UDP client to the server DHCP hands over (`10.0.2.3` under SLIRP).
-    A/AAAA queries, the response cache honouring TTL, and a bounded retry.
-  - Compression pointers in responses are the classic place to write an
-    infinite loop or read out of bounds; bound the jump count and test a
-    hand-built malicious response.
-  - Expose it as `getaddrinfo`/`gethostbyname` in the musl port, not as a
-    TOS-specific call, so ported software finds it where it expects to.
-  - Done when a host test parses a captured response correctly, a pointer
-    loop is rejected rather than hanging, and a userspace tool resolves a
-    name end to end.
+- [ ] Fix the memory-unsafe legacy-libc paths.
+  - Track allocation sizes so `realloc` copies
+    `min(old_size, new_size)`, preserves the old block on allocation failure,
+    and handles `NULL`/zero-size inputs deliberately.
+  - Clamp `printf`/file writes to the bytes actually stored in scratch
+    buffers when `vsnprintf` reports truncation.
+  - Add allocator overflow checks for multiplication and alignment.
+  - Build focused host tests with ASan for grow/shrink/realloc failure,
+    allocation overflow, and output longer than each internal buffer.
+  - **Done when:** the legacy runtime used by DOOM and `thread.elf` passes its
+    host suite under ASan with no over-read, overwrite, or use-after-free.
 
-- [ ] Implement TCP.
-  - The largest item here by a wide margin, and the one NetSurf is waiting
-    on. Do not start it until UDP, DHCP, and DNS are reliable , every bug
-    found in those layers is a bug that would otherwise be found while
-    debugging a retransmit timer.
-  - Stage it: connection setup and teardown with the full state machine;
-    then sequence/acknowledgement handling and a receive reassembly queue;
-    then retransmission with RTO estimation; then a send window and delayed
-    ACKs. Land each stage with its own tests.
-  - Client side first. Listening sockets can wait until something in TOS
-    wants to serve.
-  - Done when a userspace client completes a request against SLIRP's
-    forwarded port, survives a deliberately dropped segment, and closes
-    without leaving the socket wedged.
+- [ ] Make legacy-libc failure paths truthful.
+  - Change userspace `assert` to print expression, file, and line before
+    terminating through `abort`.
+  - Implement x86_64 `setjmp`/`longjmp`, or make unsupported use fail
+    immediately; the current `longjmp` spin is a silent deadlock.
+  - Replace the one-string `strerror` and unconditional wrapper failures with
+    a small real errno table and negative errno returns from the kernel.
+  - Distinguish deliberate compatibility no-ops, such as client-side console
+    color, from functions that falsely report success.
+  - **Done when:** every declared legacy API either works, reports a precise
+    error, or terminates predictably, with a focused test for each former stub.
 
-- [ ] Move the e1000 off polling.
-  - `REG_ICR` is read and discarded in `e1000_init_hardware`, `REG_IMS` is
-    never written, and `e1000_enable_bus_master` sets `PCI_CMD_INT_DISABLE`.
-    Reception works only because the driver core polls.
-  - `netmon.c` and `arp.c` already take the IRQ-safe spinlock variants, so
-    the locking is in place. Handle RXT0/RXDMT0 and TXDW, keep the poll
-    callback for `arp_tick` and link reporting.
-  - Deliberately last: polling is honest while the protocols above are the
-    unknown, and an interrupt storm during protocol bring-up is a hard bug
-    to tell apart from a protocol bug.
-  - Done when the ISO boots with polling removed from the receive path and
-    `tests/netmon_test.py` still sees every frame the pcap does.
+- [ ] Route kernel assertions through the panic machinery.
+  - Replace the infinite loop in `kernel/assert.h` with file/line/expression
+    reporting and `panic`.
+  - Make the path safe before the graphical framebuffer and scheduler exist;
+    serial output must remain the last-resort reporter.
+  - Add a controlled assertion mode to the existing panic-screen QEMU test.
+  - **Done when:** an early and a late assertion both produce a named,
+    diagnosable panic instead of a silent hang.
 
-- [ ] Give NetSurf a fetcher.
-  - `userspace/bin/netsurf/` builds and registers the `data`, `resource`,
-    `about`, and `file` fetchers. `curl.c` is not compiled;
-    `userspace/netsurf_compat/content/fetchers/curl.h` is a shim that
-    declares `fetch_curl_register` so `content/fetch.c` links, and nothing
-    implements it. The browser cannot fetch a byte over the network.
-  - Write a minimal HTTP/1.1 fetcher against the TOS socket API rather than
-    porting libcurl. Chunked transfer encoding, `Content-Length`, redirects,
-    and a request timeout are the whole requirement for reaching a plain
-    HTTP page; libcurl brings TLS, a dozen protocols, and its own event loop
-    for none of it.
-  - Register it in place of `fetch_curl_register` rather than under a new
-    name, so `content/fetch.c` stays unmodified against upstream.
-  - HTTPS is a separate item and a large one. Most of the useful web is
-    unreachable without it; decide whether that is a port of a TLS library
-    or a deliberate stopping point before starting.
-  - Done when NetSurf loads and renders a plain HTTP page served from the
-    host over a SLIRP hostfwd.
+- [ ] Finish the native thread ABI's cleanup semantics.
+  - If the userspace pthread wrapper cannot allocate its join record after
+    creating a thread, terminate/reap that thread rather than freeing its live
+    stack.
+  - Preserve and return thread results, reject self-join and duplicate join,
+    and define detach behavior.
+  - Exercise join, exit, allocation failure, process kill, and shared-PML4
+    teardown under repeated two-thread contention.
+  - **Done when:** the temporary TOS-native thread implementation has no live
+    stack use-after-free or unreapable join records while musl `clone` support
+    is still pending.
+
+## P2 — networking, the active dependency chain
+
+Already landed: the protocol stack is outside the e1000 driver; Ethernet, ARP,
+IPv4, ICMP echo, outbound ping, Netmon, UDP, standard musl
+`socket`/`bind`/`sendto`/`recvfrom`, close, ephemeral ports, a userspace
+UDP echo test, and HolyD UDP FFI all work in QEMU.
+
+The next work should harden that baseline before adding another protocol.
+
+- [ ] Add host coverage for ARP, ICMP, socket queues, and UDP framing.
+  - Test ICMP checksum rejection and request/reply matching.
+  - Test ARP cache eviction, retry deadlines, pending-frame exhaustion, and
+    flushing every queued frame when a reply arrives.
+  - Test UDP datagram boundaries, truncation, per-packet source addresses,
+    queue limits, duplicate ports, ephemeral-port wraparound, and close with a
+    non-empty queue.
+  - Provide a host-safe spinlock/clock seam instead of weakening the production
+    IRQ-safe locking.
+  - **Done when:** these tests are part of `test-host`, and deliberately
+    reversing the checksum or eviction comparison makes them fail.
+
+- [ ] Harden UDP sockets into a dependable transport.
+  - Move UDP header creation/parsing from `ksocket.c` into the empty
+    `kernel/net/udp.c`; generate and validate the IPv4 UDP pseudo-header
+    checksum while still accepting a legal zero checksum on IPv4.
+  - Enforce unique local address/port bindings and validate domain, type,
+    protocol, address, flags, packet length, and destination port.
+  - Bound the receive queue by packets and bytes. Define whether overflow drops
+    newest or oldest and expose a counter through Netmon.
+  - Replace polling `recvfrom` with a socket wait queue woken by
+    `socket_handle_incoming`; make `poll` report readable sockets and support
+    non-blocking mode.
+  - Consolidate duplicate address/protocol definitions in `ksocket.h` and
+    `inet.h` into one kernel network ABI source.
+  - Return Linux-compatible negative errno values for would-block, address in
+    use, bad fd, invalid argument, and message-too-large cases.
+  - **Done when:** several processes exchange UDP datagrams under SMP/process
+    churn, killed receivers leak nothing, queue overflow is deterministic, and
+    a pcap parser validates the transmitted checksums.
+
+- [ ] Acquire network configuration with DHCP.
+  - Remove the hardcoded address, mask, and gateway from the e1000 driver;
+    drivers should provide packets and link state, not policy.
+  - Implement discover, offer validation, request, acknowledgement, lease
+    timers, renewal, rebinding, and expiry.
+  - Apply the lease through `netif_set_ipv4`, flush stale ARP entries, and
+    announce the new address. Preserve an explicit static fallback for
+    networks where no DHCP server answers.
+  - Validate transaction IDs, option lengths, server identity, and offered
+    addresses before changing live configuration.
+  - **Done when:** TOS accepts QEMU SLIRP's offer without compiled-in
+    `10.0.2.30`, renews it, and the pcap proves the DHCP exchange plus the
+    gratuitous ARP for the leased address.
+
+- [ ] Add bounded DNS resolution.
+  - Use the DNS server supplied by DHCP rather than another hardcoded QEMU
+    address.
+  - Implement A and AAAA parsing, CNAME following, TTL-aware caching, bounded
+    retries, and negative results. IPv6 transport can remain unsupported while
+    AAAA answers are parsed honestly.
+  - Bound packet lengths, label lengths, compression-pointer jumps, recursion,
+    answer counts, and cache memory. Add malicious pointer-loop packets to the
+    host tests.
+  - Expose resolution through the calls musl expects
+    (`getaddrinfo`/`gethostbyname`) rather than a TOS-only resolver.
+  - **Done when:** a userspace program resolves a host end to end, cache expiry
+    is testable, and malformed compression pointers return an error without
+    hanging or reading out of bounds.
+
+- [ ] Implement client-side TCP in testable stages.
+  - First land tuple lookup, sequence arithmetic, checksums, SYN/SYN-ACK/ACK,
+    and orderly/reset teardown.
+  - Then add receive reassembly, advertised windows, retransmission with a
+    bounded RTO, duplicate ACK handling, send buffering, and partial reads.
+  - Add `connect`, `getsockname`, `getpeername`, and the socket options
+    the selected HTTP client actually reaches. Server-side
+    `listen`/`accept` can follow once TOS has a real server consumer.
+  - Use deterministic host state-machine tests before packet-loss QEMU tests.
+    Inject loss, duplication, reordering, zero windows, resets, and half-closes.
+  - **Done when:** a musl userspace client fetches data through SLIRP, survives
+    a deliberately dropped segment, closes cleanly, and repeated failures do
+    not leave wedged socket state.
+
+- [ ] Move e1000 receive/transmit completion to interrupts.
+  - Enable PCI interrupts and the e1000 IMS bits for RX/TX/link events; the
+    current driver disables PCI interrupts and depends on its poll callback.
+  - Keep timer-driven ARP/DHCP maintenance and link reporting separate from
+    packet completion.
+  - Budget work per interrupt and defer protocol processing if needed so a
+    packet storm cannot monopolize IRQ context.
+  - Preserve a diagnostic polling mode for bring-up and broken hardware.
+  - **Done when:** normal RX/TX no longer depends on the poll loop,
+    `netmon_test.py` observes the same frames as the pcap, and an RX flood
+    neither loses timer progress nor wedges the kernel.
+
+- [ ] Give NetSurf a minimal HTTP/1.1 fetcher.
+  - Keep NetSurf's upstream fetch interface intact and replace the current
+    curl-registration shim with a TOS backend using standard sockets.
+  - Support status lines, bounded headers, `Content-Length`, chunked bodies,
+    redirects, connection close, cancellation, and timeouts.
+  - Do not port libcurl first. Its TLS/protocol/event-loop surface is much
+    larger than the plain-HTTP capability needed to validate TOS TCP and
+    NetSurf's fetch pipeline.
+  - **Done when:** NetSurf loads and renders a plain HTTP page served from the
+    host, follows one redirect, handles chunked content, and cancels a stalled
+    request without leaking the window or socket.
+
+- [ ] Add HTTPS as a separate security milestone.
+  - Select a small maintained TLS library that can build statically against the
+    available musl surface; document entropy, wall-clock, certificate-store,
+    and hostname-verification requirements before choosing it.
+  - Add a cryptographically suitable random source. Timing jitter or a fixed
+    seed is not acceptable for keys.
+  - Package a reproducible CA bundle and define update/licensing policy.
+  - Test expired, wrong-host, untrusted, and valid certificates as well as a
+    successful page load.
+  - **Done when:** NetSurf validates and renders an HTTPS page without a
+    trust-all mode, and failure cases are visible to the user.
+
+## P3 — musl compatibility, ports, and user-visible work
+
+- [ ] Choose one reference port and implement its next coherent syscall slice.
+  - Capture the port's actual unknown-syscall/errno trace before adding APIs.
+    Likely filesystem/FD calls include `access`, `readlink`, `openat`,
+    `rename`, `dup`/`dup2`, and `pipe`, but the consumer decides the
+    order.
+  - Implement Linux numbers and semantics in groups with shared lifetime rules,
+    user-copy validation, negative errno returns, musl coverage, and a QEMU
+    smoke test.
+  - Avoid accumulating wrappers that always return success merely to move the
+    port one line farther.
+  - **Done when:** the chosen application runs its next useful workflow without
+    TOS-specific compatibility calls for that syscall group.
+
+- [ ] Introduce refcounted open-file descriptions before `dup` and `pipe`.
+  - Separate an fd slot from the underlying file/socket/pipe object so duplicate
+    descriptors share offsets and status flags while descriptor flags remain
+    per fd.
+  - Unify allocation, close-on-exit, `fcntl`, polling, and type dispatch
+    instead of extending the current parallel `fds[]`/`fd_sockets[]` arrays.
+  - Define inheritance for spawn/exec before adding descriptor duplication.
+  - **Done when:** duped files share offsets, pipe endpoints wake correctly,
+    closing either copy cannot free a live object, and churn returns all object
+    counts to baseline.
+
+- [ ] Build enough terminal semantics for real console ports.
+  - Implement truthful `isatty`, termios get/set behavior, canonical/raw input
+    modes, echo control, window-size updates, and pollable stdin.
+  - Decide how process groups, foreground ownership, and control characters
+    interact with Winman's focused console before implementing job control.
+  - Use a small terminal probe and then the selected editor/shell port as
+    acceptance tests.
+  - **Done when:** an interactive musl program can enter raw mode, receive resize
+    events, restore the terminal on exit/fault, and coexist with Winman focus.
+
+- [ ] Add a minimal signal ABI.
+  - Implement `rt_sigaction`, `rt_sigprocmask`, signal frames/return, pending
+    masks, and delivery at a safe return-to-userspace boundary.
+  - Convert user faults and `kill` into default signal actions without
+    weakening the kernel's machine-fault panic path.
+  - Start with synchronous faults, termination, and interrupt; defer advanced
+    real-time queueing until a consumer requires it.
+  - **Done when:** a userspace handler catches an allowed signal, blocked
+    signals defer correctly, default SIGSEGV kills only the caller, and handler
+    return restores registers/TLS reliably.
+
+- [ ] Support musl pthread creation with Linux `clone` semantics.
+  - Implement the subset of clone flags musl uses, child/parent TID writes,
+    clear-child-tid plus futex wake, TLS setup, signal masks, and shared
+    address-space lifetime.
+  - Follow musl's ABI rather than redirecting `pthread_create` to TOS's
+    temporary `SYS_THREAD_CREATE`.
+  - Add robust futex handling only after ordinary create/join/exit is stable.
+  - **Done when:** a static musl pthread create/join/mutex stress program
+    survives repeated multi-CPU runs with no leaked task slots, stacks, TIDs,
+    futex waiters, or page tables.
+
+- [ ] Wire DOOM sound effects to the PCM API.
+  - Replace `userspace/games/doom/sound_stub.c` with channel mixing and
+    conversion to the signed 16-bit stereo format expected by the audio
+    syscalls.
+  - Begin with sound effects; MIDI/MUS synthesis and music playback are a
+    separate milestone.
+  - Bound the mixer workload, handle pause/volume, and release audio ownership
+    when DOOM exits, is killed, or faults.
+  - **Done when:** simultaneous effects play without persistent underruns and
+    the existing Muse/audio path still works after repeated DOOM launches.
+
+- [ ] Keep HolyD integration tested without duplicating its language roadmap.
+  - HolyD language/compiler features belong in the HolyD submodule's
+    `docs/roadmap.md`, not in this file.
+  - In TOS, build the recorded submodule revision, run its terminating script
+    suite, and exercise one windowing plus one UDP sample in QEMU.
+  - Add an ABI check for `ffi_tos.c` against current Winman, gfx, input, and
+    socket headers so a submodule bump fails clearly when TOS changed beneath
+    it.
+  - **Done when:** updating the HolyD pointer has one documented validation
+    command and cannot silently break either the native Windows or TOS host.
+
+- [ ] Create a stable userspace ABI header boundary.
+  - Move syscall numbers and shared userspace structures into dedicated UAPI
+    headers that do not pull kernel-private state into applications.
+  - Generate or include the same definitions for musl ELF, legacy ELF, PE, and
+    kernel dispatch builds; retain static assertions for sizes and offsets.
+  - Keep TOS-only calls visibly separate from mirrored Linux syscall numbers.
+  - **Done when:** changing a shared ABI definition requires one source edit
+    and incompatible layout changes fail at build time.
+
+## P4 — hardware and architectural milestones
+
+- [ ] Implement xHCI as the modern USB path.
+  - Keep working UHCI behavior as the functional reference; do not rewrite it
+    while xHCI is being brought up.
+  - Stage xHCI through PCI/MMIO reset, command/event rings, slot/address-device,
+    descriptor enumeration, control transfers, then interrupt endpoints.
+  - First support the same HID mouse/tablet path as UHCI. Expand the USB core
+    from one periodic endpoint/controller to multiple devices and endpoints
+    only with explicit ownership and disconnect handling.
+  - EHCI/OHCI can follow based on hardware need; empty probe functions should
+    report unsupported without pretending a controller was initialized.
+  - **Done when:** one USB HID QEMU test passes unchanged under UHCI and xHCI,
+    including unplug/replug or controller reset without stale DMA state.
+
+- [ ] Add a real-hardware smoke-test matrix.
+  - Record CPU/chipset, boot method, GPU, NIC, storage controller, USB
+    controller, resolution, and the last known result. Keep firmware blobs and
+    their licensing/distribution status explicit.
+  - Give serial logs stable boot markers so a hardware run can report the same
+    stages as QEMU tests.
+  - Make the Multiboot framebuffer request advisory, or provide a serial/text
+    fallback. Requiring exactly 1920x1080x32 in `header.asm` should not prevent
+    boot on firmware that offers a different usable graphics mode.
+  - Start with boot, storage read/write, keyboard/mouse, display, and network
+    link; do not call experimental NVIDIA scanout supported without a repeatable
+    test on named hardware.
+  - **Done when:** hardware claims in the README point to a reproducible test
+    record rather than a one-off successful boot.
+
+- [ ] Schedule general tasks across application processors.
+  - APs currently service an explicit work queue; the BSP owns the normal
+    scheduler. Define per-CPU current task, run queues or a locked global queue,
+    CPU-local syscall/interrupt stacks, affinity, wakeups, migration, and
+    cross-CPU rescheduling before moving user tasks.
+  - First run independent kernel workers, then address-space-sharing threads,
+    then ordinary processes. Preserve FPU/TLS/TSS state on every migration.
+  - Make the P1 CPU-local syscall transition a prerequisite; the current global
+    syscall stack scratch is safe only because ordinary userspace stays on the
+    BSP.
+  - Add lock-order documentation and stress forced migrations rather than
+    relying on timing to find races.
+  - **Done when:** a four-CPU QEMU test proves concurrent user work on distinct
+    CPUs, repeated migration preserves register/TLS/FPU state, and single-CPU
+    behavior remains correct.
+
+- [ ] Define the complete context-switch and preemption state contract.
+  - `context_switch` saves callee-saved GPRs and FXSAVE state but not RFLAGS.
+    Today an idle task can inherit IF=0 from a syscall and repairs that with
+    `sti; hlt`; that workaround is too implicit for migration and kernel
+    preemption.
+  - Either save the task-visible flags/preemption state or establish a strict
+    scheduler invariant that switches occur with interrupts disabled and each
+    resume site restores its own prior state. Do not blindly enable IF while a
+    run-queue lock or half-staged TSS/syscall stack is live.
+  - Keep FXSAVE while AVX is disabled. If XSAVE/AVX is enabled later, negotiate
+    the feature set and size per-task state from CPUID/XCR0 before changing the
+    assembly frame.
+  - **Done when:** forced switches from syscall, IRQ, idle, and kernel-thread
+    contexts preserve registers, FPU/TLS, and interrupt state on one and four
+    CPUs without relying on the next task to repair inherited flags.
+
+- [ ] Introduce a VFS boundary before adding another filesystem.
+  - Separate path lookup, open-file operations, directory iteration, metadata,
+    and mount points from FAT-specific structures currently used by syscalls.
+  - Migrate FAT behind the interface first. Add a tiny second backend such as
+    devfs or procfs to prove the abstraction is real before attempting another
+    disk filesystem.
+  - Preserve cwd, long-name, unlink-open-file, and write-through behavior with
+    existing host and QEMU tests.
+  - **Done when:** syscall code contains no FAT-specific handle assumptions and
+    two mounted backends work through the same fd/path APIs.
+
+- [ ] Replace legacy timing loops with explicit clock deadlines.
+  - Audit PS/2, storage, network, GPU, and USB waits. UHCI already uses PIT
+    deadlines; mouse initialization still contains a loop-count timeout.
+  - Provide monotonic deadline helpers usable before and after interrupts are
+    enabled, with bounded failure and useful diagnostics.
+  - **Done when:** controller absence or failure produces a time-bounded error
+    independent of host CPU speed, and boot continues where the device is
+    optional.
+
+## Recently completed foundations
+
+These are kept briefly so old unchecked tasks do not reappear during planning.
+Move detailed history to commits rather than growing this section indefinitely.
+
+- [x] Make musl 1.2.6 the default libc for regular userspace binaries.
+- [x] Bootstrap the generated musl build tree automatically from a clean clone.
+- [x] Make optional music, WADs, NetSurf assets, and firmware non-blocking for
+  a bootable base image.
+- [x] Move HolyD to its upstream repository and consume it as a submodule,
+  including tests/samples and a native Windows build target.
+- [x] Move Ethernet/ARP/IPv4/ICMP out of e1000 into `kernel/net/`.
+- [x] Add Netmon, outbound ICMP ping, ARP/gateway tests, and poll-task yielding.
+- [x] Add UDP datagram queues, close/ephemeral-port support, Linux socket
+  syscall numbers, musl `udpecho`, a host-forwarded QEMU test, and HolyD UDP
+  FFI.
+- [x] Add header dependency generation and a clangd compilation-database
+  generator that understands musl, HolyD, and optional NetSurf sources.
+- [x] Make `tools/tree.ps1` repository-relative, bounded by default, and usable
+  from any working directory without walking generated/vendor trees.
+- [x] Rewrite the README around the current build, runtime, networking,
+  userspace, tests, and known limits.
+
+## Explicitly not promised yet
+
+Unless a concrete project depends on them, the roadmap does not currently
+promise 32-bit support, UEFI-native boot, dynamic linking, multi-user security,
+a package manager, POSIX certification, general Linux binary compatibility, or
+production-grade hardware support. Any of those can become a roadmap item once
+there is a bounded first milestone and an acceptance test.

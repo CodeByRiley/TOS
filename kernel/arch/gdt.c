@@ -102,6 +102,13 @@ static uint8_t  bsp_kernel_stack[16384] ALIGNED(16);
 #define DF_STACK_BYTES 4096
 static uint8_t df_stacks[MAX_CPUS][DF_STACK_BYTES] ALIGNED(16);
 
+/* NMI can arrive in the narrow return window after GS has been swapped and
+ * before iretq changes CPL. IST2 guarantees that it never consumes a user or
+ * otherwise transient RSP. The assembly NMI entry still has to establish the
+ * kernel GS state before calling ordinary C. */
+#define NMI_STACK_BYTES 4096
+static uint8_t nmi_stacks[MAX_CPUS][NMI_STACK_BYTES] ALIGNED(16);
+
 /* Descriptor Access byte */
 //
 // Bits | Name       | Description
@@ -209,6 +216,7 @@ void gdt_install_tss(int cpu_id, uint64_t kstack_top) {
      * always delivered on a stack that is known good even when rsp0 is the
      * thing that broke. */
     t->ist1       = (uint64_t)(df_stacks[cpu_id] + DF_STACK_BYTES);
+    t->ist2       = (uint64_t)(nmi_stacks[cpu_id] + NMI_STACK_BYTES);
     set_tss((uint16_t)GDT_TSS_FOR(cpu_id), (uint64_t)t, sizeof(*t) - 1);
 }
 

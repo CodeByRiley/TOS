@@ -3,7 +3,10 @@ rwildcard = $(foreach d,$(wildcard $1*),$(call rwildcard,$d/,$2) $(filter $(subs
 
 # Kernel C sources and their headers live together under kernel/<subsystem>/.
 # Architecture assembly lives under kernel/arch/x86_64/.
-kernel_c_source_files := $(call rwildcard,kernel/,*.c)
+# offsets.c exists to be compiled with -S and scraped for NASM %defines; it
+# has no code and must never be linked into the kernel.
+asm_offsets_src := kernel/arch/offsets.c
+kernel_c_source_files := $(filter-out $(asm_offsets_src), $(call rwildcard,kernel/,*.c))
 kernel_c_object_files := $(patsubst kernel/%.c, build/kernel/%.o, $(kernel_c_source_files))
 
 # AP trampoline is assembled flat (org 0x8000, real-mode start) , never elf64.
@@ -21,6 +24,12 @@ kernel_object_files := $(kernel_c_object_files) $(kernel_asm_object_files) $(ap_
 kernel_c_flags := -I kernel -ffreestanding -mno-red-zone -mcmodel=kernel -fno-pic -fno-pie -MMD -MP -std=gnu23
 
 kernel_dep_files := $(kernel_c_object_files:.o=.d)
+
+# Constants shared between C structs and hand-written assembly. See
+# kernel/arch/offsets.c for why these are generated rather than checked in.
+asm_offsets_asm := build/generated/asm_offsets.s
+asm_offsets_inc := build/generated/asm_offsets.inc
+asm_offsets_dep := build/generated/asm_offsets.d
 
 CCDB = -MJ $@.json
 
@@ -45,20 +54,36 @@ rootfs_payload_files := rootfs/readme.txt \
 
 $(kernel_c_object_files): build/kernel/%.o : kernel/%.c
 	mkdir -p $(dir $@) && \
-	x86_64-elf-gcc -c $(kernel_c_flags) $(CCDB) $(patsubst build/kernel/%.o, kernel/%.c, $@) -o $@
+	x86_64-elf-gcc -c $(kernel_c_flags) $(patsubst build/kernel/%.o, kernel/%.c, $@) -o $@
 
 # Pull in the generated header dependencies. Leading '-' so a clean tree (no
 # .d files yet) is not an error.
 -include $(kernel_dep_files)
 
+# -S only: nothing here is assembled, the markers are scraped out of the text.
+$(asm_offsets_asm): $(asm_offsets_src)
+	mkdir -p $(dir $@)
+	x86_64-elf-gcc -S $(kernel_c_flags) $< -o $@
+
+$(asm_offsets_inc): $(asm_offsets_asm) tools/gen_asm_offsets.py
+	mkdir -p $(dir $@)
+	python tools/gen_asm_offsets.py $< $@
+
+-include $(asm_offsets_dep)
+
+# Any .asm file may include the generated offsets, so all of them wait for
+# it and all of them get its directory on the NASM include path.
+$(kernel_asm_object_files) $(ap_trampoline_bin): $(asm_offsets_inc)
+
 $(kernel_asm_object_files): build/kernel/%.o : kernel/%.asm
 	mkdir -p $(dir $@) && \
-	nasm -f elf64 $(patsubst build/kernel/%.o, kernel/%.asm, $@) -o $@
+	nasm -f elf64 -i $(dir $(asm_offsets_inc)) \
+		$(patsubst build/kernel/%.o, kernel/%.asm, $@) -o $@
 
 # AP trampoline: flat 16/32/64-bit blob, wrapped as an ELF .rodata symbol so
 # the kernel can `memcpy` it to physical 0x8000 before INIT-SIPI-SIPI.
 $(ap_trampoline_bin): $(ap_trampoline_src)
-	mkdir -p $(dir $@) && nasm -f bin $< -o $@
+	mkdir -p $(dir $@) && nasm -f bin -i $(dir $(asm_offsets_inc)) $< -o $@
 
 # objcopy derives the _binary_* symbol names from the input path, so run it
 # from the blob's own directory: the symbols stay _binary_ap_trampoline_bin_*
@@ -101,7 +126,7 @@ $(symtab_gen_src): $(kernel_nosyms_elf) tools/gen_symtab.py
 
 $(symtab_gen_obj): $(symtab_gen_src)
 	mkdir -p $(dir $@)
-	x86_64-elf-gcc -c $(kernel_c_flags) $(CCDB) $< -o $@
+	x86_64-elf-gcc -c $(kernel_c_flags) $< -o $@
 
 # Link only , no disk image, no ISO. Useful for a quick compile check.
 .PHONY: kernel

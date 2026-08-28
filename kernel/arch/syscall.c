@@ -9,8 +9,8 @@
  * Dispatch is one giant switch over the SYS_* number in rax. Each arm
  * reads typed args from the frame's caller-saved register slots,
  * validates pointers against the caller's PML4 if needed, performs the
- * action, and returns a long that the asm path writes back into the
- * frame's rax slot (and thus userspace's rax on SYSRET).
+ * action, and writes the result into the frame's rax slot. The tail of the
+ * frame is a complete, validated ring-3 iretq image.
  *
  * Pointer validation is best-effort: anything taken from userspace is
  * range-checked against [0, USER_LOW_LIMIT) and walked via
@@ -20,6 +20,7 @@
  */
 #include <arch/syscall.h>
 #include <arch/gdt.h>
+#include <arch/percpu.h>
 #include <devices/io.h>
 #include <devices/pit.h>
 #include <devices/rtc.h>
@@ -53,6 +54,33 @@
 #define MSR_STAR 0xC0000081
 #define MSR_LSTAR 0xC0000082
 #define MSR_FMASK 0xC0000084
+
+#define RFLAGS_CF  (1ULL << 0)
+#define RFLAGS_FIXED (1ULL << 1)
+#define RFLAGS_PF  (1ULL << 2)
+#define RFLAGS_AF  (1ULL << 4)
+#define RFLAGS_ZF  (1ULL << 6)
+#define RFLAGS_SF  (1ULL << 7)
+#define RFLAGS_TF  (1ULL << 8)
+#define RFLAGS_IF  (1ULL << 9)
+#define RFLAGS_DF  (1ULL << 10)
+#define RFLAGS_OF  (1ULL << 11)
+#define RFLAGS_NT  (1ULL << 14)
+#define RFLAGS_AC  (1ULL << 18)
+#define RFLAGS_ID  (1ULL << 21)
+
+/* Flags that must never remain active while the SYSCALL entry stub executes.
+ * R11 still retains the userspace image, which the return validator sanitizes
+ * independently before iretq. */
+#define SYSCALL_ENTRY_RFLAGS_MASK \
+  (RFLAGS_TF | RFLAGS_IF | RFLAGS_DF | RFLAGS_NT | RFLAGS_AC)
+
+/* Arithmetic/debug state belongs to userspace. Privileged and virtual-8086
+ * controls are deliberately absent, reserved bits are cleared, and IF plus
+ * the architecturally fixed bit are restored below. */
+#define USER_RETURN_RFLAGS_ALLOWED \
+  (RFLAGS_CF | RFLAGS_PF | RFLAGS_AF | RFLAGS_ZF | RFLAGS_SF | RFLAGS_TF | \
+   RFLAGS_IF | RFLAGS_DF | RFLAGS_OF | RFLAGS_ID)
 
 #define GDT_RPL_USER     3
 #define SYSRET_STAR_BASE ((GDT_USER_CODE | GDT_RPL_USER) - 16)
@@ -173,7 +201,6 @@ struct linux_pollfd {
 };
 
 extern void syscall_entry(void);
-extern uint64_t kernel_rsp_top;
 
 static int resolve_path(const char *path, char *out, size_t max);
 static int user_buffer_ok(const void *pointer, uint64_t bytes, int writable);
@@ -685,8 +712,16 @@ static uint64_t rdmsr(uint32_t msr) {
   return ((uint64_t)hi << 32) | lo;
 }
 
-void syscall_init(uint64_t kernel_stack_top) {
-  kernel_rsp_top = kernel_stack_top;
+void syscall_init_this_cpu(uint64_t kernel_stack_top) {
+  struct cpu_local *cpu = percpu_this();
+  if (!cpu || cpu->self != cpu || !kernel_stack_top ||
+      (kernel_stack_top & 0xFULL)) {
+    log_write("syscall: invalid CPU-local entry stack", KERNEL, LOG_ERROR);
+    return;
+  }
+
+  cpu->kernel_rsp_top = kernel_stack_top;
+  cpu->user_rsp_save = 0;
 
   wrmsr(MSR_EFER, rdmsr(MSR_EFER) | 1); // SCE
   /* SYSRET forms SS as STAR[63:48] + 8 and CS as STAR[63:48] + 16.
@@ -695,9 +730,43 @@ void syscall_init(uint64_t kernel_stack_top) {
   wrmsr(MSR_STAR, ((uint64_t)SYSRET_STAR_BASE << 48) |
                   ((uint64_t)GDT_KERNEL_CODE << 32));
   wrmsr(MSR_LSTAR, (uint64_t)syscall_entry);
-  wrmsr(MSR_FMASK, 0x200); // mask IF
+  wrmsr(MSR_FMASK, SYSCALL_ENTRY_RFLAGS_MASK);
 
-  log_write("syscalls enabled", KERNEL, LOG_INFO);
+  log_write("syscalls enabled on CPU", KERNEL, LOG_INFO);
+}
+
+static int user_return_address_ok(uint64_t address, int allow_stack_top) {
+  if (address < USER_VA_MIN)
+    return 0;
+  if (address < USER_VA_MAX)
+    return 1;
+  if (address >= USER_STACK_LOW &&
+      address < USER_STACK_TOP + (uint64_t)allow_stack_top)
+    return 1;
+  return 0;
+}
+
+int syscall_prepare_return(struct syscall_frame *f) {
+  struct task *task = task_current();
+  const uint64_t user_cs = GDT_USER_CODE | GDT_RPL_USER;
+  const uint64_t user_ss = GDT_USER_DATA | GDT_RPL_USER;
+
+  if (!f || !task || !task->user_pml4)
+    return -1;
+  if (f->cs != user_cs || f->ss != user_ss)
+    return -1;
+  if (!user_return_address_ok(f->rip, 0) ||
+      !user_return_address_ok(f->rsp, 1))
+    return -1;
+
+  uint64_t rip_entry = vmm_entry_in(task->user_pml4, f->rip);
+  if (!(rip_entry & VMM_PRESENT) || !(rip_entry & VMM_USER) ||
+      (rip_entry & VMM_NX))
+    return -1;
+
+  f->rflags &= USER_RETURN_RFLAGS_ALLOWED;
+  f->rflags |= RFLAGS_FIXED | RFLAGS_IF;
+  return 0;
 }
 
 static long sys_write(long fd, const void *buf, long n) {
@@ -2395,7 +2464,8 @@ long syscall_dispatch(struct syscall_frame *f) {
     break;
   case SYS_TTY_INJECT:
     tty_inject_input((char)a1); // Push the ASCII char into the TTY ring
-    return 0;
+    ret = 0;
+    break;
   case SYS_TTY_READ_INPUT:
     ret = sys_tty_read_input((char *)(uintptr_t)a1, (uintptr_t)a2);
     break;
@@ -2514,5 +2584,10 @@ long syscall_dispatch(struct syscall_frame *f) {
     log_write_hex("unknown syscall =", num, KERNEL, LOG_ERROR);
   }
   f->rax = (uint64_t)ret;
+  if (syscall_prepare_return(f) != 0) {
+    log_write("syscall: rejected invalid ring-3 return frame", KERNEL,
+              LOG_ERROR);
+    task_exit(-11);
+  }
   return ret;
 }

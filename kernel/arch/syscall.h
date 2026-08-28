@@ -207,18 +207,29 @@ struct syscall_frame {
     uint64_t r11, rbx, rbp, r10;
     uint64_t r9,  r8,  rcx, rdx;
     uint64_t rsi, rdi, rax;
+    uint64_t rip, cs, rflags, rsp, ss;
 };
 
-_Static_assert(sizeof(struct syscall_frame) == 15 * sizeof(uint64_t),
+_Static_assert(sizeof(struct syscall_frame) == 20 * sizeof(uint64_t),
                "syscall_frame must match syscall.asm pushes");
 _Static_assert(offsetof(struct syscall_frame, r10) == 7 * sizeof(uint64_t),
                "syscall_frame.r10 must match syscall arg4 slot");
 _Static_assert(offsetof(struct syscall_frame, rax) == 14 * sizeof(uint64_t),
                "syscall_frame.rax must be the saved return-value slot");
+_Static_assert(offsetof(struct syscall_frame, rip) == 15 * sizeof(uint64_t),
+               "syscall_frame.rip must begin the iretq frame");
+_Static_assert(offsetof(struct syscall_frame, rsp) == 18 * sizeof(uint64_t),
+               "syscall_frame.rsp must match the iretq user-rsp slot");
+_Static_assert(offsetof(struct syscall_frame, ss) == 19 * sizeof(uint64_t),
+               "syscall_frame.ss must end the iretq frame");
 
-/* Program LSTAR / STAR / SFMASK and enable SCE. Called once at BSP boot
- * with the kernel stack to load into kernel_rsp_top. */
-void syscall_init(uint64_t kernel_stack_top);
+/* Program this CPU's LSTAR / STAR / SFMASK, enable SCE, and stage its initial
+ * ring-3 entry stack. Invoke once on the BSP and once from every AP. */
+void syscall_init_this_cpu(uint64_t kernel_stack_top);
+
+/* Validate and sanitize the ring-3 return portion of a completed frame.
+ * Returns zero when iretq may consume it. */
+int syscall_prepare_return(struct syscall_frame *f);
 
 /* Main dispatcher invoked from syscall.asm. Returns the long value that
  * will be loaded into rax for the userspace caller. */

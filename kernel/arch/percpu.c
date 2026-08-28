@@ -5,10 +5,10 @@
  * AP populates its slot from inside ap_main() BEFORE touching anything
  * that uses gs-relative addressing.
  *
- * GS_BASE + KERNEL_GS_BASE both get the same pointer. We don't actually
- * use SWAPGS (userspace doesn't touch GS) but keeping both MSRs in sync
- * means a stray SWAPGS , including one added later , won't leave GS
- * pointing at oblivion.
+ * While executing in the kernel, GS_BASE points at cpu_local and
+ * KERNEL_GS_BASE holds the userspace GS value (currently zero). A transition
+ * to userspace swaps those values; SYSCALL/interrupt entry swaps them back
+ * before any C code dereferences gs-relative state.
  */
 #include <arch/percpu.h>
 #include <utilities/log.h>
@@ -33,13 +33,12 @@ SINLINE uint64_t rdmsr(uint32_t msr) {
     return ((uint64_t)hi << 32) | lo;
 }
 
-static void set_gs_base(struct cpu_local *c) {
-    /* Set both GS_BASE and KERNEL_GS_BASE to the same value. We don't use
-     * SWAPGS (userspace doesn't touch gs), but staging the same pointer
-     * into both means a stray SWAPGS , including one we add later , won't
-     * leave GS pointing into oblivion. */
+static void arm_kernel_gs(struct cpu_local *c) {
+    /* Kernel state: ordinary GS references address cpu_local. SWAPGS moves
+     * that pointer into KERNEL_GS_BASE while ring 3 runs and installs the
+     * staged user value (zero until user GS is exposed) as the visible base. */
     wrmsr(MSR_GS_BASE,        (uint64_t)c);
-    wrmsr(MSR_KERNEL_GS_BASE, (uint64_t)c);
+    wrmsr(MSR_KERNEL_GS_BASE, 0);
 }
 
 void percpu_init_bsp(uint8_t bsp_lapic_id) {
@@ -54,7 +53,7 @@ void percpu_init_bsp(uint8_t bsp_lapic_id) {
     c->idle_task       = 0;
     c->tss             = 0;
     c->online          = 1;
-    set_gs_base(c);
+    arm_kernel_gs(c);
     log_write_hex("PERCPU: bsp gs_base   =", (uint64_t)c, KERNEL, LOG_INFO);
     log_write_hex("PERCPU: bsp lapic_id  =", bsp_lapic_id, KERNEL, LOG_INFO);
 }
@@ -76,7 +75,7 @@ void percpu_arm_gs_this(int cpu_id) {
     /* Called from the AP itself, very early in ap_main, BEFORE anything
      * uses gs-relative addressing. */
     if (cpu_id < 0 || cpu_id >= MAX_CPUS) return;
-    set_gs_base(&cpus[cpu_id]);
+    arm_kernel_gs(&cpus[cpu_id]);
 }
 
 struct cpu_local *percpu_get(int cpu_id) {

@@ -6,9 +6,10 @@
  * C code can fetch the struct base with a `mov rax, gs:0`.
  *
  * Layout is shared with asm: SYSCALL entry (kernel/arch/x86_64/cpu/syscall.asm)
- * loads kernel_rsp_top and stashes user_rsp_save by hard-coded offsets.
- * Any field reorder must update the offset macros below + the asm. The
- * static_asserts catch silent drift at compile time.
+ * loads kernel_rsp_top and uses user_rsp_save as short-lived scratch while
+ * leaving the ring-3 stack. The complete return state then lives in the
+ * task's syscall frame. Any field reorder must update the generated assembly
+ * offsets; the static_asserts below catch drift on the C side.
  *
  * The hardware TSS is NOT embedded here , its layout is fixed by the CPU
  * and the GDT descriptor needs its physical address. We hold a pointer to
@@ -33,7 +34,7 @@ struct cpu_local {
     uint8_t           lapic_id;         /* hardware APIC id                  */
     uint8_t           _pad[3];
     uint64_t          kernel_rsp_top;   /* SYSCALL entry: pop here           */
-    uint64_t          user_rsp_save;    /* SYSCALL entry: stash user rsp here*/
+    uint64_t          user_rsp_save;    /* entry-only user-rsp scratch       */
     struct task      *current;          /* running task on this CPU          */
     struct task      *idle_task;        /* per-CPU idle thread               */
     struct tss       *tss;              /* points into per-CPU TSS array     */
@@ -64,7 +65,8 @@ void              percpu_init_bsp(uint8_t bsp_lapic_id);
 /* AP entry: same for an AP slot. */
 void              percpu_init_ap(int cpu_id, uint8_t lapic_id);
 
-/* Load GS_BASE on the calling CPU to point at percpu_get(cpu_id). */
+/* Enter the kernel GS state on the calling CPU: GS_BASE points at the selected
+ * cpu_local and KERNEL_GS_BASE contains the initial user value (zero). */
 void              percpu_arm_gs_this(int cpu_id);
 
 /* Lookup by id / current. */

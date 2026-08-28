@@ -25,6 +25,7 @@
 #include <display/framebuffer.h>
 #include <drivers/sound/sb16.h>
 #include <loader/process.h>
+#include <arch/percpu.h>
 #include <memory/hhdm.h>
 #include <arch/gdt.h>
 #include <memory/heap.h>
@@ -67,12 +68,6 @@ static void fxstate_init(void *buf) {
     __asm__ volatile ("fxsave (%0)" :: "r"(buf) : "memory");
 }
 extern uint64_t *kernel_pml4;
-
-/* Globals owned by the SYSCALL entry stub. We re-stage these on every
- * context switch so that on the next user→kernel SYSCALL transition (or on
- * the next sysret return path) the correct per-task value is in place. */
-extern uint64_t kernel_rsp_top;     /* syscall.asm */
-extern uint64_t user_rsp_save;      /* syscall.asm */
 
 /* Free a process PML4 , defined in loader/process.c. */
 extern void free_user_pml4(uint64_t *pml4);
@@ -142,6 +137,8 @@ static struct task *idle_task = 0;
 static void user_task_trampoline(void);
 static void idle_thread(void);
 static void mark_task_exited(struct task *task, long code);
+extern void arch_enter_user(uint64_t entry, uint64_t user_rsp,
+                            uint64_t arg) NORETURN;
 
 static uint64_t irq_save(void) {
   uint64_t rflags;
@@ -309,6 +306,7 @@ static uint64_t build_initial_frame(void *kstack_base, void (*trampoline)(void))
 
 void sched_init(void) {
   memset(tasks, 0, sizeof(tasks));
+  struct cpu_local *cpu = percpu_this();
   /* Bootstrap: caller of sched_init becomes init task. No fake frame
    * needed , its rsp gets captured at the first context_switch. */
   struct task *t = alloc_slot();
@@ -319,16 +317,16 @@ void sched_init(void) {
   t->kthread_entry = 0;
   t->user_pml4 = 0;
   t->pml4_ref_count = 0;
-  /* The init task currently uses the boot SYSCALL kstack and the global
-   * user_rsp_save scratch. After the very first context_switch out, both
-   * will be re-staged for whatever task we switch to. */
-  t->syscall_kstack_top = kernel_rsp_top;
-  t->user_rsp_saved = 0;
+  /* syscall_init_this_cpu staged the BSP's bootstrap entry stack before the
+   * scheduler came online. Keep it in the init task so every task has a
+   * complete entry-stack contract even though init itself is kernel-only. */
+  t->syscall_kstack_top = cpu->kernel_rsp_top;
   alloc_rings_for(t);
   task_set_cwd_root(t);
   fxstate_init(t->fxstate);
   task_set_name(t, "init");
   current = t;
+  cpu->current = t;
   log_write("sched: init task pid=1 ready", KERNEL, LOG_INFO);
 
   /* Create idle through the normal spawn path, then detach it from the ready
@@ -339,6 +337,7 @@ void sched_init(void) {
     task_set_name(idle, "idle");
     ready_remove(idle);
     idle_task = idle;
+    cpu->idle_task = idle;
   }
   log_write("sched: idle task spawned", KERNEL, LOG_INFO);
 }
@@ -414,7 +413,6 @@ struct task *task_spawn(void (*entry)(void)) {
   t->saved_rsp = build_initial_frame(stack_base, kthread_trampoline);
   t->cr3 = virt_to_phys(kernel_pml4);
   t->syscall_kstack_top = stack_top;
-  t->user_rsp_saved = 0;
   t->user_entry = 0;
   t->user_rsp_initial = 0;
   t->fs_base = 0;
@@ -455,7 +453,6 @@ struct task *task_spawn_user(uint64_t *user_pml4, uint64_t entry,
   t->saved_rsp = build_initial_frame(stack_base, user_task_trampoline);
   t->cr3 = virt_to_phys(user_pml4);
   t->syscall_kstack_top = stack_top;
-  t->user_rsp_saved = user_rsp;
   t->user_entry = entry;
   t->user_rsp_initial = user_rsp;
   t->fs_base = 0;
@@ -535,7 +532,6 @@ int task_activate_reserved_user(struct task *t, uint64_t *user_pml4,
   t->pml4_ref_count = refs;
   t->user_entry = entry;
   t->user_rsp_initial = user_rsp;
-  t->user_rsp_saved = user_rsp;
   t->state = TASK_READY;
   ready_push(t);
   return 0;
@@ -576,7 +572,6 @@ struct task *task_spawn_thread(uint64_t entry, uint64_t user_stack) {
     /* Its kernel stack is its own, though: two threads sharing one would
      * corrupt each other the first time both entered a syscall. */
     t->syscall_kstack_top = stack_top;
-    t->user_rsp_saved = user_stack;
     t->user_entry = entry;
     t->user_rsp_initial = user_stack;
     t->fs_base = parent->fs_base;
@@ -599,24 +594,22 @@ struct task *task_spawn_thread(uint64_t entry, uint64_t user_stack) {
     return t;
 }
 
-/* Stage SYSCALL/ring-3 IRQ globals for `next` immediately before the
- * stack swap. These values are consumed by:
- *   - the SYSCALL stub (kernel_rsp_top): on the next user→kernel
- *     transition for `next`
- *   - syscall_entry's epilogue (user_rsp_save): if `next` was preempted
- *     mid-syscall, this is what gets popped into RSP just before sysret
- *   - any IRQ delivered while `next` runs in ring 3 (TSS RSP0)              */
+/* Stage CPU-local privilege-entry state immediately before the stack swap.
+ * A syscall frame owns its saved user RSP once entry is complete, so only the
+ * next kernel stack and TSS RSP0 need to follow the scheduled task. */
 static void stage_for(struct task *next) {
-  kernel_rsp_top = next->syscall_kstack_top;
-  user_rsp_save  = next->user_rsp_saved;
+  struct cpu_local *cpu = percpu_this();
+  cpu->kernel_rsp_top = next->syscall_kstack_top;
+  cpu->current = next;
   sched_wrmsr(MSR_FS_BASE, next->fs_base);
-  tss_set_rsp0(next->syscall_kstack_top);
+  /* Address this CPU's TSS explicitly. The legacy tss_set_rsp0() writes CPU 0
+   * unconditionally, which is only harmless while userspace never leaves the
+   * BSP. */
+  tss_set_rsp0_for(cpu->cpu_id, next->syscall_kstack_top);
 }
 
-/* Symmetric capture: park the global user-rsp scratch into `prev` so the
- * value survives across other tasks running. */
+/* FS is task state rather than entry scratch, so preserve it across switches. */
 static void capture_from(struct task *prev) {
-  prev->user_rsp_saved = user_rsp_save;
   prev->fs_base = sched_rdmsr(MSR_FS_BASE);
 }
 
@@ -1045,22 +1038,5 @@ static void user_task_trampoline(void) {
   uint64_t entry = current->user_entry;
   uint64_t rsp   = current->user_rsp_initial;
   uint64_t arg   = current->user_arg;
-
-  __asm__ volatile (
-      "cli                  \n"
-      "mov $0x1B, %%ax      \n"      /* user data | RPL=3 */
-      "mov %%ax, %%ds       \n"
-      "mov %%ax, %%es       \n"
-      "mov %%ax, %%fs       \n"
-      "mov %%ax, %%gs       \n"
-      "pushq $0x1B          \n"      /* SS */
-      "pushq %1             \n"      /* user RSP */
-      "pushq $0x202         \n"      /* RFLAGS */
-      "pushq $0x23          \n"      /* user CS */
-      "pushq %2             \n"      /* user RIP */
-      "iretq                \n"
-      :: "D"(arg), "r"(rsp), "r"(entry)  // "D" forces arg into RDI
-      : "rax", "memory"
-  );
-  __builtin_unreachable();
+  arch_enter_user(entry, rsp, arg);
 }

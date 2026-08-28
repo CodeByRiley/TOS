@@ -74,6 +74,8 @@ _Static_assert(offsetof(struct interrupt_frame, int_num) == 120,
                "ISR vector offset must match isr.asm");
 _Static_assert(offsetof(struct interrupt_frame, rip) == 136,
                "ISR RIP offset must match the CPU exception frame");
+_Static_assert(offsetof(struct interrupt_frame, cs) == 144,
+               "ISR CS offset must match the swapgs privilege check");
 
 void idt_init(void);
 
