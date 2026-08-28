@@ -40,6 +40,7 @@ exec "$cc" \
     -I "$src_dir/include" \
     -isystem "$gcc_include" \
     -DTOS_USE_MUSL \
+    -MMD -MF "${out%.elf}.d" \
     -I "$script_dir/.." \
     -I "$script_dir/../lib" \
     -I "$script_dir/../include" \
