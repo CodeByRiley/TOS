@@ -25,7 +25,7 @@
 #define GFX_GLYPH_W 8
 #define GFX_GLYPH_H 8
 
-/* ---------------- Rectangles -------------------------------------------- */
+/* Rectangles */
 
 struct gfx_rect {
     int x, y, w, h;
@@ -47,7 +47,7 @@ SINLINE int gfx_rect_contains(struct gfx_rect r, int x, int y) {
 struct gfx_rect gfx_rect_intersect(struct gfx_rect a, struct gfx_rect b);
 struct gfx_rect gfx_rect_inset(struct gfx_rect r, int n);
 
-/* ---------------- Surfaces ---------------------------------------------- */
+/* Surfaces */
 
 struct gfx_surface {
     uint32_t       *px;
@@ -67,7 +67,7 @@ SINLINE struct gfx_rect gfx_surface_bounds(const struct gfx_surface *s) {
     return gfx_rect_make(0, 0, s->w, s->h);
 }
 
-/* ---------------- Pixels and fills -------------------------------------- */
+/* Pixels and fills */
 
 void gfx_pixel(struct gfx_surface *s, int x, int y, uint32_t color);
 void gfx_blend(struct gfx_surface *s, int x, int y, uint32_t argb);
@@ -84,7 +84,7 @@ void gfx_frame(struct gfx_surface *s, struct gfx_rect r,
 void gfx_bevel(struct gfx_surface *s, struct gfx_rect r,
                uint32_t light, uint32_t dark, int thickness);
 
-/* ---------------- Blitting ---------------------------------------------- */
+/* Blitting */
 
 void gfx_blit(struct gfx_surface *dst, int dx, int dy,
               const struct gfx_surface *src, struct gfx_rect src_rect);

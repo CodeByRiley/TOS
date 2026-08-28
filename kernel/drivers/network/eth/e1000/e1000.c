@@ -123,7 +123,7 @@ static int e1000_alloc_rx_buffers(struct e1000_dev *nic) {
 }
 
 static void e1000_setup_rx_registers(struct e1000_dev *nic) {
-  E1000_WRITE(nic, REG_RCTRL, 0);
+  E1000_WRITE(nic, REG_RCTL, 0);
   E1000_WRITE(nic, REG_RXDESCLO, (u32)(nic->rx_ring_phys & 0xFFFFFFFF));
   E1000_WRITE(nic, REG_RXDESCHI, (u32)((nic->rx_ring_phys >> 32) & 0xFFFFFFFF));
   E1000_WRITE(nic, REG_RXDESCLEN,
@@ -134,7 +134,7 @@ static void e1000_setup_rx_registers(struct e1000_dev *nic) {
   u32 rctl = RCTL_EN | RCTL_BAM | RCTL_BSIZE_2048 | RCTL_SECRC;
   rctl |= RCTL_UPE;
   rctl |= RCTL_MPE;
-  E1000_WRITE(nic, REG_RCTRL, rctl);
+  E1000_WRITE(nic, REG_RCTL, rctl);
 }
 
 static int e1000_alloc_tx_ring(struct e1000_dev *nic) {
@@ -156,7 +156,7 @@ static int e1000_alloc_tx_ring(struct e1000_dev *nic) {
     nic->tx_buffers[i] = phys_to_virt(buf_phys);
     memset(nic->tx_buffers[i], 0, FRAME_SIZE);
     nic->tx_ring_virt[i].addr = buf_phys;
-    nic->tx_ring_virt[i].status = TSTA_DD;
+    nic->tx_ring_virt[i].status = TXD_STATUS_DD;
   }
 
   return 0;
@@ -194,7 +194,7 @@ static int e1000_tx(void *driver_data, const void *frame, uint16_t len) {
 
   uint32_t idx = nic->tx_current;
   struct e1000_tx_desc *desc = &nic->tx_ring_virt[idx];
-  if (!(desc->status & TSTA_DD)) {
+  if (!(desc->status & TXD_STATUS_DD)) {
     log_write("e1000: TX ring full! Cannot send reply", KERNEL, LOG_ERROR);
     return -1;
   }
@@ -208,7 +208,7 @@ static int e1000_tx(void *driver_data, const void *frame, uint16_t len) {
   desc->addr = nic->tx_buffer_phys[idx];
   desc->len = wire_len;
   desc->cso = 0;
-  desc->cmd = CMD_EOP | CMD_IFCS | CMD_RS;
+  desc->cmd = TXD_CMD_EOP | TXD_CMD_IFCS | TXD_CMD_RS;
   desc->status = 0;
   desc->css = 0;
   desc->special = 0;
@@ -232,8 +232,8 @@ static int e1000_init_hardware(struct e1000_dev *nic) {
   (void)E1000_READ(nic, REG_ICR);
 
   u32 ctrl = E1000_READ(nic, REG_CTRL);
-  E1000_WRITE(nic, REG_CTRL, ctrl | ECTRL_RST);
-  if (e1000_wait_clear(nic, REG_CTRL, ECTRL_RST) != 0) {
+  E1000_WRITE(nic, REG_CTRL, ctrl | CTRL_RST);
+  if (e1000_wait_clear(nic, REG_CTRL, CTRL_RST) != 0) {
     log_write("e1000: reset timed out", KERNEL, LOG_ERROR);
     return -1;
   }
@@ -242,7 +242,7 @@ static int e1000_init_hardware(struct e1000_dev *nic) {
   (void)E1000_READ(nic, REG_ICR);
 
   ctrl = E1000_READ(nic, REG_CTRL);
-  ctrl |= ECTRL_SLU | ECTRL_FD;
+  ctrl |= CTRL_SLU | CTRL_FD;
   E1000_WRITE(nic, REG_CTRL, ctrl);
 
   for (int i = 0; i < 128; i++) {

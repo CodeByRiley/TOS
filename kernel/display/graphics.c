@@ -8,7 +8,7 @@
 #include <display/fonts/font8x8.h>
 #include <utilities/string.h>
 
-/* ---------------- Rectangles -------------------------------------------- */
+/* Rectangles */
 
 struct gfx_rect gfx_rect_intersect(struct gfx_rect a, struct gfx_rect b) {
     int x0 = a.x > b.x ? a.x : b.x;
@@ -22,7 +22,7 @@ struct gfx_rect gfx_rect_inset(struct gfx_rect r, int n) {
     return gfx_rect_make(r.x + n, r.y + n, r.w - 2 * n, r.h - 2 * n);
 }
 
-/* ---------------- Surfaces ---------------------------------------------- */
+/* Surfaces */
 
 void gfx_surface_init(struct gfx_surface *s, uint32_t *px,
                       int w, int h, int stride) {
@@ -62,7 +62,7 @@ SINLINE uint32_t *row_at(const struct gfx_surface *s, int y) {
     return s->px + (size_t)y * (size_t)s->stride;
 }
 
-/* ---------------- Pixels ------------------------------------------------- */
+/* Pixels */
 
 void gfx_pixel(struct gfx_surface *s, int x, int y, uint32_t color) {
     if (!gfx_rect_contains(s->clip, x, y)) return;
@@ -87,7 +87,7 @@ void gfx_blend(struct gfx_surface *s, int x, int y, uint32_t argb) {
     blend_into(&row_at(s, y)[x], argb);
 }
 
-/* ---------------- Fills -------------------------------------------------- */
+/* Fills */
 
 void gfx_fill(struct gfx_surface *s, struct gfx_rect r, uint32_t color) {
     struct gfx_rect c = clip_span(s, r, 0, 0);
@@ -148,7 +148,7 @@ void gfx_bevel(struct gfx_surface *s, struct gfx_rect r,
     }
 }
 
-/* ---------------- Blitting ---------------------------------------------- */
+/* Blitting */
 
 static struct gfx_rect src_or_all(const struct gfx_surface *src,
                                   struct gfx_rect r) {
@@ -221,7 +221,7 @@ void gfx_blit_scaled(struct gfx_surface *dst, int dx, int dy,
     }
 }
 
-/* ---------------- Text --------------------------------------------------- */
+/* Text */
 
 static const uint8_t *glyph_rows(char c) {
     unsigned char u = (unsigned char)c;
@@ -303,7 +303,7 @@ int gfx_text_fit(const char *str, int scale, int max_w) {
     return n;
 }
 
-/* ---------------- Masks and images -------------------------------------- */
+/* Masks and images */
 
 void gfx_mask_multi(struct gfx_surface *s, int x, int y,
                     const uint8_t *mask, int mw, int mh,
@@ -338,7 +338,7 @@ void gfx_draw_image(struct gfx_surface *s, int x, int y,
     gfx_blit_scaled(s, x, y, &src, gfx_rect_make(0, 0, 0, 0), scale, 1);
 }
 
-/* ---------------- Sprites ------------------------------------------------ */
+/* Sprites */
 
 void gfx_sprite_set_mask(struct gfx_sprite *sp, const uint8_t *mask,
                          int mw, int mh,
