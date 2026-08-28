@@ -109,13 +109,7 @@ kernel: $(kernel_bin)
 
 .PHONY: clangd
 clangd:
-	@{ echo '['; \
-	    find build userspace/lib userspace/bin userspace/games \
-	        userspace/netsurf_compat -name '*.json' 2>/dev/null \
-	      | LC_ALL=C sort | xargs -r cat \
-	      | sed -e '$$s/,$$//'; \
-	    echo ']'; } > compile_commands.json
-	@echo "compile_commands.json: $$(grep -c '"file"' compile_commands.json) entries"
+	python tools/gen_compile_commands.py
 
 $(kernel_bin): $(kernel_object_files) $(symtab_gen_obj) $(linker_script)
 	@echo "==> Linking $@"
