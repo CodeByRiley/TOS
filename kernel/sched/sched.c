@@ -1010,10 +1010,11 @@ void sleep_ms_busy(uint32_t ms) { pit_delay_ms(ms); }
  * we halt. */
 static void idle_thread(void) {
   for (;;) {
-    /* Steady-state reaper. Reaching idle means no task is mid-syscall on a
-     * kstack we might free, and the table walk is only paid when the system
-     * has nothing better to do. alloc_slot covers the case where we never
-     * get here. */
+    /* Opportunistic reap. Reaching idle means no task is mid-syscall on a
+     * kstack we might free , but do not rely on it: a window manager that
+     * yields instead of sleeping is always runnable, so ready_pop never
+     * falls through to here and this never runs. task_reaper_thread_entry
+     * is the reaper that does. */
     task_reap_unclaimed();
     __asm__ volatile("sti; hlt");
     task_yield();
@@ -1260,6 +1261,36 @@ void task_reap(struct task *t) {
 
   /* pid=0 marks the slot free for alloc_slot. */
   memset(t, 0, sizeof(*t));
+}
+
+/* Ticks between reaper sweeps. The walk is O(MAX_TASKS) over a 32-entry
+ * table, so this can afford to be short; it is the latency between a
+ * spawn()ed child exiting and its slot, kstack and address space coming
+ * back, and anything waiting on that child sees exactly this delay. */
+#define REAPER_INTERVAL_TICKS 10
+
+/* Zombie reaper.
+ *
+ * Reaping used to have two triggers, and in practice neither fired. The
+ * "steady state" one was idle_thread, which never runs while a window
+ * manager yields instead of sleeping , it stays runnable, so ready_pop
+ * never falls through to idle. That left alloc_slot's fallback, which only
+ * fires once every one of MAX_TASKS slots is taken. Unclaimed zombies from
+ * spawn() therefore sat holding their kstack, address space and side
+ * allocations until the table filled completely, which under load meant
+ * seconds, and made "is that child gone yet" answer no long after it had
+ * exited.
+ *
+ * A sleeping thread does not depend on the system ever being idle:
+ * sched_wake_sleepers puts it back on the ready queue from the timer, and
+ * SCHED_HIGH_BURST guarantees a NORMAL task a turn even against a spinning
+ * HIGH one. Reaping here also keeps the page-table teardown out of
+ * task_exit, which runs with interrupts disabled. */
+void task_reaper_thread_entry(void) {
+  for (;;) {
+    task_reap_unclaimed();
+    task_sleep_ticks(REAPER_INTERVAL_TICKS);
+  }
 }
 
 int task_reap_unclaimed(void) {

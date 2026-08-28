@@ -359,4 +359,7 @@ void sched_wake_sleepers(void);
 void task_reap(struct task *t);
 int task_reap_unclaimed(void);
 
+/* Entry point for the zombie reaper kthread. Spawn once at boot. */
+void task_reaper_thread_entry(void);
+
 #endif

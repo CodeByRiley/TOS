@@ -212,6 +212,9 @@ static void late_init(void) {
   task_spawn(udp_echo_thread);
   log_write("udp: echo server thread spawned", KERNEL, LOG_INFO);
 
+  task_spawn(task_reaper_thread_entry);
+  log_write("sched: zombie reaper thread spawned", KERNEL, LOG_INFO);
+
 }
 
 /* Ticks to wait for winman to register before concluding it is not coming.
