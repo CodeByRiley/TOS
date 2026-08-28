@@ -62,6 +62,16 @@ searched in that order; paths containing `/` are used directly. `PATH=...` and
 Requires an `x86_64-elf` cross toolchain, `nasm`, and WSL with `grub-mkimage`,
 `xorriso`, `mtools`, and `dosfstools` for the disk image and ISO.
 
+HolyD is a submodule ([CodeByRiley/HolyD](https://github.com/CodeByRiley/HolyD)),
+so a clone needs it too , without it `userspace/bin/holyd` is an empty
+directory and the build stops with a message saying so:
+
+```bash
+git clone --recursive https://github.com/CodeByRiley/TOS.git
+# already cloned without it:
+git submodule update --init
+```
+
 ```bash
 mingw32-make -j12 build-x86_64
 ```

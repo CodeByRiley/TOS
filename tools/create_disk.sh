@@ -16,16 +16,24 @@ mkdir -p "$(dirname "$IMG")"
 payloads=(
 	"rootfs/readme.txt::readme.txt"
 
-	"rootfs/holyd/array.hd::holyd/tests/array.hd"
-	"rootfs/holyd/conditionals.hd::holyd/tests/conditionals.hd"
-	"rootfs/holyd/strings.hd::holyd/tests/strings.hd"
-	"rootfs/holyd/hello.hd::holyd/tests/hello.hd"
-	"rootfs/holyd/math.hd::holyd/tests/math.hd"
-	"rootfs/holyd/functions.hd::holyd/tests/functions.hd"
-	"rootfs/holyd/no_semis.hd::holyd/tests/no_semis.hd"
-	"rootfs/holyd/holyc_d_style.hd::holyd/tests/holyc_d_style.hd"
-	"rootfs/holyd/net.hd::holyd/tests/net.hd"
-	"rootfs/holyd/window.hd::holyd/tests/window.hd"
+	# The .hd scripts come from the HolyD submodule, which is their only
+	# home now , edit them in userspace/bin/holyd and commit there.
+	#
+	# The split between the two directories is load-bearing: `holyd --test`
+	# runs every .hd under holyd/tests and waits for each to finish, so a
+	# script that waits on a person or on the network would hang the run.
+	# Those are samples, and get run by path: holyd holyd/samples/gui.hd
+	"userspace/bin/holyd/tests/array.hd::holyd/tests/array.hd"
+	"userspace/bin/holyd/tests/conditionals.hd::holyd/tests/conditionals.hd"
+	"userspace/bin/holyd/tests/strings.hd::holyd/tests/strings.hd"
+	"userspace/bin/holyd/tests/hello.hd::holyd/tests/hello.hd"
+	"userspace/bin/holyd/tests/math.hd::holyd/tests/math.hd"
+	"userspace/bin/holyd/tests/functions.hd::holyd/tests/functions.hd"
+	"userspace/bin/holyd/tests/no_semis.hd::holyd/tests/no_semis.hd"
+	"userspace/bin/holyd/tests/holyc_d_style.hd::holyd/tests/holyc_d_style.hd"
+	"userspace/bin/holyd/samples/window.hd::holyd/samples/window.hd"
+	"userspace/bin/holyd/samples/gui.hd::holyd/samples/gui.hd"
+	"userspace/bin/holyd/samples/net.hd::holyd/samples/net.hd"
 
 	"rootfs/system/fonts/SansDisplayStatic.ttf::system/fonts/sansdisplaystatic.ttf"
 	"rootfs/system/fonts/SansDisplayVariable.ttf::system/fonts/sansdisplayvariable.ttf"
@@ -64,7 +72,7 @@ payloads=(
 	"userspace/bin/pkill/pkill.elf::system/bin/pkill.elf"
 	"userspace/bin/winman/winman.elf::system/bin/winman.elf"
 	"userspace/bin/plist/plist.elf::system/bin/plist.elf"
-	"userspace/bin/holyd/holyd.elf::system/bin/holyd.elf"
+	"userspace/bin/holyd.elf::system/bin/holyd.elf"
 	"userspace/bin/notepad/notepad.elf::system/bin/notepad.elf"
 	"userspace/bin/sh/sh.elf::system/bin/sh.elf"
 	"userspace/bin/ls/ls.elf::system/bin/ls.elf"

@@ -22,6 +22,8 @@ kernel_c_flags := -I kernel -ffreestanding -mno-red-zone -mcmodel=kernel -fno-pi
 
 kernel_dep_files := $(kernel_c_object_files:.o=.d)
 
+CCDB = -MJ $@.json
+
 linker_script := boot/x86_64/linker.ld
 iso_dir       := boot/x86_64/iso
 kernel_bin    := dist/x86_64/kernel.bin
@@ -31,7 +33,9 @@ BUILD_DOOM ?= 0
 BUILD_NETSURF ?= 0
 
 nvidia_firmware_files := $(wildcard rootfs/firmware/*.bin)
-holyd_sample_files := $(wildcard rootfs/holyd/*.hd)
+# The .hd scripts live in the HolyD submodule now, not under rootfs.
+holyd_sample_files := $(wildcard userspace/bin/holyd/tests/*.hd) \
+                      $(wildcard userspace/bin/holyd/samples/*.hd)
 icon_files := $(wildcard rootfs/system/icons/*.bmp)
 rootfs_payload_files := rootfs/readme.txt \
                         rootfs/music/beethoven.wav \
@@ -41,7 +45,7 @@ rootfs_payload_files := rootfs/readme.txt \
 
 $(kernel_c_object_files): build/kernel/%.o : kernel/%.c
 	mkdir -p $(dir $@) && \
-	x86_64-elf-gcc -c $(kernel_c_flags) $(patsubst build/kernel/%.o, kernel/%.c, $@) -o $@
+	x86_64-elf-gcc -c $(kernel_c_flags) $(CCDB) $(patsubst build/kernel/%.o, kernel/%.c, $@) -o $@
 
 # Pull in the generated header dependencies. Leading '-' so a clean tree (no
 # .d files yet) is not an error.
@@ -75,8 +79,8 @@ endif
 $(disk_img): userspace tools/create_disk.sh $(rootfs_payload_files) | $(kernel_bin)
 	@echo "Creating Disk Image"
 	@mkdir -p $(dir $@)
-	wsl bash -lc "cd \"\$$(wslpath '$(CURDIR)')\" && \
-		bash -x tools/create_disk.sh"
+	@wsl bash -lc "cd \"\$$(wslpath '$(CURDIR)')\" && \
+		bash tools/create_disk.sh"
 	@test -s "$@"
 	@echo "Disk Image Finished"
 
@@ -97,11 +101,21 @@ $(symtab_gen_src): $(kernel_nosyms_elf) tools/gen_symtab.py
 
 $(symtab_gen_obj): $(symtab_gen_src)
 	mkdir -p $(dir $@)
-	x86_64-elf-gcc -c $(kernel_c_flags) $< -o $@
+	x86_64-elf-gcc -c $(kernel_c_flags) $(CCDB) $< -o $@
 
 # Link only , no disk image, no ISO. Useful for a quick compile check.
 .PHONY: kernel
 kernel: $(kernel_bin)
+
+.PHONY: clangd
+clangd:
+	@{ echo '['; \
+	    find build userspace/lib userspace/bin userspace/games \
+	        userspace/netsurf_compat -name '*.json' 2>/dev/null \
+	      | LC_ALL=C sort | xargs -r cat \
+	      | sed -e '$$s/,$$//'; \
+	    echo ']'; } > compile_commands.json
+	@echo "compile_commands.json: $$(grep -c '"file"' compile_commands.json) entries"
 
 $(kernel_bin): $(kernel_object_files) $(symtab_gen_obj) $(linker_script)
 	@echo "==> Linking $@"
@@ -133,6 +147,7 @@ build-x86_64: $(kernel_bin) $(disk_img)
 			-o dist/x86_64/kernel.iso \
 			$(iso_dir) \
 	"
+
 
 # --- host + QEMU regression suites -------------------------------------
 HOST_CC ?= gcc
@@ -202,17 +217,17 @@ $(HOST_TEST_DIR)/fb_damage_test.exe: tests/fb_damage_test.c | $(HOST_TEST_DIR)
 	$(HOST_CC) $(HOST_TEST_CFLAGS) $< -o $@
 
 $(HOST_TEST_DIR)/holyd_compiler_test.exe: tests/holyd_compiler_test.c \
-		userspace/bin/holyd/compiler.c userspace/bin/holyd/compiler.h \
-		userspace/bin/holyd/eval.c userspace/bin/holyd/eval.h \
-		userspace/bin/holyd/lexer/lexer.c userspace/bin/holyd/lexer/lexer.h \
-		userspace/bin/holyd/parser/parser.c userspace/bin/holyd/parser/parser.h \
-		userspace/bin/holyd/ast/ast.c userspace/bin/holyd/ast/ast.h \
-		tests/holyd_ffi_stub.c userspace/bin/holyd/ffi.h \
+		userspace/bin/holyd/src/compiler.c userspace/bin/holyd/src/compiler.h \
+		userspace/bin/holyd/src/eval.c userspace/bin/holyd/src/eval.h \
+		userspace/bin/holyd/src/lexer/lexer.c userspace/bin/holyd/src/lexer/lexer.h \
+		userspace/bin/holyd/src/parser/parser.c userspace/bin/holyd/src/parser/parser.h \
+		userspace/bin/holyd/src/ast/ast.c userspace/bin/holyd/src/ast/ast.h \
+		tests/holyd_ffi_stub.c userspace/bin/holyd/src/ffi.h \
 		| $(HOST_TEST_DIR)
-	$(HOST_CC) $(HOST_TEST_CFLAGS) -I userspace -I userspace/bin/holyd \
-		tests/holyd_compiler_test.c userspace/bin/holyd/compiler.c \
-		userspace/bin/holyd/eval.c userspace/bin/holyd/lexer/lexer.c \
-		userspace/bin/holyd/parser/parser.c userspace/bin/holyd/ast/ast.c \
+	$(HOST_CC) $(HOST_TEST_CFLAGS) -I userspace -I userspace/bin/holyd/src \
+		tests/holyd_compiler_test.c userspace/bin/holyd/src/compiler.c \
+		userspace/bin/holyd/src/eval.c userspace/bin/holyd/src/lexer/lexer.c \
+		userspace/bin/holyd/src/parser/parser.c userspace/bin/holyd/src/ast/ast.c \
 		tests/holyd_ffi_stub.c \
 		-o $@
 
@@ -224,6 +239,18 @@ test-host: $(HOST_TEST_BINS)
 		echo "==> $$test_bin"; \
 		"$$test_bin"; \
 	done
+
+# --- holyd for Windows ----------------------------------------------------
+#
+# HolyD builds as a native Windows program as well as into the image. That
+# build is the submodule's own , it has a Makefile, and keeping a second
+# source list here is exactly how the two would drift. This target is a
+# convenience so it still runs from the top of the TOS tree.
+.PHONY: holyd-win
+holyd-win:
+	$(MAKE) -C userspace/bin/holyd
+	@echo "built userspace/bin/holyd/holyd.exe , run it from that directory:"
+	@echo "  ./holyd.exe samples/gui.hd"
 
 .PHONY: test-qemu-heavy test-heavy
 test-qemu-heavy: build-x86_64

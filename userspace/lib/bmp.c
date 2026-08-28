@@ -12,6 +12,16 @@
 #include "bmp.h"
 #include <lib/syscall.h>
 
+#ifdef _WIN32
+/* Spelled out rather than pulled from <stdio.h> or <io.h>: every MinGW
+ * header that defines SEEK_* also redeclares open/close/unlink with
+ * prototypes that disagree with syscall.h's (int where it says long), and
+ * syscall.h's are the ones this file is written against. The CRT satisfies
+ * them at link time either way, and these two values are fixed. */
+#define BMP_SEEK_SET 0
+#define BMP_SEEK_END 2
+#endif
+
 extern void *malloc(size_t n);
 extern void  free(void *p);
 
@@ -63,35 +73,53 @@ static uint32_t chan(uint32_t px, uint32_t mask, int shift, int width) {
     return v >> (width - 8);
 }
 
+/* Length of an open file, or -1.
+ *
+ * TOS answers this with fstat_raw. Nothing else has that syscall , holyd's
+ * Windows build links this file for its font and sprite drawing , so there
+ * the size comes from seeking to the end and back. */
+static long file_size(int fd) {
+#ifdef _WIN32
+    long end = (long)lseek(fd, 0, BMP_SEEK_END);
+    if (end < 0) return -1;
+    if (lseek(fd, 0, BMP_SEEK_SET) < 0) return -1;
+    return end;
+#else
+    struct stat_user st;
+    if (fstat_raw(fd, &st) != 0) return -1;
+    return (long)st.size;
+#endif
+}
+
 static uint8_t *read_whole_file(const char *path, uint32_t *size_out) {
     long fd = open(path, 0);
     if (fd < 0) return 0;
 
-    struct stat_user st;
-    if (fstat_raw((int)fd, &st) != 0 || st.size == 0) {
+    long size = file_size((int)fd);
+    if (size <= 0) {
         close((int)fd);
         return 0;
     }
 
-    uint8_t *buf = (uint8_t *)malloc((size_t)st.size);
+    uint8_t *buf = (uint8_t *)malloc((size_t)size);
     if (!buf) {
         close((int)fd);
         return 0;
     }
 
     size_t got = 0;
-    while (got < st.size) {
-        long n = read((int)fd, buf + got, (size_t)(st.size - got));
+    while (got < (size_t)size) {
+        long n = read((int)fd, buf + got, (size_t)((size_t)size - got));
         if (n <= 0) break;
         got += (size_t)n;
     }
     close((int)fd);
 
-    if (got != st.size) {
+    if (got != (size_t)size) {
         free(buf);
         return 0;
     }
-    *size_out = (uint32_t)st.size;
+    *size_out = (uint32_t)size;
     return buf;
 }
 

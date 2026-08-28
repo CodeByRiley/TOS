@@ -16,10 +16,16 @@
  * calls, this stub stops being sufficient and the test needs a real table
  * of host-safe natives instead.
  */
-#include "../userspace/bin/holyd/ffi.h"
+#include "../userspace/bin/holyd/src/ffi.h"
 
 NativeFn ffi_lookup_native(const char *name, int len) {
   (void)name;
   (void)len;
   return 0;
 }
+
+/* The real one predefines the windowing constants. Defining nothing is the
+ * honest host answer for the same reason: a test program that names EV_QUIT
+ * should fail to resolve it, because on the host there is no window manager
+ * to have produced it. */
+void ffi_define_globals(Environment *env) { (void)env; }

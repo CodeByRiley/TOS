@@ -1,0 +1,3 @@
+[submodule "userspace/bin/holyd"]
+	path = userspace/bin/holyd
+	url = https://github.com/CodeByRiley/HolyD.git
