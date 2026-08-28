@@ -1,5 +1,14 @@
 [
 	{
+    "label": "Create Disk",
+    "command": "wsl bash -lc 'cd /mnt/e/Projects/Weird/TOS && ./tools/create_disk.sh'",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "shell": "system",
+    "show_summary": true,
+    "show_command": true,
+	},
+	{
     "label": "Build",
     "command": "C:/msys64/usr/bin/bash.exe",
     "args": ["-lc", "cd /e/Projects/Weird/TOS && ./tools/build.bat"],

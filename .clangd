@@ -1,23 +1,30 @@
 CompileFlags:
   Add:
-    - "-IE:/Projects/Weird/TOS/kernel"
-    - "-IE:/Projects/Weird/TOS/userspace"
-    - "-IE:/Projects/Weird/TOS/userspace/include"
-    - "-IE:/Projects/Weird/TOS/userspace/lib"
-    - "-IE:/Projects/Weird/TOS/userspace/lib/libc"
-    - "-IE:/Projects/Weird/TOS/userspace/lib/libc/musl"
-    - "-IE:/Projects/Weird/TOS/userspace/lib/libc/musl-1.2.6/include"
+    - "-I./kernel"
+    - "-I./userspace"
+    - "-I./userspace/libc/musl-1.2.6/include/"
+    - "-I./userspace/libc/musl-1.2.6/arch/x86_64"
+    - "-ferror-limit=0"
+  CompilationDatabase: build
 
 Diagnostics:
+  UnusedIncludes: None
   Suppress:
-    - Wunused-includes
     - Wunused-variable
     - Wpointer-to-int-cast
     - Wint-to-void-pointer-cast
     - Wdiscarded-qualifiers
+  ClangTidy:
+    Add:
+      - bugprone-*
+      - performance-*
+      - portability-*
+    Remove:
+      - bugprone-easily-swappable-parameters
+      - bugprone-reserved-identifier
+      - performance-no-int-to-ptr
 
 ---
-
 If:
   PathMatch: ".*\\.(c|h)$"
 
@@ -29,3 +36,11 @@ CompileFlags:
     - "-xc"
     - "-std=gnu23"
     - "-ffreestanding"
+
+---
+If:
+  PathMatch: .*/kernel/.*
+CompileFlags:
+  Add:
+    - "-mno-red-zone"
+    - "-mcmodel=kernel"

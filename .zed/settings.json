@@ -1,0 +1,20 @@
+{
+	"file_scan_exclusions": ["**/build/**", "**/dist/**"],
+	"lsp": {
+		"clangd": {
+			// Omit "binary" entirely to let the extension manage clangd, or pin one:
+			// "binary": { "path": "C:/Program Files/LLVM/bin/clangd.exe" },
+			"binary": {
+				"path": "C:/msys64/ucrt64/bin/clangd.exe",
+				"arguments": [
+					"--background-index",
+					"--clang-tidy",
+					"--header-insertion=never",
+					"--completion-style=detailed",
+					"--pch-storage=memory",
+					"-j=8",
+				],
+			},
+		},
+	},
+}
