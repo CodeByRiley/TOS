@@ -332,8 +332,6 @@ static int fb_w, fb_h, fb_stride;
 static int desktop_dirty = 0;
 static int dirty_x = 0, dirty_y = 0, dirty_w = 0, dirty_h = 0;
 
-#define MAX_WINDOWS 8
-
 struct window {
   uint32_t *surface;  /* page-aligned, owned by winman          */
   void *surface_raw;  /* original malloc ptr for free()         */

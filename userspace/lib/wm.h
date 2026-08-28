@@ -55,6 +55,8 @@ enum {
     WM_PROMPT_NO     = 2, /* No , confirm dialogs only             */
 };
 
+#define MAX_WINDOWS 64
+
 /* ---------------- Window handle ---------------------------------------- */
 /* Returned by wm_window_create. `surface_va` is the page-aligned base of
  * the shared BGRA pixel buffer mapped into the client's address space ,
