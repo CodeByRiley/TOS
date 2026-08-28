@@ -99,6 +99,12 @@ void task_inherit_cwd(struct task *child, struct task *parent)
     child->files->cwd[i] = '\0';
 }
 
+void task_inherit_tty(struct task *child, struct task *parent) {
+  if (!child)
+    return;
+  child->tty = parent ? parent->tty : 0;
+}
+
 extern void context_switch(uint64_t *old_rsp_ptr, uint64_t new_rsp,
                            uint64_t new_cr3, void *old_fxstate,
                            void *new_fxstate);
@@ -644,6 +650,7 @@ struct task *task_spawn_user(uint64_t *user_pml4, uint64_t entry,
   *t->vm->pml4_ref_count = 1;
 
   task_inherit_cwd(t, task_current());
+  task_inherit_tty(t, task_current());
   fxstate_init(t->context->fxstate);
 
   ready_push(t);
@@ -684,6 +691,7 @@ struct task *task_reserve_user(int parent_pid) {
     return 0;
   }
   task_inherit_cwd(t, task_current());
+  task_inherit_tty(t, task_current());
   fxstate_init(t->context->fxstate);
   return t;
 }
@@ -775,6 +783,7 @@ struct task *task_spawn_thread(uint64_t entry, uint64_t user_stack) {
   t->context->fs_base = parent->context->fs_base;
 
   task_inherit_cwd(t, parent);
+  task_inherit_tty(t, parent);
   fxstate_init(t->context->fxstate);
 
   ready_push(t);

@@ -35,25 +35,113 @@
 #define TTF_CELL_H   18
 
 #define TTY_INPUT_SIZE 256
-static char tty_input_buf[TTY_INPUT_SIZE];
-static volatile int tty_input_head = 0;
-static volatile int tty_input_tail = 0;
 
-void tty_inject_input(char c) {
-    int next = (tty_input_head + 1) % TTY_INPUT_SIZE;
-    if (next != tty_input_tail) {
-        tty_input_buf[tty_input_head] = c;
-        tty_input_head = next;
+_Static_assert((DRAIN_RING_SIZE & (DRAIN_RING_SIZE - 1)) == 0,
+               "drain ring must be pow2");
+
+/* One channel: keystrokes in, text out, nothing else. The grid, the glyph
+ * scale and the framebuffer live outside this struct because only channel
+ * TTY_KERNEL has them , see the header. */
+struct tty_chan {
+    char in[TTY_INPUT_SIZE];
+    volatile int in_head, in_tail;
+
+    char drain[DRAIN_RING_SIZE];
+    volatile int drain_head, drain_tail;
+
+    int open;
+};
+
+/* Channel 0 is open before anything runs and is never closed: the kernel
+ * log writes to it from early boot, well before tty_init. */
+static struct tty_chan chans[TTY_MAX] = {
+    [TTY_KERNEL] = { .open = 1 },
+};
+
+static int chan_valid(int idx) {
+    return idx >= 0 && idx < TTY_MAX && chans[idx].open;
+}
+
+static void chan_inject(struct tty_chan *ch, char c) {
+    int next = (ch->in_head + 1) % TTY_INPUT_SIZE;
+    if (next != ch->in_tail) {
+        ch->in[ch->in_head] = c;
+        ch->in_head = next;
     }
 }
 
-size_t tty_read_input(char *buf, size_t max) {
+static size_t chan_read(struct tty_chan *ch, char *buf, size_t max) {
     size_t count = 0;
-    while (count < max && tty_input_tail != tty_input_head) {
-        buf[count++] = tty_input_buf[tty_input_tail];
-        tty_input_tail = (tty_input_tail + 1) % TTY_INPUT_SIZE;
+    while (count < max && ch->in_tail != ch->in_head) {
+        buf[count++] = ch->in[ch->in_tail];
+        ch->in_tail = (ch->in_tail + 1) % TTY_INPUT_SIZE;
     }
     return count;
+}
+
+static void chan_drain_push(struct tty_chan *ch, char c) {
+    int next = (ch->drain_head + 1) & DRAIN_RING_MASK;
+    if (next == ch->drain_tail) {
+        /* Drop oldest to keep the newest. */
+        ch->drain_tail = (ch->drain_tail + 1) & DRAIN_RING_MASK;
+    }
+    ch->drain[ch->drain_head] = c;
+    ch->drain_head = next;
+}
+
+static size_t chan_drain(struct tty_chan *ch, char *out, size_t max) {
+    size_t n = 0;
+    while (n < max && ch->drain_tail != ch->drain_head) {
+        out[n++] = ch->drain[ch->drain_tail];
+        ch->drain_tail = (ch->drain_tail + 1) & DRAIN_RING_MASK;
+    }
+    return n;
+}
+
+void tty_inject_input(char c) { tty_inject_input_ch(TTY_KERNEL, c); }
+
+size_t tty_read_input(char *buf, size_t max) {
+    return tty_read_input_ch(TTY_KERNEL, buf, max);
+}
+
+void tty_inject_input_ch(int idx, char c) {
+    if (!chan_valid(idx))
+        return;
+    chan_inject(&chans[idx], c);
+}
+
+size_t tty_read_input_ch(int idx, char *buf, size_t max) {
+    if (!chan_valid(idx) || !buf)
+        return 0;
+    return chan_read(&chans[idx], buf, max);
+}
+
+size_t tty_drain_ch(int idx, char *out, size_t max) {
+    if (!chan_valid(idx) || !out)
+        return 0;
+    return chan_drain(&chans[idx], out, max);
+}
+
+int tty_is_open(int idx) { return chan_valid(idx); }
+
+int tty_alloc(void) {
+    for (int i = 1; i < TTY_MAX; i++) {
+        if (chans[i].open)
+            continue;
+        chans[i].in_head = chans[i].in_tail = 0;
+        chans[i].drain_head = chans[i].drain_tail = 0;
+        chans[i].open = 1;
+        return i;
+    }
+    return -1;
+}
+
+void tty_release(int idx) {
+    if (idx <= TTY_KERNEL || idx >= TTY_MAX)
+        return;
+    chans[idx].open = 0;
+    chans[idx].in_head = chans[idx].in_tail = 0;
+    chans[idx].drain_head = chans[idx].drain_tail = 0;
 }
 
 /* Font-derived cell metrics, filled on first TTF draw. The font is
@@ -77,8 +165,6 @@ static void ttf_measure(void) {
 }
 
 
-_Static_assert((DRAIN_RING_SIZE & DRAIN_RING_MASK) == 0, "ring must be pow2");
-
 static int     cols, rows;
 static int     cx, cy;
 static int     scale = TTY_SCALE_MIN;
@@ -95,13 +181,6 @@ static uint32_t *fb;
  * tty_init from TTY_FG/TTY_BG. 8 KiB BSS. Per-row glyph draw becomes a
  * single memcpy(32 B) instead of 8 conditional pixel writes. */
 static uint32_t glyph_lut[256][FONT_GLYPH_W];
-
-/* Userspace winman can drain raw chars via tty_drain so it renders its own
- * console window. Independent from the grid (which only matters when the
- * kernel is doing its own drawing). */
-static char    drain_buf[DRAIN_RING_SIZE];
-static volatile int drain_head = 0;
-static volatile int drain_tail = 0;
 
 /* Modify cell_width and cell_height to check for TTF */
 static int cell_width(void) {
@@ -207,15 +286,10 @@ static void newline(void) {
     if (cy >= rows) { scroll_one(); cy = rows - 1; }
 }
 
-static void drain_push(char c) {
-    int next = (drain_head + 1) & DRAIN_RING_MASK;
-    if (next == drain_tail) {
-        /* Drop oldest to keep the newest. */
-        drain_tail = (drain_tail + 1) & DRAIN_RING_MASK;
-    }
-    drain_buf[drain_head] = c;
-    drain_head = next;
-}
+/* Everything below this point is the kernel-rendered channel, so its drain
+ * pushes always target TTY_KERNEL. Other channels reach their ring through
+ * the _ch entry points at the bottom of the file. */
+static void drain_push(char c) { chan_drain_push(&chans[TTY_KERNEL], c); }
 
 static void discard_saved_grid(void) {
     if (saved_grid) {
@@ -418,12 +492,67 @@ void tty_set_active(int on) {
 int tty_is_active(void) { return active; }
 
 size_t tty_drain(char *out, size_t max) {
-    size_t n = 0;
-    while (n < max && drain_tail != drain_head) {
-        out[n++] = drain_buf[drain_tail];
-        drain_tail = (drain_tail + 1) & DRAIN_RING_MASK;
+    return tty_drain_ch(TTY_KERNEL, out, max);
+}
+
+/* --- channel-addressed writes -----------------------------------------
+ *
+ * Channel 0 goes through the grid path above so the kernel keeps rendering
+ * it. The others have no grid: their whole state is the drain ring, and the
+ * control codes are exactly what tells winman to clear, save, restore or
+ * rescale the console window mirroring them. */
+
+void tty_write_ch(int idx, const char *buf, size_t n) {
+    if (!buf)
+        return;
+    if (idx == TTY_KERNEL) {
+        tty_write(buf, n);
+        return;
     }
-    return n;
+    if (!chan_valid(idx))
+        return;
+    for (size_t i = 0; i < n; i++)
+        chan_drain_push(&chans[idx], buf[i]);
+}
+
+void tty_clear_ch(int idx) {
+    if (idx == TTY_KERNEL) {
+        tty_clear();
+        return;
+    }
+    if (!chan_valid(idx))
+        return;
+    chan_drain_push(&chans[idx], TTY_CTRL_CLEAR);
+}
+
+int tty_push_ch(int idx) {
+    if (idx == TTY_KERNEL)
+        return tty_push();
+    if (!chan_valid(idx))
+        return -1;
+    chan_drain_push(&chans[idx], TTY_CTRL_PUSH);
+    return 0;
+}
+
+int tty_pop_ch(int idx) {
+    if (idx == TTY_KERNEL)
+        return tty_pop();
+    if (!chan_valid(idx))
+        return -1;
+    chan_drain_push(&chans[idx], TTY_CTRL_POP);
+    return 0;
+}
+
+/* No grid to reflow off-channel, so there is no scale to return: winman
+ * owns the console's scale and clamps it. 0 means "code delivered". */
+int tty_zoom_ch(int idx, int delta) {
+    if (idx == TTY_KERNEL)
+        return tty_zoom(delta);
+    if (!chan_valid(idx) || delta == 0)
+        return -1;
+    chan_drain_push(&chans[idx], delta > 0 ? TTY_CTRL_ZOOM_IN
+                                           : TTY_CTRL_ZOOM_OUT);
+    return 0;
 }
 
 /* Compositor kthread for the kernel TTY. Sleeps a few ticks between

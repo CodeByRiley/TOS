@@ -105,11 +105,13 @@ extern void free(void *);
 /* Forward decls , used by helpers that appear before their definitions
  * because GEOMETRY + DRAG sit ahead of the helper bag. */
 struct window;
+struct console;
 static void *aligned_page_alloc(size_t npages, void **out_raw);
 static int window_count(void);
 static int is_minimized(int handle);
 static struct window *find_handle(int handle);
-static void con_redraw(void);
+static struct console *con_for_handle(int handle);
+static void con_redraw(struct console *c);
 static void titlebar_btn_rect(int win_x, int win_y, int outer_w,
                               int idx_from_right, int *bx, int *by, int *bw,
                               int *bh);
@@ -316,11 +318,21 @@ static const uint8_t fallback_btn_hide_mask[TB_BTN_SIZE][TB_BTN_SIZE] = {
     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
 };
 
-/* Special handle reserved for the built-in console. Real client window
- * handles are derived from their slot index: handle = (slot_index + 1),
- * so they always live in 1..MAX_WINDOWS and get reused as soon as the
- * slot is freed. No monotonically-growing counter. */
-#define HANDLE_CONSOLE 0
+/* Handles reserved for the built-in consoles. Real client window handles are
+ * derived from their slot index: handle = (slot_index + 1), so they always
+ * live in 1..MAX_WINDOWS and get reused as soon as the slot is freed. No
+ * monotonically-growing counter.
+ *
+ * Console handles sit in their own block above that range, one per TTY
+ * channel. The base is deliberately not 0: 0 means "nothing focused", and
+ * when the console owned that value every "is anything focused" test had to
+ * name it as an exception.
+ *
+ * CON_MAX must not exceed TTY_MAX in kernel/display/tty.h , a console
+ * without a channel behind it has nothing to render. */
+#define CON_MAX 4
+#define HANDLE_CONSOLE_BASE 128
+#define HANDLE_CONSOLE HANDLE_CONSOLE_BASE /* the boot console, on TTY 0 */
 
 static uint32_t *fb_hw;
 static uint32_t *fb;           /* page-aligned compositor backbuffer */
@@ -403,31 +415,42 @@ static struct window windows[MAX_WINDOWS];
 static int focused_handle = 0;
 
 /* Z-order: handles ordered front-to-back. z_order[0] is topmost (drawn
- * last, hit-tested first). Console takes a slot too , it can be raised
+ * last, hit-tested first). Consoles take slots too , they can be raised
  * over client windows just like any other surface. Re-bound on every
  * create / focus / destroy so the array always reflects current stacking. */
-#define MAX_Z (1 + MAX_WINDOWS)
+#define MAX_Z (CON_MAX + MAX_WINDOWS)
 static int z_order[MAX_Z];
 static int z_count = 0;
 
+/* One console window mirroring one kernel TTY channel. The shell bound to
+ * `tty` writes there and reads its keystrokes from there, so two consoles
+ * never see each other's text or input.
+ *
+ * `pid` is the shell winman started on this console. It is what the close
+ * button kills, and what the reaper watches: when it dies (the user typed
+ * `exit`), the console goes with it. */
 struct console {
     struct window win;
 
+    int tty;
+    int pid;
+
     char *cells;
-    char *saved_cells;
     int cols, rows;
     int cx, cy;
     int scale;
+
+    /* Alt-screen buffers for push/pop, allocated with the surface and the
+     * same size as it. saved_valid gates pop so a spurious pop without a
+     * prior push is a no-op. */
+    uint32_t *backing;
+    void *backing_raw;
+    char *saved_cells;
+    int saved_cx, saved_cy;
+    int saved_valid;
 };
 
-static struct console con;
-
-/* Alt-screen backing buffer for console push/pop. Allocated once at
- * con_alloc time, same size as the live surface. saved_valid gates pop so
- * a spurious pop without a prior push is a no-op. */
-static uint32_t *con_backing = 0;
-static void *con_backing_raw = 0;
-static char *con_saved_cells = 0;
-static int con_saved_cx = 0;
-static int con_saved_cy = 0;
-static int con_saved_valid = 0;
+/* cons[0] mirrors TTY_KERNEL and is the boot console: it is always present,
+ * its shell was started by the kernel rather than by winman, and closing it
+ * is allowed , the kernel no longer depends on that shell being alive. */
+static struct console cons[CON_MAX];

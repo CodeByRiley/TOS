@@ -779,12 +779,20 @@ int syscall_prepare_return(struct syscall_frame *f) {
   return 0;
 }
 
+/* The console a process talks to. Inherited from its parent at spawn, so a
+ * shell and everything it launches share one terminal, and two shells never
+ * share theirs. */
+static int caller_tty(void) {
+  struct task *t = task_current();
+  return t ? t->tty : TTY_KERNEL;
+}
+
 static long sys_write(long fd, const void *buf, long n) {
   if (!buf || n < 0 || !user_buffer_ok(buf, (uint64_t)n, 0))
     return -1;
 
   if (fd == 1 || fd == 2) {
-    tty_write((const char *)buf, (size_t)n);
+    tty_write_ch(caller_tty(), (const char *)buf, (size_t)n);
 
     const char *p = (const char *)buf;
     for (long i = 0; i < n; i++)
@@ -871,20 +879,22 @@ static long sys_mouse_pos(int32_t *x, int32_t *y, uint8_t *buttons) {
 static long sys_con_write(const char *buf, long n) {
   if (!buf || n < 0)
     return -1;
-  tty_write(buf, (size_t)n);
+  tty_write_ch(caller_tty(), buf, (size_t)n);
   return n;
 }
 
 static long sys_con_clear(void) {
-  tty_clear();
+  tty_clear_ch(caller_tty());
   return 0;
 }
 
-static long sys_con_push(void) { return tty_push(); }
+static long sys_con_push(void) { return tty_push_ch(caller_tty()); }
 
-static long sys_con_pop(void) { return tty_pop(); }
+static long sys_con_pop(void) { return tty_pop_ch(caller_tty()); }
 
-static long sys_con_zoom(long delta) { return tty_zoom((int)delta); }
+static long sys_con_zoom(long delta) {
+  return tty_zoom_ch(caller_tty(), (int)delta);
+}
 
 static long sys_sleep_ticks(long n) {
   if (n <= 0) {
@@ -1120,10 +1130,45 @@ static long sys_wm_register(void) {
 
 static long sys_wm_pid(void) { return msg_input_owner(); }
 
-static long sys_tty_drain(char *out, long max) {
+static long sys_tty_drain(long idx, char *out, long max) {
   if (!out || max <= 0)
     return 0;
-  return (long)tty_drain(out, (size_t)max);
+  return (long)tty_drain_ch((int)idx, out, (size_t)max);
+}
+
+/* Claim a spare console channel. Only the process holding the WM role gets
+ * one: channels are a fixed, small resource and the window manager is the
+ * only thing that can render one, so handing them to arbitrary callers just
+ * lets any program exhaust the table. */
+static long sys_tty_alloc(void) {
+  struct task *t = task_current();
+  if (!t || t->pid != msg_input_owner())
+    return -1;
+  return tty_alloc();
+}
+
+static long sys_tty_free(long idx) {
+  struct task *t = task_current();
+  if (!t || t->pid != msg_input_owner())
+    return -1;
+  if (idx <= TTY_KERNEL || idx >= TTY_MAX)
+    return -1;
+  tty_release((int)idx);
+  return 0;
+}
+
+static long sys_tty_spawn(const char *path, char *const argv[], long idx) {
+  struct task *t = task_current();
+  if (!t || t->pid != msg_input_owner())
+    return -1;
+  if (!path)
+    return -1;
+
+  char resolved[TASK_CWD_MAX];
+  if (resolve_path(path, resolved, sizeof(resolved)) != 0)
+    return -1;
+
+  return process_spawn_async_tty(resolved, argv, (int)idx);
 }
 
 /* Drain the keystrokes winman has injected for whoever owns the console.
@@ -1136,7 +1181,7 @@ static long sys_tty_drain(char *out, long max) {
 static long sys_tty_read_input(char *out, long max) {
   if (!out || max <= 0)
     return 0;
-  return (long)tty_read_input(out, (size_t)max);
+  return (long)tty_read_input_ch(caller_tty(), out, (size_t)max);
 }
 
 /* Block-wait `seconds` using PIT ticks (10ms each at 100Hz). */
@@ -2479,14 +2524,25 @@ long syscall_dispatch(struct syscall_frame *f) {
     ret = sys_wm_pid();
     break;
   case SYS_TTY_DRAIN:
-    ret = sys_tty_drain((char *)(uintptr_t)a1, (uintptr_t)a2);
+    ret = sys_tty_drain((long)a1, (char *)(uintptr_t)a2, (uintptr_t)a3);
     break;
   case SYS_TTY_INJECT:
-    tty_inject_input((char)a1); // Push the ASCII char into the TTY ring
+    /* Push the ASCII char into channel a1's input ring. */
+    tty_inject_input_ch((int)a1, (char)a2);
     ret = 0;
     break;
   case SYS_TTY_READ_INPUT:
     ret = sys_tty_read_input((char *)(uintptr_t)a1, (uintptr_t)a2);
+    break;
+  case SYS_TTY_ALLOC:
+    ret = sys_tty_alloc();
+    break;
+  case SYS_TTY_FREE:
+    ret = sys_tty_free((long)a1);
+    break;
+  case SYS_TTY_SPAWN:
+    ret = sys_tty_spawn((const char *)(uintptr_t)a1,
+                        (char *const *)(uintptr_t)a2, (long)a3);
     break;
   case SYS_FB_INFO:
     ret = sys_fb_info((struct fb_info *)(uintptr_t)a1);

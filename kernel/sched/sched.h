@@ -193,7 +193,10 @@ struct task {
   void (*kthread_entry)(void);
 
 
-  // Identity.
+  /* TTY channel this task reads stdin from and writes console output to.
+   * Inherited from the parent alongside cwd, so everything a shell launches
+   * shares that shell's terminal. 0 is the kernel-rendered one. */
+  int tty;
   char name[16];
 
   /*
@@ -343,6 +346,12 @@ uint64_t task_get_fs_base(void);
 int sched_set_priority(struct task *t, int prio);
 
 void task_inherit_cwd(struct task *child, struct task *parent);
+
+/* Copy the parent's TTY channel to the child. Called from the same places
+ * as task_inherit_cwd, and for the same reason: a spawned program belongs
+ * to the terminal that launched it. Falls back to channel 0 when there is
+ * no parent, which is what a kthread wants. */
+void task_inherit_tty(struct task *child, struct task *parent);
 
 void task_sleep_ticks(uint64_t ticks);
 void sched_wake_sleepers(void);

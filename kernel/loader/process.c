@@ -23,6 +23,7 @@
 #include <memory/pmm.h>
 #include <memory/vmm.h>
 #include <sched/sched.h>
+#include <display/tty.h>
 #include <fs/stdio.h>
 #include <stdint.h>
 
@@ -404,6 +405,7 @@ long process_exec(const char *path, char *const argv[]) {
     struct spawn_request *req = snapshot_request(path, argv);
     if (!req)
         return -1;
+    log_write_hex("process_exec: created process id = %d", req->reserved->pid, USER, LOG_INFO);
     int child_pid = spawn_request_now(req);
     kfree(req);
     if (child_pid < 0) return -1;
@@ -420,7 +422,8 @@ long process_exec(const char *path, char *const argv[]) {
     return code;
 }
 
-long process_spawn_async(const char *path, char *const argv[]) {
+/* tty < 0 means "inherit the caller's", which is what plain spawn wants. */
+static long spawn_async_on_tty(const char *path, char *const argv[], int tty) {
     struct spawn_request *req = snapshot_request(path, argv);
     if (!req)
         return -1;
@@ -442,6 +445,11 @@ long process_spawn_async(const char *path, char *const argv[]) {
     }
     set_process_name(req->reserved, req->path);
 
+    /* task_reserve_user already inherited the caller's channel; override it
+     * here, while the task is still TASK_LOADING and nothing has run on it. */
+    if (tty >= 0)
+        req->reserved->tty = tty;
+
     if (load_tail)
         load_tail->next = req;
     else
@@ -450,6 +458,16 @@ long process_spawn_async(const char *path, char *const argv[]) {
     log_write_hex("process_spawn: queued pid =",
                   (uint64_t)req->reserved->pid, USER, LOG_INFO);
     return req->reserved->pid;
+}
+
+long process_spawn_async(const char *path, char *const argv[]) {
+    return spawn_async_on_tty(path, argv, -1);
+}
+
+long process_spawn_async_tty(const char *path, char *const argv[], int tty) {
+    if (tty < 0 || tty >= TTY_MAX || !tty_is_open(tty))
+        return -1;
+    return spawn_async_on_tty(path, argv, tty);
 }
 
 int process_cancel_async(int pid, long code) {
