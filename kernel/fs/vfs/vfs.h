@@ -6,8 +6,8 @@
  *
  * Implementation: kernel/fs/vfs/vfs.c.
  */
-#ifndef TOS_VFS_H
-#define TOS_VFS_H
+#ifndef KERNEL_VFS_H
+#define KERNEL_VFS_H
 
 #include <stddef.h>
 #include <stdint.h>

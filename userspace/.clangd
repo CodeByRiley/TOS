@@ -2,7 +2,6 @@ CompileFlags:
   Add:
     - "-xc"
     - "-std=gnu23"
-    - -nostdsysteminc
     - -isystemE:/Projects/Weird/TOS/userspace/include
     - -isystemE:/Projects/Weird/TOS/userspace/libc/build-musl-tos/obj/include  # generated bits/
     - -isystemE:/Projects/Weird/TOS/userspace/libc/musl-1.2.6/include

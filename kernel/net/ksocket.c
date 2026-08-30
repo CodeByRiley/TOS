@@ -221,7 +221,7 @@ void socket_handle_incoming(struct ipv4_addr src_ip, port_t src_port,
   struct socket *curr = socket_list;
   struct socket *target = NULL;
 
-  // 1. Lock the global list just to find the target socket
+  // Lock the global list just to find the target socket
   u64 list_rflags = spin_lock_irqsave(&socket_list_lock);
 
   while (curr) {
@@ -242,7 +242,7 @@ void socket_handle_incoming(struct ipv4_addr src_ip, port_t src_port,
   if (!target)
     return;
 
-  // 2. Allocate memory BEFORE taking the target lock
+  // Allocate memory BEFORE taking the target lock
   struct packet_node *node = kmalloc(sizeof(struct packet_node));
   if (!node) return; // Out of memory
 
@@ -258,7 +258,7 @@ void socket_handle_incoming(struct ipv4_addr src_ip, port_t src_port,
   node->length = length;
   node->next = NULL;
 
-  // 3. Lock the specific socket to safely push to its queue
+  // Lock the specific socket to safely push to its queue
   u64 sock_rflags = spin_lock_irqsave(&target->lock);
 
   if (target->rx_queue.tail) {

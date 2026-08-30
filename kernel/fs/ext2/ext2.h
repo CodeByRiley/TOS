@@ -5,8 +5,8 @@
  *
  * Implementation: kernel/fs/ext2/ext2_vfs.c.
  */
-#ifndef TOS_EXT2_H
-#define TOS_EXT2_H
+#ifndef KERNEL_EXT2_H
+#define KERNEL_EXT2_H
 
 void ext2_vfs_register(void);
 

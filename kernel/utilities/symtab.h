@@ -1,5 +1,5 @@
-#ifndef TOS_UTILITIES_SYMTAB_H
-#define TOS_UTILITIES_SYMTAB_H
+#ifndef KERNEL_UTILITIES_SYMTAB_H
+#define KERNEL_UTILITIES_SYMTAB_H
 
 #include <utilities/types.h>
 #include <stddef.h>

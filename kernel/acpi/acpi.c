@@ -68,7 +68,7 @@ static const struct acpi_rsdp_v1 *scan_for_rsdp(u64 start, u64 end) {
 }
 
 static const struct acpi_rsdp_v1 *find_rsdp(u64 mb2_addr) {
-    /* 1. Multiboot tag (preferred , explicit, validated). */
+    /* Multiboot tag (preferred , explicit, validated). */
     struct MB2_TAG_ACPI *t = (struct MB2_TAG_ACPI*)
         mb2_find_tag(mb2_addr, MULTIBOOT_TAG_ACPI_NEW);
     if (!t) t = (struct MB2_TAG_ACPI*)
@@ -78,7 +78,7 @@ static const struct acpi_rsdp_v1 *find_rsdp(u64 mb2_addr) {
         if (r) return r;
     }
 
-    /* 2. EBDA pointer at 0x40E (segment) -> first 1 KiB of EBDA. */
+    /* EBDA pointer at 0x40E (segment) -> first 1 KiB of EBDA. */
     u16 ebda_seg = *(u16*)phys_to_virt(0x40E);
     if (ebda_seg) {
         u64 ebda = (u64)ebda_seg << 4;
@@ -86,7 +86,7 @@ static const struct acpi_rsdp_v1 *find_rsdp(u64 mb2_addr) {
         if (r) return r;
     }
 
-    /* 3. BIOS extended region 0xE0000-0xFFFFF. */
+    /* BIOS extended region 0xE0000-0xFFFFF. */
     return scan_for_rsdp(0xE0000, 0x100000);
 }
 

@@ -10,8 +10,8 @@
  *                 kernel/fs/ext2/ext2_file.c,
  *                 kernel/fs/ext2/ext2_vfs.c.
  */
-#ifndef TOS_EXT2_INTERNAL_H
-#define TOS_EXT2_INTERNAL_H
+#ifndef KERNEL_EXT2_INTERNAL_H
+#define KERNEL_EXT2_INTERNAL_H
 
 #include <utilities/types.h>
 #include <fs/vfs/vfs.h>

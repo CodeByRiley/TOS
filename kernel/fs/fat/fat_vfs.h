@@ -5,8 +5,8 @@
  *
  * Implementation: kernel/fs/fat/fat_vfs.c.
  */
-#ifndef TOS_FAT_VFS_H
-#define TOS_FAT_VFS_H
+#ifndef KERNEL_FAT_VFS_H
+#define KERNEL_FAT_VFS_H
 
 #define FAT_VFS_NAME "fat"
 
