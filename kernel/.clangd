@@ -1,0 +1,13 @@
+CompileFlags:
+  Add:
+    - "-xc"
+    - "-std=gnu23"
+    - --target=x86_64-elf
+    - -ffreestanding
+    - -ferror-limit=0
+    - -fno-pic
+    - -mno-red-zone
+    - -mno-mmx
+    - -isystemE:/Projects/Weird/TOS/kernel
+    - -isystemE:/Projects/Weird/TOS/kernel/arch/x86_64
+  CompilationDatabase: build

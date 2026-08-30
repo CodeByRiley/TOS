@@ -4,8 +4,6 @@ CompileFlags:
     - "-I./userspace"
     - "-I./userspace/libc/musl-1.2.6/include/"
     - "-I./userspace/libc/musl-1.2.6/arch/x86_64"
-    - "-ferror-limit=0"
-  CompilationDatabase: build
 
 Diagnostics:
   UnusedIncludes: None
@@ -24,19 +22,6 @@ Diagnostics:
       - bugprone-easily-swappable-parameters
       - bugprone-reserved-identifier
       - performance-no-int-to-ptr
-
----
-If:
-  PathMatch: ".*\\.(c|h)$"
-
-CompileFlags:
-  Remove:
-    - "-x"
-    - "-std=*"
-  Add:
-    - "-xc"
-    - "-std=gnu23"
-    - "-ffreestanding"
 
 ---
 If:
