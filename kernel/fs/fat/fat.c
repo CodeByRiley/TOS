@@ -5,6 +5,7 @@
  * smaller backend translation units.
  */
 #include "fat_internal.h"
+#include <fs/probe.h>
 #include <utilities/log.h>
 #include <utilities/string.h>
 
@@ -107,10 +108,11 @@ usize fat_volume_size(const void *boot_sector, u32 *bytes_per_sector_out) {
   if (!boot_sector)
     return 0;
 
-  const u8 *boot = boot_sector;
   /* exFAT has a different boot layout and must not be treated as FAT32. */
-  if (memcmp(boot + 3, "EXFAT   ", 8) == 0)
+  if (fs_probe_is_exfat(boot_sector, FS_BOOT_SECTOR_SIZE))
     return 0;
+
+  const u8 *boot = boot_sector;
 
   u32 bytes_per_sector = read_le16(boot + 11);
   u32 total_sectors = read_le16(boot + 19);
@@ -354,7 +356,7 @@ int resolve_parent(const char *path, struct fat_dir *parent,
 int fat_init(u8 *image, usize size) {
   if (!image || size < 512)
     return -1;
-  if (memcmp(image + 3, "EXFAT   ", 8) == 0)
+  if (fs_probe_is_exfat(image, size))
     return -1;
 
   fs_ops = &fat16_ops;

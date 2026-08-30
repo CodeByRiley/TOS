@@ -14,7 +14,6 @@
 #define TOS_EXT2_INTERNAL_H
 
 #include <utilities/types.h>
-#include <fs/magic.h>
 #include <fs/vfs/vfs.h>
 #include <stddef.h>
 #include <stdint.h>

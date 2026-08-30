@@ -2,7 +2,6 @@
  *
  * Translates generic VFS handles and operations to the singleton FAT image.
  */
-#include "fs/magic.h"
 #include <fs/fat/fat.h>
 #include <fs/fat/fat_vfs.h>
 #include <fs/vfs/vfs.h>
@@ -212,7 +211,7 @@ static int fat_mount_image(void *image, usize size, void **fs_out) {
 }
 
 static const struct vfs_filesystem fat_filesystem = {
-    .name = FAT_SIGNATURE,
+    .name = FAT_VFS_NAME,
     .probe = fat_probe,
     .mount = fat_mount_image,
     .unmount = 0,
@@ -224,5 +223,5 @@ void fat_vfs_register(void) {
 }
 
 int fat_vfs_attach(const char *mountpoint) {
-    return vfs_attach(mountpoint, FAT_SIGNATURE, &fat_context);
+    return vfs_attach(mountpoint, FAT_VFS_NAME, &fat_context);
 }

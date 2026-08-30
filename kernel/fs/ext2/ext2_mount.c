@@ -1,4 +1,5 @@
 #include <fs/ext2/ext2_internal.h>
+#include <fs/probe.h>
 #include <memory/heap.h>
 #include <utilities/string.h>
 
@@ -16,19 +17,14 @@ void *ext2_block(struct ext2_fs *fs, u32 block_number) {
 }
 
 static int ext2_probe_image(const void *image, usize size) {
-    if (!image || size < 2048)
-        return 0;
-    const u8 *bytes = image;
-    const struct ext2_superblock *superblock =
-        (const struct ext2_superblock *)(bytes + 1024);
-    return superblock->magic == EXT_MAGIC;
+    return fs_probe_is_ext(image, size);
 }
 
 static int ext2_mount_image(void *image, usize size, void **fs_out) {
     if (!fs_out || !ext2_probe_image(image, size))
         return -1;
     struct ext2_superblock *superblock =
-        (struct ext2_superblock *)((u8 *)image + 1024);
+        (struct ext2_superblock *)((u8 *)image + EXT_SUPERBLOCK_OFFSET);
     if (superblock->log_block_size > 2 ||
         superblock->blocks_per_group == 0 ||
         superblock->inodes_per_group == 0 ||
