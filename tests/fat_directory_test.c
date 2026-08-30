@@ -1,5 +1,5 @@
 /* Host-side regression test for the kernel FAT16 directory implementation. */
-#include "fs/fat.h"
+#include "fs/fat/fat.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>

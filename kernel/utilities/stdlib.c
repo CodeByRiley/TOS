@@ -60,16 +60,16 @@ long labs(long x) { return x < 0 ? -x : x; }
 /* qsort(3) implemented as insertion sort. O(n^2), correct, no extra
  * memory. DOOM only sorts small arrays so it's fine until profiling
  * says otherwise. */
-void qsort(void *base, size_t nmemb, size_t size,
+void qsort(void *base, usize nmemb, usize size,
            int (*cmp)(const void *, const void *)) {
-    uint8_t *arr = (uint8_t*)base;
-    for (size_t i = 1; i < nmemb; i++) {
-        for (size_t j = i; j > 0; j--) {
-            uint8_t *a = arr + (j - 1) * size;
-            uint8_t *b = arr + j * size;
+    u8 *arr = (u8*)base;
+    for (usize i = 1; i < nmemb; i++) {
+        for (usize j = i; j > 0; j--) {
+            u8 *a = arr + (j - 1) * size;
+            u8 *b = arr + j * size;
             if (cmp(a, b) <= 0) break;
-            for (size_t k = 0; k < size; k++) {
-                uint8_t t = a[k];
+            for (usize k = 0; k < size; k++) {
+                u8 t = a[k];
                 a[k] = b[k];
                 b[k] = t;
             }

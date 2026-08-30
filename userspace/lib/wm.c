@@ -8,23 +8,18 @@
  * cached, because winman is allowed to crash and respawn.
  */
 #include "wm.h"
+#include "event.h"
 
 extern size_t strlen(const char *);
 extern void  *memset(void *, int, size_t);
 extern void  *memcpy(void *, const void *, size_t);
 
-/* Bounded spin-recv used for handshake replies. Drops unrelated messages
- * so a stray IPC_WM_INPUT during create doesn't trip the wait. Caps the
- * spin so a dead winman doesn't hang the client forever. */
-static int wait_for(uint32_t type, struct ipc_msg *out) {
-    for (int spin = 0; spin < 100000; spin++) {
-        if (ipc_recv(out)) {
-            if (out->type == type) return 0;
-        } else {
-            sleep_ticks(1);
-        }
-    }
-    return -1;
+/* Bounded reply wait. libevent preserves unrelated IPC instead of dropping
+ * it, which lets a windowed client use its own protocol at the same time. */
+static int wait_for(uint32_t type, int sender_pid, struct ipc_msg *out) {
+    return event_wait_type(out, type, sender_pid, 100000u) == EVENT_READY
+               ? 0
+               : -1;
 }
 
 /* Copy `src` into a fixed-size on-wire string field, NUL-terminating even
@@ -59,12 +54,9 @@ int wm_window_create_ex(int w, int h, const char *title, uint32_t flags,
     req.flags = flags;
     copy_str(req.str, sizeof(req.str), title);
     if (ipc_send((int)wpid, &req) != 0) return -1;
-    printf("wm_window_create: sent create req, waiting for response...\n");
     struct ipc_msg resp;
-    if (wait_for(IPC_WM_CREATE_RESP, &resp) != 0) return -1;
+    if (wait_for(IPC_WM_CREATE_RESP, (int)wpid, &resp) != 0) return -1;
     if (resp.a < 0) return -1;
-    printf("wm_window_create: sizeof(wm_window)=%zu bytes\n", sizeof(struct wm_window));
-    printf("wm_window_create: sizeof(wm_event)=%zu bytes\n", sizeof(struct wm_event));
     out->handle     = resp.a;
     out->surface_va = resp.va;
     out->pitch      = resp.pitch;
@@ -143,26 +135,35 @@ int wm_prompt(int handle, int kind, const char *message, char *out,
 
     for (;;) {
         struct ipc_msg resp;
-        if (ipc_recv(&resp)) {
-            if (resp.type == IPC_WM_PROMPT_RESP) {
-                if (out && cap) copy_str(out, cap, resp.str);
-                return resp.a;
-            }
-            /* Anything else that arrives mid-dialog is dropped: the app is
-             * modal from its own point of view and has no loop running. */
-            continue;
+        int result = event_poll_type(&resp, IPC_WM_PROMPT_RESP, (int)wpid);
+        if (result == EVENT_READY) {
+            if (out && cap) copy_str(out, cap, resp.str);
+            return resp.a;
         }
+        if (result < 0) return WM_PROMPT_CANCEL;
         if (wm_pid() <= 0) return WM_PROMPT_CANCEL;
         sleep_ticks(1);
     }
+}
+
+static int is_wm_event(const struct ipc_msg *message, void *context) {
+    int sender_pid = *(const int *)context;
+    return (int)message->from_pid == sender_pid &&
+           (message->type == IPC_WM_INPUT ||
+            message->type == IPC_WM_RESIZE_NOTIFY);
 }
 
 /* Translate one queued IPC message into a wm_event. Returns 1 if filled
  * with a real event, 0 if the queue was empty or the message was non-WM. */
 int wm_poll_event(struct wm_event *out) {
     if (!out) return 0;
+    long wpid = wm_pid();
+    if (wpid <= 0) return 0;
+
     struct ipc_msg m;
-    if (!ipc_recv(&m)) return 0;
+    int sender_pid = (int)wpid;
+    if (event_poll_matching(&m, is_wm_event, &sender_pid) != EVENT_READY)
+        return 0;
 
     switch (m.type) {
     case IPC_WM_INPUT:
@@ -187,8 +188,6 @@ int wm_poll_event(struct wm_event *out) {
         return 1;
 
     default:
-        /* Non-WM IPC: drop it. Apps that need to mix custom IPC with WM
-         * events should call ipc_recv themselves and dispatch first. */
         memset(out, 0, sizeof(*out));
         out->type = WM_EV_NONE;
         return 0;

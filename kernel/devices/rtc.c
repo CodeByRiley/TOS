@@ -28,7 +28,7 @@
 /* Bit 7 of the select port is the NMI-disable line on most chipsets. Leave
  * it clear so reading the clock does not mask NMIs , the panic path relies on
  * those being delivered. */
-static uint8_t cmos_read(uint8_t reg) {
+static u8 cmos_read(u8 reg) {
     outb(CMOS_SELECT, reg & 0x7F);
     return inb(CMOS_DATA);
 }
@@ -37,12 +37,12 @@ static int rtc_updating(void) {
     return (cmos_read(CMOS_STATUS_A) & STATUS_A_UPDATING) != 0;
 }
 
-static uint8_t from_bcd(uint8_t v) {
-    return (uint8_t)((v & 0x0F) + ((v >> 4) * 10));
+static u8 from_bcd(u8 v) {
+    return (u8)((v & 0x0F) + ((v >> 4) * 10));
 }
 
 /* One raw sample of the six time registers. */
-static void sample(struct rtc_time *t, uint8_t *hour_raw) {
+static void sample(struct rtc_time *t, u8 *hour_raw) {
     t->second = cmos_read(CMOS_SECOND);
     t->minute = cmos_read(CMOS_MINUTE);
     *hour_raw = cmos_read(CMOS_HOUR);
@@ -57,7 +57,7 @@ void rtc_read(struct rtc_time *out) {
         return;
 
     struct rtc_time a, b;
-    uint8_t hour_raw = 0, hour_raw_b = 0;
+    u8 hour_raw = 0, hour_raw_b = 0;
 
     /* Wait out any update in progress, then sample twice and require the two
      * to agree. A single read can straddle the chip's own carry , 01:59:59
@@ -77,22 +77,22 @@ void rtc_read(struct rtc_time *out) {
             break;
     }
 
-    uint8_t status_b = cmos_read(CMOS_STATUS_B);
+    u8 status_b = cmos_read(CMOS_STATUS_B);
 
     if (!(status_b & STATUS_B_BINARY)) {
         a.second = from_bcd(a.second);
         a.minute = from_bcd(a.minute);
         a.day = from_bcd(a.day);
         a.month = from_bcd(a.month);
-        a.year = from_bcd((uint8_t)a.year);
+        a.year = from_bcd((u8)a.year);
         /* The PM flag lives in the top bit and must survive the conversion,
          * so strip it first and put it back after. */
-        a.hour = (uint8_t)(from_bcd((uint8_t)(hour_raw & 0x7F)) |
+        a.hour = (u8)(from_bcd((u8)(hour_raw & 0x7F)) |
                            (hour_raw & HOUR_PM_FLAG));
     }
 
     if (!(status_b & STATUS_B_24HOUR) && (a.hour & HOUR_PM_FLAG)) {
-        a.hour = (uint8_t)(((a.hour & 0x7F) % 12) + 12);
+        a.hour = (u8)(((a.hour & 0x7F) % 12) + 12);
     } else {
         a.hour &= 0x7F;
     }
@@ -100,8 +100,8 @@ void rtc_read(struct rtc_time *out) {
     /* The year register holds two digits and there is no reliable century
      * register across chipsets, so pivot: values below 80 are 21st century.
      * Same convention FAT itself uses by counting from 1980. */
-    uint16_t year2 = (uint16_t)(a.year % 100);
-    out->year = (uint16_t)(year2 < 80 ? 2000 + year2 : 1900 + year2);
+    u16 year2 = (u16)(a.year % 100);
+    out->year = (u16)(year2 < 80 ? 2000 + year2 : 1900 + year2);
     out->month = a.month;
     out->day = a.day;
     out->hour = a.hour;
@@ -120,16 +120,16 @@ void rtc_read(struct rtc_time *out) {
  * RTC can report. Shifts the year to start in March so the leap day lands at
  * the end of the cycle and no month-length table is needed; 719468 is the
  * day offset between the era's zero and the Unix epoch. */
-static int64_t days_from_civil(int32_t y, uint32_t m, uint32_t d) {
+static int64_t days_from_civil(int32_t y, u32 m, u32 d) {
     y -= (m <= 2);
     int64_t era = (y >= 0 ? y : y - 399) / 400;
-    uint32_t yoe = (uint32_t)(y - era * 400);                  /* 0..399   */
-    uint32_t doy = (153u * (m + (m > 2 ? -3u : 9u)) + 2u) / 5u + d - 1u;
-    uint32_t doe = yoe * 365u + yoe / 4u - yoe / 100u + doy;   /* 0..146096 */
+    u32 yoe = (u32)(y - era * 400);                  /* 0..399   */
+    u32 doy = (153u * (m + (m > 2 ? -3u : 9u)) + 2u) / 5u + d - 1u;
+    u32 doe = yoe * 365u + yoe / 4u - yoe / 100u + doy;   /* 0..146096 */
     return era * 146097 + (int64_t)doe - 719468;
 }
 
-uint64_t rtc_unix_epoch(void) {
+u64 rtc_unix_epoch(void) {
     struct rtc_time now;
     rtc_read(&now);
     if (!now.valid)
@@ -137,5 +137,5 @@ uint64_t rtc_unix_epoch(void) {
 
     int64_t days = days_from_civil(now.year, now.month, now.day);
     int64_t secs = days * 86400 + now.hour * 3600 + now.minute * 60 + now.second;
-    return secs < 0 ? 0 : (uint64_t)secs;
+    return secs < 0 ? 0 : (u64)secs;
 }

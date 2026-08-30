@@ -2,6 +2,7 @@
 #ifndef NVIDIA_INTERNAL_H
 #define NVIDIA_INTERNAL_H
 
+#include <utilities/types.h>
 #include <drivers/video/nvidia/nvidia.h>
 #include <pci/pci.h>
 #include <stdint.h>
@@ -51,10 +52,10 @@ enum nvidia_firmware_family {
 /* One decoded BIT token. `data_offset` is an offset into the VBIOS blob,
  * already bounds-checked against `data_size`. */
 struct nvidia_bit_token {
-    uint8_t  id;
-    uint8_t  data_version;
-    uint16_t data_size;
-    uint32_t data_offset;
+    u8  id;
+    u8  data_version;
+    u16 data_size;
+    u32 data_offset;
 };
 
 struct nvidia_radix3;
@@ -63,50 +64,50 @@ struct nvidia_device {
     struct pci_device pci;
     int boot_framebuffer_bar;
     enum nvidia_state state;
-    volatile uint8_t *regs;
-    uint64_t regs_phys;
-    uint64_t regs_size;
-    uint32_t boot0;
-    uint32_t boot42;
-    uint32_t architecture;
-    uint32_t implementation;
-    uint32_t chip_id;
-    uint8_t *vbios;
-    uint32_t vbios_size;
-    uint32_t vbios_image_count;
-    uint32_t vbios_bit_offset;
+    volatile u8 *regs;
+    u64 regs_phys;
+    u64 regs_size;
+    u32 boot0;
+    u32 boot42;
+    u32 architecture;
+    u32 implementation;
+    u32 chip_id;
+    u8 *vbios;
+    u32 vbios_size;
+    u32 vbios_image_count;
+    u32 vbios_bit_offset;
     /* BIT table geometry, retained so later stages can re-walk the token
      * array without rescanning for the header. */
-    uint32_t vbios_bit_header_size;
-    uint32_t vbios_bit_token_size;
-    uint32_t vbios_bit_token_count;
-    uint64_t vbios_version;
+    u32 vbios_bit_header_size;
+    u32 vbios_bit_token_size;
+    u32 vbios_bit_token_count;
+    u64 vbios_version;
     /* FWSEC ucode descriptor location within the VBIOS. The descriptor
      * body is not decoded yet , see nvidia_fwsec.c. */
-    uint32_t fwsec_desc_offset;
-    uint8_t  fwsec_desc_version;
-    uint8_t  fwsec_desc_size;
-    uint8_t  fwsec_app_id;
-    uint8_t  fwsec_present;
+    u32 fwsec_desc_offset;
+    u8  fwsec_desc_version;
+    u8  fwsec_desc_size;
+    u8  fwsec_app_id;
+    u8  fwsec_present;
     enum nvidia_vbios_source vbios_source;
     enum nvidia_firmware_family firmware_family;
     const void *gsp_firmware;
-    uint64_t gsp_firmware_size;
+    u64 gsp_firmware_size;
     const void *gsp_image;
-    uint64_t gsp_image_size;
+    u64 gsp_image_size;
     const void *gsp_signature;
-    uint64_t gsp_signature_size;
+    u64 gsp_signature_size;
     const void *ucode_firmware;
-    uint64_t ucode_firmware_size;
+    u64 ucode_firmware_size;
     struct nvidia_radix3 *gsp_radix3;
     struct nvidia_radix3 *ucode_radix3;
     char firmware_version[64];
 };
 
-int nvidia_vbios_load(struct nvidia_device *device, uint32_t device_index);
+int nvidia_vbios_load(struct nvidia_device *device, u32 device_index);
 
 /* Find a BIT token by id. Returns 0 and fills *out on success. */
-int nvidia_bit_find_token(const struct nvidia_device *device, uint8_t id,
+int nvidia_bit_find_token(const struct nvidia_device *device, u8 id,
                           struct nvidia_bit_token *out);
 
 /* Locate the FWSEC entry in the VBIOS falcon ucode table. */
@@ -116,11 +117,11 @@ int nvidia_firmware_load(struct nvidia_device *device);
 int nvidia_gsp_prepare(struct nvidia_device *device);
 
 int nvidia_radix3_build(struct nvidia_radix3 **out, const void *data,
-                        uint64_t size);
+                        u64 size);
 void nvidia_radix3_destroy(struct nvidia_radix3 *radix);
-uint64_t nvidia_radix3_root_phys(const struct nvidia_radix3 *radix);
-uint64_t nvidia_radix3_data_size(const struct nvidia_radix3 *radix);
-uint64_t nvidia_radix3_table_pages(const struct nvidia_radix3 *radix);
-uint64_t nvidia_radix3_data_pages(const struct nvidia_radix3 *radix);
+u64 nvidia_radix3_root_phys(const struct nvidia_radix3 *radix);
+u64 nvidia_radix3_data_size(const struct nvidia_radix3 *radix);
+u64 nvidia_radix3_table_pages(const struct nvidia_radix3 *radix);
+u64 nvidia_radix3_data_pages(const struct nvidia_radix3 *radix);
 
 #endif

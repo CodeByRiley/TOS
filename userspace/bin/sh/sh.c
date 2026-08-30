@@ -19,6 +19,7 @@
 #include <lib/syscall.h>
 #include <lib/keymap.h>
 #include <lib/console.h>
+#include <lib/process.h>
 #include <include/key_codes.h>
 #include <utilities/types.h>
 #include <stdarg.h>
@@ -530,112 +531,6 @@ static int builtin_export(int argc, char **argv) {
 
 // #region EXEC
 
-static int append_char(char *out, int *n, int max, char c) {
-    if (*n + 1 >= max)
-        return -1;
-    out[(*n)++] = c;
-    out[*n] = 0;
-    return 0;
-}
-
-static int append_str(char *out, int *n, int max, const char *s) {
-    while (*s) {
-        if (append_char(out, n, max, *s++) != 0)
-            return -1;
-    }
-    return 0;
-}
-
-static int has_path_separator(const char *s) {
-    while (*s) {
-        if (*s == '/' || *s == '\\')
-            return 1;
-        s++;
-    }
-    return 0;
-}
-
-static int final_component_has_dot(const char *s) {
-    int has_dot = 0;
-    while (*s) {
-        if (*s == '/' || *s == '\\')
-            has_dot = 0;
-        else if (*s == '.')
-            has_dot = 1;
-        s++;
-    }
-    return has_dot;
-}
-
-static int build_exec_candidate(const char *prefix, const char *raw,
-                                const char *default_ext, char *out, int max) {
-    int n = 0;
-    out[0] = 0;
-
-    if (prefix && prefix[0] && strcmp(prefix, ".") != 0) {
-        if (append_str(out, &n, max, prefix) != 0)
-            return -1;
-
-        if (out[n - 1] != '/') {
-            if (append_char(out, &n, max, '/') != 0)
-                return -1;
-        }
-    }
-
-    if (append_str(out, &n, max, raw) != 0)
-        return -1;
-
-    if (!final_component_has_dot(raw) && default_ext) {
-        if (append_str(out, &n, max, default_ext) != 0)
-            return -1;
-    }
-
-    return 0;
-}
-
-static int probe_exec_candidate(const char *path) {
-    long fd = open(path, 0);
-    if (fd < 0)
-        return 0;
-    close((int)fd);
-    return 1;
-}
-
-/* TOS supports native ELF and PE32+ images. Prefer ELF for an unsuffixed
- * command when both formats exist, then fall back to PE. */
-static int resolve_in_dir(const char *dir, const char *raw, char *out,
-                          int max) {
-    if (build_exec_candidate(dir, raw, ".elf", out, max) == 0 &&
-        probe_exec_candidate(out))
-        return 0;
-    if (!final_component_has_dot(raw) &&
-        build_exec_candidate(dir, raw, ".exe", out, max) == 0 &&
-        probe_exec_candidate(out))
-        return 0;
-    return -1;
-}
-
-/* Resolve a user command to an executable path. Bare names are searched in
- * the shell's colon-separated PATH; explicit paths bypass PATH. */
-static int resolve_exec_path(const char *raw, char *out, int max) {
-    if (!raw || !raw[0])
-        return -1;
-
-    if (has_path_separator(raw))
-        return resolve_in_dir("", raw, out, max);
-
-    int cursor = 0;
-    char dir[EXEC_DIR_MAX];
-    int status;
-    while ((status = path_next(exec_path, &cursor, dir, sizeof(dir))) != 0) {
-        if (status < 0)
-            continue;
-        if (resolve_in_dir(dir, raw, out, max) == 0)
-            return 0;
-    }
-    return -1;
-}
-
 static const char *path_basename(const char *path) {
     const char *base = path;
     for (const char *p = path; *p; p++) {
@@ -659,7 +554,7 @@ static const char *path_basename(const char *path) {
 static int exec_argv(int argc, char **argv, int bg) {
     if (argc < 1 || !argv[0] || !argv[0][0]) return -1;
     static char fixed[256];
-    if (resolve_exec_path(argv[0], fixed, sizeof(fixed)) != 0)
+    if (process_resolve(argv[0], exec_path, fixed, sizeof(fixed)) != 0)
         return -1;
 
     /* Lowercase base (sans extension) for child's argv[0]. */

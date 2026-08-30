@@ -116,51 +116,51 @@
 #define E1000_NUM_TX_DESC 8
 
 #define E1000_READ(nic, reg)                                                   \
-  (*((volatile uint32_t *)((nic)->mmio_base + (reg))))
+  (*((volatile u32 *)((nic)->mmio_base + (reg))))
 #define E1000_WRITE(nic, reg, val)                                             \
-  (*((volatile uint32_t *)((nic)->mmio_base + (reg))) = (val))
+  (*((volatile u32 *)((nic)->mmio_base + (reg))) = (val))
 
 #include <stdint.h>
 
 struct e1000_dev {
-  uint16_t bus;
-  uint16_t device;
-  uint16_t function;
+  u16 bus;
+  u16 device;
+  u16 function;
 
-  volatile uint8_t *mmio_base;
+  volatile u8 *mmio_base;
 
   struct e1000_rx_desc *rx_ring_virt;
   uintptr_t rx_ring_phys;             // Programmed into REG_RXDESCLO.
   uintptr_t rx_buffer_phys[E1000_NUM_RX_DESC];
   void *rx_buffers[E1000_NUM_RX_DESC];
-  uint32_t rx_current;
+  u32 rx_current;
 
   struct e1000_tx_desc *tx_ring_virt;
   uintptr_t tx_ring_phys;
   uintptr_t tx_buffer_phys[E1000_NUM_TX_DESC];
   void *tx_buffers[E1000_NUM_TX_DESC];
-  uint32_t tx_current;
+  u32 tx_current;
 
-  uint8_t mac_addr[6];
+  u8 mac_addr[6];
 };
 
 struct e1000_rx_desc {
-  volatile uint64_t addr;
-  volatile uint16_t len;
-  volatile uint16_t checksum;
-  volatile uint8_t status;
-  volatile uint8_t errors;
-  volatile uint16_t special;
+  volatile u64 addr;
+  volatile u16 len;
+  volatile u16 checksum;
+  volatile u8 status;
+  volatile u8 errors;
+  volatile u16 special;
 } PACKED;
 
 struct e1000_tx_desc {
-  volatile uint64_t addr;      // 0: Buffer Address
-  volatile uint16_t len;       // 8: Data Length
-  volatile uint8_t  cso;       // 10: Checksum Offset (usually 0)
-  volatile uint8_t  cmd;       // 11: Command (EOP, IFCS, RS go here)
-  volatile uint8_t  status;    // 12: Status (DD bit goes here)
-  volatile uint8_t  css;       // 13: Checksum Start (usually 0)
-  volatile uint16_t special;   // 14: Special / VLAN tag (usually 0)
+  volatile u64 addr;      // 0: Buffer Address
+  volatile u16 len;       // 8: Data Length
+  volatile u8  cso;       // 10: Checksum Offset (usually 0)
+  volatile u8  cmd;       // 11: Command (EOP, IFCS, RS go here)
+  volatile u8  status;    // 12: Status (DD bit goes here)
+  volatile u8  css;       // 13: Checksum Start (usually 0)
+  volatile u16 special;   // 14: Special / VLAN tag (usually 0)
 } PACKED;
 
 void e1000_driver_init(void);

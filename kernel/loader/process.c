@@ -37,7 +37,7 @@
 #define PAGE_PS   VMM_PS
 
 #ifndef PROCESS_PML4_HOST_TEST
-extern uint64_t *kernel_pml4;
+extern u64 *kernel_pml4;
 #endif
 
 /* Walk one PDPT subtree and free every present user frame underneath, plus
@@ -45,20 +45,20 @@ extern uint64_t *kernel_pml4;
  * identity map intact under PML4[0]'s PDPT[0]). Always frees the PDPT frame
  * itself when done. The previous version copy-pasted this loop twice; one
  * day someone would have "fixed" one half and not the other. */
-static void free_pdpt_subtree(uint64_t pdpt_phys, int start_idx) {
-    uint64_t *pdpt = phys_to_virt(pdpt_phys);
+static void free_pdpt_subtree(u64 pdpt_phys, int start_idx) {
+    u64 *pdpt = phys_to_virt(pdpt_phys);
     for (int i = start_idx; i < 512; i++) {
-        uint64_t pdpt_e = pdpt[i];
+        u64 pdpt_e = pdpt[i];
         if (!(pdpt_e & VMM_PRESENT) || (pdpt_e & PAGE_PS)) continue;
-        uint64_t pd_phys = pdpt_e & ADDR_MASK;
-        uint64_t *pd = phys_to_virt(pd_phys);
+        u64 pd_phys = pdpt_e & ADDR_MASK;
+        u64 *pd = phys_to_virt(pd_phys);
         for (int j = 0; j < 512; j++) {
-            uint64_t pd_e = pd[j];
+            u64 pd_e = pd[j];
             if (!(pd_e & VMM_PRESENT) || (pd_e & PAGE_PS)) continue;
-            uint64_t pt_phys = pd_e & ADDR_MASK;
-            uint64_t *pt = phys_to_virt(pt_phys);
+            u64 pt_phys = pd_e & ADDR_MASK;
+            u64 *pt = phys_to_virt(pt_phys);
             for (int k = 0; k < 512; k++) {
-                uint64_t pte = pt[k];
+                u64 pte = pt[k];
                 if (!(pte & VMM_PRESENT)) continue;
                 /* Skip borrowed frames. Shared-memory receivers and direct
                  * framebuffer clients do not own these pages; freeing one
@@ -79,16 +79,16 @@ static void free_pdpt_subtree(uint64_t pdpt_phys, int start_idx) {
  * is the kernel-shared low 1 GiB identity map: skip walking that subtree
  * but still free the per-process PDPT frame. PML4[256..511] is also shared
  * (kernel high half) so leave those alone. Called from sched.c::task_reap. */
-void free_user_pml4(uint64_t *pml4) {
+void free_user_pml4(u64 *pml4) {
     if (!pml4) return;
 
-    uint64_t pml4_0 = pml4[0];
+    u64 pml4_0 = pml4[0];
     if (pml4_0 & VMM_PRESENT) {
         free_pdpt_subtree(pml4_0 & ADDR_MASK, /*start_idx=*/1);
     }
 
     for (int p = 1; p < 256; p++) {
-        uint64_t pml4_e = pml4[p];
+        u64 pml4_e = pml4[p];
         if (!(pml4_e & VMM_PRESENT)) continue;
         free_pdpt_subtree(pml4_e & ADDR_MASK, /*start_idx=*/0);
     }
@@ -101,10 +101,10 @@ int user_stack_alloc(void) {
     return user_stack_alloc_in(kernel_pml4);
 }
 
-static void user_stack_rollback(uint64_t *pml4, int mapped_pages) {
+static void user_stack_rollback(u64 *pml4, int mapped_pages) {
     for (int i = 0; i < mapped_pages; i++) {
-        uint64_t va = USER_STACK_TOP - (uint64_t)(i + 1) * 4096;
-        uint64_t phys = vmm_translate_in(pml4, va);
+        u64 va = USER_STACK_TOP - (u64)(i + 1) * 4096;
+        u64 phys = vmm_translate_in(pml4, va);
         if (!phys)
             continue;
         vmm_unmap_in(pml4, va);
@@ -115,9 +115,9 @@ static void user_stack_rollback(uint64_t *pml4, int mapped_pages) {
 /* The stack is data. VMM_NX keeps an overflow that lands a payload here
  * from being executable. Requires EFER.NXE, set by enable_paging on the
  * BSP and by the AP trampoline on every other core. */
-int user_stack_alloc_in(uint64_t *pml4) {
+int user_stack_alloc_in(u64 *pml4) {
     for (int i = 0; i < USER_STACK_PAGES; i++) {
-        uint64_t phys = pmm_alloc_frame();
+        u64 phys = pmm_alloc_frame();
         if (!phys) {
             log_write("process: user stack frame allocation failed",
                       KERNEL, LOG_ERROR);
@@ -140,15 +140,15 @@ int user_stack_alloc_in(uint64_t *pml4) {
 }
 
 /* Write into a child address space without activating its PML4. */
-static int copy_to_user_pml4(uint64_t *pml4, uint64_t user_dst,
-                             const void *src, size_t length) {
-    const uint8_t *input = (const uint8_t *)src;
+static int copy_to_user_pml4(u64 *pml4, u64 user_dst,
+                             const void *src, usize length) {
+    const u8 *input = (const u8 *)src;
     while (length > 0) {
-        uint64_t phys = vmm_translate_in(pml4, user_dst);
+        u64 phys = vmm_translate_in(pml4, user_dst);
         if (!phys)
             return -1;
 
-        size_t chunk = 4096 - (size_t)(user_dst & 0xFFF);
+        usize chunk = 4096 - (usize)(user_dst & 0xFFF);
         if (chunk > length)
             chunk = length;
         memcpy(phys_to_virt(phys), input, chunk);
@@ -159,27 +159,27 @@ static int copy_to_user_pml4(uint64_t *pml4, uint64_t user_dst,
     return 0;
 }
 
-uint64_t *process_pml4_create(void) {
-    uint64_t pml4_phys = pmm_alloc_frame();
+u64 *process_pml4_create(void) {
+    u64 pml4_phys = pmm_alloc_frame();
     if (!pml4_phys) return 0;
-    uint64_t *pml4 = phys_to_virt(pml4_phys);
+    u64 *pml4 = phys_to_virt(pml4_phys);
     memset(pml4, 0, 4096);
 
     /* Each process gets a private PDPT under PML4[0]. PDPT[0] is copied
      * from the kernel's PML4[0]'s PDPT[0] so the kernel-low identity map
      * (first 1 GiB) is shared. PDPT[1..511] starts empty for private
      * user mappings. */
-    uint64_t pdpt_phys = pmm_alloc_frame();
+    u64 pdpt_phys = pmm_alloc_frame();
     if (!pdpt_phys) {
         pmm_free_frame(pml4_phys);
         return 0;
     }
-    uint64_t *pdpt = phys_to_virt(pdpt_phys);
+    u64 *pdpt = phys_to_virt(pdpt_phys);
     memset(pdpt, 0, 4096);
 
-    uint64_t kernel_pml4_0 = kernel_pml4[0];
+    u64 kernel_pml4_0 = kernel_pml4[0];
     if (kernel_pml4_0 & 1) {
-        uint64_t *kernel_pdpt = phys_to_virt(kernel_pml4_0 & ADDR_MASK);
+        u64 *kernel_pdpt = phys_to_virt(kernel_pml4_0 & ADDR_MASK);
         pdpt[0] = kernel_pdpt[0];
     }
 
@@ -208,9 +208,9 @@ struct spawn_request {
 };
 
 struct loaded_image {
-    uint64_t *pml4;
-    uint64_t entry;
-    uint64_t user_rsp;
+    u64 *pml4;
+    u64 entry;
+    u64 user_rsp;
 };
 
 static struct spawn_request *load_head;
@@ -228,7 +228,7 @@ static struct spawn_request *snapshot_request(const char *path,
         return 0;
     memset(req, 0, sizeof(*req));
 
-    size_t n = 0;
+    usize n = 0;
     while (n < sizeof(req->path) - 1 && path[n]) {
         req->path[n] = path[n];
         n++;
@@ -237,7 +237,7 @@ static struct spawn_request *snapshot_request(const char *path,
 
     while (argv && req->argc < ARGV_MAX && argv[req->argc]) {
         const char *src = argv[req->argc];
-        size_t len = 0;
+        usize len = 0;
         while (len < ARG_LEN_MAX - 1 && src[len]) {
             req->args[req->argc][len] = src[len];
             len++;
@@ -256,7 +256,7 @@ static void set_process_name(struct task *task, const char *path) {
     }
 
     char name[16];
-    size_t n = 0;
+    usize n = 0;
     while (n < sizeof(name) - 1 && base[n] && base[n] != '.') {
         char c = base[n];
         if (c >= 'A' && c <= 'Z')
@@ -276,13 +276,13 @@ static int load_request_image(struct spawn_request *req,
         return -1;
     }
 
-    uint8_t magic[16] = {0};
+    u8 magic[16] = {0};
     FILE *sniff = fopen(req->path, "r");
     if (!sniff) {
         log_write("process_spawn: fopen failed", KERNEL, LOG_ERROR);
         goto fail;
     }
-    size_t read = fread(magic, 1, sizeof(magic), sniff);
+    usize read = fread(magic, 1, sizeof(magic), sniff);
     fclose(sniff);
 
     if (read == sizeof(magic) && magic[0] == 'M' && magic[1] == 'Z') {
@@ -301,9 +301,9 @@ static int load_request_image(struct spawn_request *req,
         goto fail;
 
     image->user_rsp = USER_STACK_TOP;
-    uint64_t arg_ptrs[ARGV_MAX];
+    u64 arg_ptrs[ARGV_MAX];
     for (int i = 0; i < req->argc; i++) {
-        size_t len = strlen(req->args[i]) + 1;
+        usize len = strlen(req->args[i]) + 1;
         image->user_rsp -= len;
         if (copy_to_user_pml4(image->pml4, image->user_rsp,
                               req->args[i], len) != 0)
@@ -322,8 +322,8 @@ static int load_request_image(struct spawn_request *req,
      * The original TOS crt0 only consumes argc/argv, but musl's crt1 scans
      * envp and auxv before calling main. Supplying explicit terminators keeps
      * both startup paths on the same ABI. */
-    uint64_t initial_stack[ARGV_MAX + 5];
-    initial_stack[0] = (uint64_t)req->argc;
+    u64 initial_stack[ARGV_MAX + 5];
+    initial_stack[0] = (u64)req->argc;
     for (int i = 0; i < req->argc; i++)
         initial_stack[i + 1] = arg_ptrs[i];
     initial_stack[req->argc + 1] = 0;
@@ -331,9 +331,9 @@ static int load_request_image(struct spawn_request *req,
     initial_stack[req->argc + 3] = 0;
     initial_stack[req->argc + 4] = 0;
 
-    size_t initial_bytes = (size_t)(req->argc + 5) * sizeof(uint64_t);
+    usize initial_bytes = (usize)(req->argc + 5) * sizeof(u64);
     if (initial_bytes & 0xF)
-        image->user_rsp -= sizeof(uint64_t);
+        image->user_rsp -= sizeof(u64);
     image->user_rsp -= initial_bytes;
     if (copy_to_user_pml4(image->pml4, image->user_rsp, initial_stack,
                           initial_bytes) != 0)
@@ -392,7 +392,7 @@ static void loader_worker(void) {
             task_fail_reserved_user(req->reserved, -1);
         } else {
             log_write_hex("process_spawn: ready pid =",
-                          (uint64_t)req->reserved->pid, USER, LOG_INFO);
+                          (u64)req->reserved->pid, USER, LOG_INFO);
         }
 
         load_active = 0;
@@ -456,7 +456,7 @@ static long spawn_async_on_tty(const char *path, char *const argv[], int tty) {
         load_head = req;
     load_tail = req;
     log_write_hex("process_spawn: queued pid =",
-                  (uint64_t)req->reserved->pid, USER, LOG_INFO);
+                  (u64)req->reserved->pid, USER, LOG_INFO);
     return req->reserved->pid;
 }
 

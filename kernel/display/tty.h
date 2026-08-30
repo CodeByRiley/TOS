@@ -27,6 +27,7 @@
 #ifndef TTY_H
 #define TTY_H
 
+#include <utilities/types.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -45,7 +46,7 @@ extern struct ttf_font *g_sys_font;
 
 void tty_init(void);
 void tty_putc(char c);
-void tty_write(const char *buf, size_t n);
+void tty_write(const char *buf, usize n);
 void tty_clear(void);
 
 /* Input injection from userspace */
@@ -53,7 +54,7 @@ void tty_inject_input(char c);
 
 /* Read characters injected into the TTY. Used by the read() syscall for stdin.
  * Returns number of chars actually copied into buf. */
-size_t tty_read_input(char *buf, size_t max);
+usize tty_read_input(char *buf, usize max);
 
 /* Disable framebuffer drawing while winman owns the screen. Text still
  * buffers into the grid so the kernel log doesn't blackhole. */
@@ -63,7 +64,7 @@ int  tty_is_active(void);
 /* Drain up to `max` chars of unconsumed input into `out`. Returns count.
  * Used by userspace winman to render the kernel text stream into its own
  * console window. */
-size_t tty_drain(char *out, size_t max);
+usize tty_drain(char *out, usize max);
 
 /* Alt-screen save/restore , single level. push snapshots the grid +
  * cursor into a backing buffer then clears the live grid so a fullscreen
@@ -84,14 +85,14 @@ int  tty_zoom(int delta);
  *
  * Out-of-range or closed channels are ignored (writes) or return 0 / -1
  * (reads), so a stale index from userspace cannot corrupt another channel. */
-void   tty_write_ch(int idx, const char *buf, size_t n);
+void   tty_write_ch(int idx, const char *buf, usize n);
 void   tty_clear_ch(int idx);
 int    tty_push_ch(int idx);
 int    tty_pop_ch(int idx);
 int    tty_zoom_ch(int idx, int delta);
 void   tty_inject_input_ch(int idx, char c);
-size_t tty_read_input_ch(int idx, char *buf, size_t max);
-size_t tty_drain_ch(int idx, char *out, size_t max);
+usize tty_read_input_ch(int idx, char *buf, usize max);
+usize tty_drain_ch(int idx, char *out, usize max);
 
 /* Claim a free channel in 1..TTY_MAX-1, empty its rings, and return its
  * index. Returns -1 when every channel is taken. TTY_KERNEL is never

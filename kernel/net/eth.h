@@ -34,23 +34,23 @@
 #define ETH_TYPE_ARP 0x0806U
 
 struct eth_hdr {
-  uint8_t dst[ETH_ALEN];
-  uint8_t src[ETH_ALEN];
-  uint16_t type; /* wire order */
+  u8 dst[ETH_ALEN];
+  u8 src[ETH_ALEN];
+  u16 type; /* wire order */
 } PACKED;
 
-extern const uint8_t eth_broadcast[ETH_ALEN];
+extern const u8 eth_broadcast[ETH_ALEN];
 
 /* Entry point from a NIC driver, once per received frame. */
-void eth_input(const uint8_t *frame, uint16_t len);
+void eth_input(const u8 *frame, u16 len);
 
 /* Fill in the header of a frame whose payload already sits at
  * frame + ETH_HDR_LEN, then transmit. Returns 0 or -1. */
-int eth_output_framed(uint8_t *frame, const uint8_t dst[ETH_ALEN],
-                      uint16_t type, uint16_t payload_len);
+int eth_output_framed(u8 *frame, const u8 dst[ETH_ALEN],
+                      u16 type, u16 payload_len);
 
 /* Copy `payload` behind a fresh header and transmit. Returns 0 or -1. */
-int eth_output(const uint8_t dst[ETH_ALEN], uint16_t type, const void *payload,
-               uint16_t payload_len);
+int eth_output(const u8 dst[ETH_ALEN], u16 type, const void *payload,
+               u16 payload_len);
 
 #endif /* NET_ETH_H */

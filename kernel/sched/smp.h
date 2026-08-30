@@ -9,6 +9,7 @@
 #define SMP_H
 
 #include <stdint.h>
+#include <utilities/types.h>
 
 typedef void (*smp_work_fn)(void *arg);
 
@@ -18,9 +19,9 @@ void smp_boot_aps(void);
  * runs concurrently with the BSP and therefore must synchronize shared data. */
 int smp_submit_work(smp_work_fn fn, void *arg);
 int smp_worker_count(void);
-uint64_t smp_completed_work(void);
+u64 smp_completed_work(void);
 
 /* called from ap_trampoline after entering long mode. */
-void ap_main(uint32_t cpu_id);
+void ap_main(u32 cpu_id);
 
 #endif

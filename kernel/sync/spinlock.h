@@ -12,11 +12,11 @@
 #ifndef SPINLOCK_H
 #define SPINLOCK_H
 
-#include "utilities/types.h"
+#include <utilities/types.h>
 #include <stdint.h>
 
 struct spinlock {
-    volatile uint8_t locked;
+    volatile u8 locked;
 };
 
 #define SPINLOCK_INIT { 0 }
@@ -38,16 +38,16 @@ SINLINE void spin_unlock(struct spinlock *l) {
 }
 
 /* IRQ-safe variants. Save RFLAGS, disable interrupts, acquire. Restore
- * in reverse. The returned uint64_t is opaque , pass it straight to
+ * in reverse. The returned u64 is opaque , pass it straight to
  * spin_unlock_irqrestore. */
-SINLINE uint64_t spin_lock_irqsave(struct spinlock *l) {
-    uint64_t rflags;
+SINLINE u64 spin_lock_irqsave(struct spinlock *l) {
+    u64 rflags;
     __asm__ volatile ("pushfq; popq %0; cli" : "=r"(rflags) :: "memory");
     spin_lock(l);
     return rflags;
 }
 
-SINLINE void spin_unlock_irqrestore(struct spinlock *l, uint64_t rflags) {
+SINLINE void spin_unlock_irqrestore(struct spinlock *l, u64 rflags) {
     spin_unlock(l);
     if (rflags & (1ULL << 9)) __asm__ volatile ("sti" ::: "memory");
 }

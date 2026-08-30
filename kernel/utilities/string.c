@@ -8,10 +8,10 @@
 #include <memory/heap.h>
 
 /* Copy n bytes from src to dst (no overlap). 8-byte chunked. */
-void *memcpy(void *dst, const void *src, size_t n) {
+void *memcpy(void *dst, const void *src, usize n) {
     void *ret = dst;
-    size_t q = n >> 3;
-    size_t b = n & 7;
+    usize q = n >> 3;
+    usize b = n & 7;
     __asm__ volatile ("cld; rep movsq"
                       : "+D"(dst), "+S"(src), "+c"(q)
                       :: "memory");
@@ -22,14 +22,14 @@ void *memcpy(void *dst, const void *src, size_t n) {
 }
 
 /* Fill n bytes of dst with byte c. 8-byte chunked. */
-void *memset(void *dst, int c, size_t n) {
+void *memset(void *dst, int c, usize n) {
     void *ret = dst;
-    uint64_t v = (uint8_t)c;
+    u64 v = (u8)c;
     v |= v << 8;
     v |= v << 16;
     v |= v << 32;
-    size_t q = n >> 3;
-    size_t b = n & 7;
+    usize q = n >> 3;
+    usize b = n & 7;
     __asm__ volatile ("cld; rep stosq"
                       : "+D"(dst), "+c"(q)
                       : "a"(v)
@@ -42,9 +42,9 @@ void *memset(void *dst, int c, size_t n) {
 }
 
 /* Overlap-safe memcpy. Forward when dst < src, backward otherwise. */
-void *memmove(void *dst, const void *src, size_t n) {
-    uint8_t *d = (uint8_t *)dst;
-    const uint8_t *s = (const uint8_t *)src;
+void *memmove(void *dst, const void *src, usize n) {
+    u8 *d = (u8 *)dst;
+    const u8 *s = (const u8 *)src;
     if (d == s || n == 0) return dst;
     if (d < s) return memcpy(dst, src, n);
     /* Backward byte copy. Rare path (console scroll); speed not critical. */
@@ -54,9 +54,9 @@ void *memmove(void *dst, const void *src, size_t n) {
 }
 
 /* Byte-wise compare. Returns *a-*b at first mismatch. */
-int memcmp(const void *a, const void *b, size_t n) {
-    const uint8_t *x = (const uint8_t *)a;
-    const uint8_t *y = (const uint8_t *)b;
+int memcmp(const void *a, const void *b, usize n) {
+    const u8 *x = (const u8 *)a;
+    const u8 *y = (const u8 *)b;
     while (n--) {
         if (*x != *y) return *x - *y;
         x++; y++;
@@ -64,8 +64,8 @@ int memcmp(const void *a, const void *b, size_t n) {
     return 0;
 }
 
-size_t strlen(const char *s) {
-    size_t n = 0;
+usize strlen(const char *s) {
+    usize n = 0;
     while (s[n]) n++;
     return n;
 }
@@ -77,8 +77,8 @@ char *strcpy(char *dst, const char *src) {
 }
 
 /* strncpy(3): pads dst with NULs up to n. Doesn't guarantee NUL term. */
-char *strncpy(char *dst, const char *src, size_t n) {
-    size_t i = 0;
+char *strncpy(char *dst, const char *src, usize n) {
+    usize i = 0;
     for (; i < n && src[i]; i++) dst[i] = src[i];
     for (; i < n; i++)           dst[i] = 0;
     return dst;
@@ -91,7 +91,7 @@ char *strcat(char *dst, const char *src) {
     return dst;
 }
 
-char *strncat(char *dst, const char *src, size_t n) {
+char *strncat(char *dst, const char *src, usize n) {
     char *d = dst + strlen(dst);
     while (n-- && *src) *d++ = *src++;
     *d = 0;
@@ -100,12 +100,12 @@ char *strncat(char *dst, const char *src, size_t n) {
 
 int strcmp(const char *a, const char *b) {
     while (*a && *a == *b) { a++; b++; }
-    return (uint8_t)*a - (uint8_t)*b;
+    return (u8)*a - (u8)*b;
 }
 
-int strncmp(const char *a, const char *b, size_t n) {
+int strncmp(const char *a, const char *b, usize n) {
     while (n && *a && *a == *b) { a++; b++; n--; }
-    return n == 0 ? 0 : (uint8_t)*a - (uint8_t)*b;
+    return n == 0 ? 0 : (u8)*a - (u8)*b;
 }
 
 static char to_lower_byte(char c) {
@@ -118,16 +118,16 @@ int strcasecmp(const char *a, const char *b) {
         if (ca != cb) return ca - cb;
         a++; b++;
     }
-    return (uint8_t)*a - (uint8_t)*b;
+    return (u8)*a - (u8)*b;
 }
 
-int strncasecmp(const char *a, const char *b, size_t n) {
+int strncasecmp(const char *a, const char *b, usize n) {
     while (n && *a && *b) {
         char ca = to_lower_byte(*a), cb = to_lower_byte(*b);
         if (ca != cb) return ca - cb;
         a++; b++; n--;
     }
-    return n == 0 ? 0 : (uint8_t)*a - (uint8_t)*b;
+    return n == 0 ? 0 : (u8)*a - (u8)*b;
 }
 
 /* strchr(3). Returns pointer to terminator if c==0, NULL if not found. */
@@ -164,7 +164,7 @@ char *strstr(const char *h, const char *n) {
 
 /* strdup(3). Allocates with kmalloc; caller frees with kfree. */
 char *strdup(const char *s) {
-    size_t len = strlen(s) + 1;
+    usize len = strlen(s) + 1;
     char *p = (char *)kmalloc(len);
     if (!p) return 0;
     memcpy(p, s, len);

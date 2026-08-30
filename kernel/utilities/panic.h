@@ -10,7 +10,7 @@
 #ifndef PANIC_H
 #define PANIC_H
 
-#include "utilities/types.h"
+#include <utilities/types.h>
 #include <utilities/symtab.h>
 #include <devices/io.h>
 
@@ -25,7 +25,7 @@ void panic_at(const char *msg, const char *file, int line, const char *func);
 NORETURN
 void panic_from_exception(const char *name,
                           const struct interrupt_frame *frame,
-                          uint64_t fault_address,
+                          u64 fault_address,
                           int has_fault_address);
 
 #define panic(msg) panic_at((msg), __FILE__, __LINE__, __func__)

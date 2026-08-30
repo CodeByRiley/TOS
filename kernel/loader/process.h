@@ -11,6 +11,7 @@
 #define PROCESS_H
 
 #include <stdint.h>
+#include <utilities/types.h>
 
 /* --- User address-space map -------------------------------------------
  *
@@ -39,12 +40,12 @@
 
 #define USER_STACK_TOP   0x00007FFFFFFFE000ULL
 #define USER_STACK_PAGES 512
-#define USER_STACK_LOW   (USER_STACK_TOP - (uint64_t)USER_STACK_PAGES * 4096)
+#define USER_STACK_LOW   (USER_STACK_TOP - (u64)USER_STACK_PAGES * 4096)
 
 /* Allocate a user stack in the kernel PML4 / in a supplied PML4.
  * Returns 0 on success and -1 on allocation or mapping failure. */
 int user_stack_alloc(void);
-int user_stack_alloc_in(uint64_t *pml4);
+int user_stack_alloc_in(u64 *pml4);
 
 /* Synchronous exec: blocks until the child exits and returns its code. */
 long process_exec(const char *path, char *const argv[]);
@@ -71,6 +72,6 @@ long process_kill(long pid, int signal);
  * entries are copied from kernel_pml4; their lower table levels remain
  * shared. Returns the new PML4 through the HHDM,
  * or NULL on failure. */
-uint64_t *process_pml4_create(void);
+u64 *process_pml4_create(void);
 
 #endif

@@ -21,17 +21,18 @@
 
 #include <net/inet.h>
 #include <stdint.h>
+#include <utilities/types.h>
 
 #define NETIF_MAC_LEN 6
 
 struct netif {
-  uint8_t mac[NETIF_MAC_LEN];
-  uint8_t ipv4[IPV4_ALEN];
-  uint8_t netmask[IPV4_ALEN];
-  uint8_t gateway[IPV4_ALEN];
+  u8 mac[NETIF_MAC_LEN];
+  u8 ipv4[IPV4_ALEN];
+  u8 netmask[IPV4_ALEN];
+  u8 gateway[IPV4_ALEN];
 
   /* Largest payload after the Ethernet header. */
-  uint16_t mtu;
+  u16 mtu;
 
   /* Passed back to tx() untouched; the driver's own device record. */
   void *driver_data;
@@ -40,7 +41,7 @@ struct netif {
    * was queued to hardware, -1 when it was not. Must not block: it is
    * called from the driver poll task and, once the e1000 IRQ path lands,
    * from interrupt context. */
-  int (*tx)(void *driver_data, const void *frame, uint16_t len);
+  int (*tx)(void *driver_data, const void *frame, u16 len);
 };
 
 /* Take a copy of *nif as the bound interface. Safe to call again when the
@@ -53,11 +54,11 @@ void netif_register(const struct netif *nif);
 struct netif *netif_get(void);
 
 /* Replace the addressing without disturbing the driver binding. */
-void netif_set_ipv4(const uint8_t ipv4[IPV4_ALEN],
-                    const uint8_t netmask[IPV4_ALEN],
-                    const uint8_t gateway[IPV4_ALEN]);
+void netif_set_ipv4(const u8 ipv4[IPV4_ALEN],
+                    const u8 netmask[IPV4_ALEN],
+                    const u8 gateway[IPV4_ALEN]);
 
 /* Send one framed Ethernet frame. Returns 0 or -1. */
-int netif_tx(const void *frame, uint16_t len);
+int netif_tx(const void *frame, u16 len);
 
 #endif /* NET_NETIF_H */

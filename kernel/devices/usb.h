@@ -17,14 +17,14 @@ enum usb_speed {
 /* Host-controller interface. */
 struct hcd {
     char *name;
-    uint32_t base_address;
+    u32 base_address;
 
     int  (*init)(struct hcd *hcd);
-    int  (*detect_port)(struct hcd *hcd, uint8_t port);
-    void (*reset_port)(struct hcd *hcd, uint8_t port);
-    int  (*control_transfer)(struct hcd *hcd, uint8_t device_addr,
-                             uint8_t endpoint, void *setup,
-                             void *buffer, uint16_t length);
+    int  (*detect_port)(struct hcd *hcd, u8 port);
+    void (*reset_port)(struct hcd *hcd, u8 port);
+    int  (*control_transfer)(struct hcd *hcd, u8 device_addr,
+                             u8 endpoint, void *setup,
+                             void *buffer, u16 length);
 };
 
 /* Setup packet , the 8 bytes opening every control transfer. USB is
@@ -165,12 +165,12 @@ struct usb_device {
 void usb_init(void);
 
 /* Register a device found by a host controller. */
-void usb_register_device(struct hcd *hcd, uint8_t port);
+void usb_register_device(struct hcd *hcd, u8 port);
 
 /* Assign an address and configure a device. */
 int usb_enumerate_device(struct usb_device *dev);
 
 /* Send a control transfer. */
-int usb_control_transfer(struct usb_device *dev, void *setup_packet, void *buffer, uint16_t length);
+int usb_control_transfer(struct usb_device *dev, void *setup_packet, void *buffer, u16 length);
 
 #endif /* USB_H */

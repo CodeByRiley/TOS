@@ -13,7 +13,7 @@
  * installed by gdt_install_tss() and loaded into TR by
  * gdt_load_tss_this_cpu().
  */
-#include "utilities/types.h"
+#include <utilities/types.h>
 #include <arch/gdt.h>
 #include <arch/percpu.h>
 #include <utilities/log.h>
@@ -22,40 +22,40 @@
 #include <stdint.h>
 
 struct PACKED gdt_entry {
-    uint16_t limit_low;
-    uint16_t base_low;
-    uint8_t  base_mid;
-    uint8_t  access;
-    uint8_t  granularity;     // limit[19:16] in low nibble, flags in high nibble
-    uint8_t  base_high;
+    u16 limit_low;
+    u16 base_low;
+    u8  base_mid;
+    u8  access;
+    u8  granularity;     // limit[19:16] in low nibble, flags in high nibble
+    u8  base_high;
 };
 
 struct PACKED tss_desc {
-    uint16_t limit_low;
-    uint16_t base_low;
-    uint8_t  base_mid;
-    uint8_t  access;
-    uint8_t  granularity;
-    uint8_t  base_high;
-    uint32_t base_upper;
-    uint32_t reserved;
+    u16 limit_low;
+    u16 base_low;
+    u8  base_mid;
+    u8  access;
+    u8  granularity;
+    u8  base_high;
+    u32 base_upper;
+    u32 reserved;
 };
 
 struct PACKED gdtr {
-    uint16_t limit;
-    uint64_t base;
+    u16 limit;
+    u64 base;
 };
 
 struct PACKED tss {
-    uint32_t reserved0;
-    uint64_t rsp0;
-    uint64_t rsp1;
-    uint64_t rsp2;
-    uint64_t reserved1;
-    uint64_t ist1, ist2, ist3, ist4, ist5, ist6, ist7;
-    uint64_t reserved2;
-    uint16_t reserved3;
-    uint16_t iomap_base;
+    u32 reserved0;
+    u64 rsp0;
+    u64 rsp1;
+    u64 rsp2;
+    u64 reserved1;
+    u64 ist1, ist2, ist3, ist4, ist5, ist6, ist7;
+    u64 reserved2;
+    u16 reserved3;
+    u16 iomap_base;
 };
 
 _Static_assert(sizeof(struct gdt_entry) == 8,
@@ -86,10 +86,10 @@ _Static_assert(offsetof(struct tss, iomap_base) == 102,
 #define GDT_FIXED_BYTES   (5 * 8)
 #define GDT_TOTAL_BYTES   (GDT_FIXED_BYTES + 16 * MAX_CPUS)
 
-static uint8_t  gdt_table[GDT_TOTAL_BYTES] ALIGNED(8);
+static u8  gdt_table[GDT_TOTAL_BYTES] ALIGNED(8);
 static struct tss tss_table[MAX_CPUS] ALIGNED(16);
 static struct gdtr gdtr;
-static uint8_t  bsp_kernel_stack[16384] ALIGNED(16);
+static u8  bsp_kernel_stack[16384] ALIGNED(16);
 
 /* Dedicated per-CPU double-fault stacks, wired to IST1.
  *
@@ -100,14 +100,14 @@ static uint8_t  bsp_kernel_stack[16384] ALIGNED(16);
  * printable report. Kept small: the handler logs and halts, it does not
  * return or recurse. */
 #define DF_STACK_BYTES 4096
-static uint8_t df_stacks[MAX_CPUS][DF_STACK_BYTES] ALIGNED(16);
+static u8 df_stacks[MAX_CPUS][DF_STACK_BYTES] ALIGNED(16);
 
 /* NMI can arrive in the narrow return window after GS has been swapped and
  * before iretq changes CPL. IST2 guarantees that it never consumes a user or
  * otherwise transient RSP. The assembly NMI entry still has to establish the
  * kernel GS state before calling ordinary C. */
 #define NMI_STACK_BYTES 4096
-static uint8_t nmi_stacks[MAX_CPUS][NMI_STACK_BYTES] ALIGNED(16);
+static u8 nmi_stacks[MAX_CPUS][NMI_STACK_BYTES] ALIGNED(16);
 
 /* Descriptor Access byte */
 //
@@ -133,7 +133,7 @@ static uint8_t nmi_stacks[MAX_CPUS][NMI_STACK_BYTES] ALIGNED(16);
 //
 // So 0xA = G|L for 64-bit code, 0xC = G|DB for data. Long mode ignores base
 // and limit on code/data segments, but they must still be encoded sanely.
-static void set_entry(uint16_t selector, uint8_t access, uint8_t flags) {
+static void set_entry(u16 selector, u8 access, u8 flags) {
     struct gdt_entry *e = (struct gdt_entry*)&gdt_table[selector];
     e->limit_low   = 0xFFFF;
     e->base_low    = 0;
@@ -143,7 +143,7 @@ static void set_entry(uint16_t selector, uint8_t access, uint8_t flags) {
     e->base_high   = 0;
 }
 
-static void set_tss(uint16_t selector, uint64_t base, uint32_t limit) {
+static void set_tss(u16 selector, u64 base, u32 limit) {
     struct tss_desc *t = (struct tss_desc*)&gdt_table[selector];
     t->limit_low   = limit & 0xFFFF;
     t->base_low    = base & 0xFFFF;
@@ -154,7 +154,7 @@ static void set_tss(uint16_t selector, uint64_t base, uint32_t limit) {
     t->access      = 0x89;
     t->granularity = (limit >> 16) & 0x0F;
     t->base_high   = (base >> 24) & 0xFF;
-    t->base_upper  = (uint32_t)(base >> 32);
+    t->base_upper  = (u32)(base >> 32);
     t->reserved    = 0;
 }
 
@@ -193,10 +193,10 @@ void gdt_init(void) {
 
     /* Install BSP TSS at GDT_TSS using a static boot stack , sched will
      * overwrite rsp0 once the BSP gets a real per-task syscall stack. */
-    gdt_install_tss(0, (uint64_t)(bsp_kernel_stack + sizeof(bsp_kernel_stack)));
+    gdt_install_tss(0, (u64)(bsp_kernel_stack + sizeof(bsp_kernel_stack)));
 
     gdtr.limit = sizeof(gdt_table) - 1;
-    gdtr.base  = (uint64_t)gdt_table;
+    gdtr.base  = (u64)gdt_table;
 
     gdt_load_this_cpu_full();
 
@@ -206,7 +206,7 @@ void gdt_init(void) {
     log_write("GDT + TSS loaded", KERNEL, LOG_INFO);
 }
 
-void gdt_install_tss(int cpu_id, uint64_t kstack_top) {
+void gdt_install_tss(int cpu_id, u64 kstack_top) {
     if (cpu_id < 0 || cpu_id >= MAX_CPUS) return;
     struct tss *t = &tss_table[cpu_id];
     memset(t, 0, sizeof(*t));
@@ -215,13 +215,13 @@ void gdt_install_tss(int cpu_id, uint64_t kstack_top) {
     /* IST1 = double fault. The IDT points vector 8 at this slot, so #DF is
      * always delivered on a stack that is known good even when rsp0 is the
      * thing that broke. */
-    t->ist1       = (uint64_t)(df_stacks[cpu_id] + DF_STACK_BYTES);
-    t->ist2       = (uint64_t)(nmi_stacks[cpu_id] + NMI_STACK_BYTES);
-    set_tss((uint16_t)GDT_TSS_FOR(cpu_id), (uint64_t)t, sizeof(*t) - 1);
+    t->ist1       = (u64)(df_stacks[cpu_id] + DF_STACK_BYTES);
+    t->ist2       = (u64)(nmi_stacks[cpu_id] + NMI_STACK_BYTES);
+    set_tss((u16)GDT_TSS_FOR(cpu_id), (u64)t, sizeof(*t) - 1);
 }
 
 void gdt_load_tss_this_cpu(int cpu_id) {
-    uint16_t sel = (uint16_t)GDT_TSS_FOR(cpu_id);
+    u16 sel = (u16)GDT_TSS_FOR(cpu_id);
     /* Once a TSS has been loaded into TR, its descriptor's type byte flips
      * from 0x89 (available) to 0x8B (busy). Re-issuing ltr on a busy
      * descriptor triggers #GP. Clear bit 1 (busy) back to 0x89 so this
@@ -233,13 +233,13 @@ void gdt_load_tss_this_cpu(int cpu_id) {
     if (c) c->tss = &tss_table[cpu_id];
 }
 
-void tss_set_rsp0(uint64_t rsp0) {
+void tss_set_rsp0(u64 rsp0) {
     /* Legacy single-CPU API. Routes to CPU 0 for backward compat with old
      * callers (sched stage_for now uses tss_set_rsp0_for explicitly). */
     tss_table[0].rsp0 = rsp0;
 }
 
-void tss_set_rsp0_for(int cpu_id, uint64_t rsp0) {
+void tss_set_rsp0_for(int cpu_id, u64 rsp0) {
     if (cpu_id < 0 || cpu_id >= MAX_CPUS) return;
     tss_table[cpu_id].rsp0 = rsp0;
 }

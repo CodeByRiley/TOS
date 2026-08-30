@@ -1,7 +1,7 @@
 ; kernel/arch/x86_64/sched/switch.asm , context switch.
 ;
-; void context_switch(uint64_t *old_rsp_ptr, uint64_t new_rsp,
-;                     uint64_t new_cr3,
+; void context_switch(u64 *old_rsp_ptr, u64 new_rsp,
+;                     u64 new_cr3,
 ;                     void *old_fxstate, void *new_fxstate);
 ; Sys V AMD64: rdi=old_rsp_ptr, rsi=new_rsp, rdx=new_cr3,
 ;              rcx=old_fxstate, r8=new_fxstate.

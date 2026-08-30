@@ -9,6 +9,7 @@
 #ifndef PRINT_H
 #define PRINT_H
 
+#include <utilities/types.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -36,7 +37,7 @@ void print_clear(void);
 void print_newline(void);
 void print_write_char(char character);
 void print_write_str(const char *string);
-void print_write_hex(uint64_t hex);
-void print_set_color(uint8_t foreground, uint8_t background);
+void print_write_hex(u64 hex);
+void print_set_color(u8 foreground, u8 background);
 
 #endif

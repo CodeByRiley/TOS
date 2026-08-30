@@ -25,7 +25,7 @@
 #define ADDR_MASK VMM_ADDR_MASK
 #define PAGE_PS   VMM_PS
 
-uint64_t *kernel_pml4 = 0;
+u64 *kernel_pml4 = 0;
 
 #ifdef VMM_HOST_TEST
 #define VMM_INVALIDATE_PAGE(virt) ((void)(virt))
@@ -37,7 +37,7 @@ uint64_t *kernel_pml4 = 0;
 /* Crack a virtual address into its four index slices. Inlined because
  * doing this by hand four times across three functions was where the
  * bugs lived. */
-SINLINE void va_split(uint64_t virt, uint64_t idx[4]) {
+SINLINE void va_split(u64 virt, u64 idx[4]) {
     idx[0] = (virt >> 39) & 0x1FF;   /* PML4 */
     idx[1] = (virt >> 30) & 0x1FF;   /* PDPT */
     idx[2] = (virt >> 21) & 0x1FF;   /* PD   */
@@ -49,25 +49,25 @@ SINLINE void va_split(uint64_t virt, uint64_t idx[4]) {
  * blocked by a kernel-only upper level. Returns 0 on success and writes
  * the PTE address to *pte_out, -1 on OOM or on hitting a huge-page
  * short-circuit. */
-static int walk_or_create(uint64_t *pml4, uint64_t virt, uint64_t flags,
-                          uint64_t **pte_out) {
-    uint64_t i[4]; va_split(virt, i);
+static int walk_or_create(u64 *pml4, u64 virt, u64 flags,
+                          u64 **pte_out) {
+    u64 i[4]; va_split(virt, i);
 
-    uint64_t *pdpt;
+    u64 *pdpt;
     if (pml4[i[0]] & VMM_PRESENT) {
         if ((flags & VMM_USER) && !(pml4[i[0]] & VMM_USER)) {
             pml4[i[0]] |= VMM_USER;
         }
         pdpt = phys_to_virt(pml4[i[0]] & ADDR_MASK);
     } else {
-        uint64_t phys = pmm_alloc_frame();
+        u64 phys = pmm_alloc_frame();
         if (!phys) return -1;
         memset(phys_to_virt(phys), 0, PAGE_SIZE);
         pml4[i[0]] = phys | VMM_PRESENT | VMM_WRITE | (flags & VMM_USER);
         pdpt = phys_to_virt(phys);
     }
 
-    uint64_t *pd;
+    u64 *pd;
     if (pdpt[i[1]] & VMM_PRESENT) {
         if (pdpt[i[1]] & PAGE_PS) return -1;  /* 1 GiB huge , can't sub-divide */
         if ((flags & VMM_USER) && !(pdpt[i[1]] & VMM_USER)) {
@@ -75,14 +75,14 @@ static int walk_or_create(uint64_t *pml4, uint64_t virt, uint64_t flags,
         }
         pd = phys_to_virt(pdpt[i[1]] & ADDR_MASK);
     } else {
-        uint64_t phys = pmm_alloc_frame();
+        u64 phys = pmm_alloc_frame();
         if (!phys) return -1;
         memset(phys_to_virt(phys), 0, PAGE_SIZE);
         pdpt[i[1]] = phys | VMM_PRESENT | VMM_WRITE | (flags & VMM_USER);
         pd = phys_to_virt(phys);
     }
 
-    uint64_t *pt;
+    u64 *pt;
     if (pd[i[2]] & VMM_PRESENT) {
         if (pd[i[2]] & PAGE_PS) return -1;     /* 2 MiB huge , boot uses these */
         if ((flags & VMM_USER) && !(pd[i[2]] & VMM_USER)) {
@@ -90,7 +90,7 @@ static int walk_or_create(uint64_t *pml4, uint64_t virt, uint64_t flags,
         }
         pt = phys_to_virt(pd[i[2]] & ADDR_MASK);
     } else {
-        uint64_t phys = pmm_alloc_frame();
+        u64 phys = pmm_alloc_frame();
         if (!phys) return -1;
         memset(phys_to_virt(phys), 0, PAGE_SIZE);
         pd[i[2]] = phys | VMM_PRESENT | VMM_WRITE | (flags & VMM_USER);
@@ -104,22 +104,22 @@ static int walk_or_create(uint64_t *pml4, uint64_t virt, uint64_t flags,
 /* Walk-only: never allocates intermediate tables. Returns the PTE
  * address if the full path exists (and no huge-page short-circuits along
  * the way), or 0 if any level is missing. */
-static uint64_t *walk_only(uint64_t *pml4, uint64_t virt) {
-    uint64_t i[4]; va_split(virt, i);
+static u64 *walk_only(u64 *pml4, u64 virt) {
+    u64 i[4]; va_split(virt, i);
 
-    uint64_t e = pml4[i[0]];
+    u64 e = pml4[i[0]];
     if (!(e & VMM_PRESENT)) return 0;
-    uint64_t *pdpt = phys_to_virt(e & ADDR_MASK);
+    u64 *pdpt = phys_to_virt(e & ADDR_MASK);
     e = pdpt[i[1]];
     if (!(e & VMM_PRESENT) || (e & PAGE_PS)) return 0;
-    uint64_t *pd = phys_to_virt(e & ADDR_MASK);
+    u64 *pd = phys_to_virt(e & ADDR_MASK);
     e = pd[i[2]];
     if (!(e & VMM_PRESENT) || (e & PAGE_PS)) return 0;
-    uint64_t *pt = phys_to_virt(e & ADDR_MASK);
+    u64 *pt = phys_to_virt(e & ADDR_MASK);
     return &pt[i[3]];
 }
 
-int vmm_map_in(uint64_t *pml4, uint64_t virt, uint64_t phys, uint64_t flags) {
+int vmm_map_in(u64 *pml4, u64 virt, u64 phys, u64 flags) {
     /* Sanity check: catch callers who accidentally pass a virtual address
      * as the physical address. Physical addresses should never have the
      * high bits of a canonical kernel virtual address set. */
@@ -128,7 +128,7 @@ int vmm_map_in(uint64_t *pml4, uint64_t virt, uint64_t phys, uint64_t flags) {
         return -1;
     }
 
-    uint64_t *pte;
+    u64 *pte;
     if (walk_or_create(pml4, virt, flags, &pte) != 0) return -1;
     *pte = (phys & ADDR_MASK) | (flags | VMM_PRESENT);
     VMM_INVALIDATE_PAGE(virt);
@@ -140,10 +140,10 @@ int vmm_map_in(uint64_t *pml4, uint64_t virt, uint64_t phys, uint64_t flags) {
  * this is), not permission , losing it would make the receiver free a
  * frame the owner still maps. Fails if the page isn't mapped: mprotect on
  * an unmapped address must be an error, not a silent no-op. */
-int vmm_protect_in(uint64_t *pml4, uint64_t virt, uint64_t flags) {
-    uint64_t *pte = walk_only(pml4, virt);
+int vmm_protect_in(u64 *pml4, u64 virt, u64 flags) {
+    u64 *pte = walk_only(pml4, virt);
     if (!pte || !(*pte & VMM_PRESENT)) return -1;
-    uint64_t keep = (*pte & ADDR_MASK) | (*pte & VMM_SHARED);
+    u64 keep = (*pte & ADDR_MASK) | (*pte & VMM_SHARED);
     *pte = keep | (flags | VMM_PRESENT);
     VMM_INVALIDATE_PAGE(virt);
     return 0;
@@ -152,14 +152,14 @@ int vmm_protect_in(uint64_t *pml4, uint64_t virt, uint64_t flags) {
 /* Physical frame behind a leaf PTE, plus its flags. Returns 0 if the page
  * isn't mapped. Used by munmap to decide whether the frame is ours to
  * hand back to the PMM. */
-uint64_t vmm_entry_in(uint64_t *pml4, uint64_t virt) {
-    uint64_t *pte = walk_only(pml4, virt);
+u64 vmm_entry_in(u64 *pml4, u64 virt) {
+    u64 *pte = walk_only(pml4, virt);
     if (!pte || !(*pte & VMM_PRESENT)) return 0;
     return *pte;
 }
 
-int vmm_unmap_in(uint64_t *pml4, uint64_t virt) {
-    uint64_t *pte = walk_only(pml4, virt);
+int vmm_unmap_in(u64 *pml4, u64 virt) {
+    u64 *pte = walk_only(pml4, virt);
     if (!pte) return -1;
     *pte = 0;
     VMM_INVALIDATE_PAGE(virt);
@@ -169,39 +169,39 @@ int vmm_unmap_in(uint64_t *pml4, uint64_t virt) {
 /* Walk to the leaf and return the physical address, honouring 1 GiB
  * and 2 MiB huge-page short-circuits along the way. Returns 0 if any
  * level is unmapped. */
-uint64_t vmm_translate_in(uint64_t *pml4, uint64_t virt) {
-    uint64_t i[4]; va_split(virt, i);
+u64 vmm_translate_in(u64 *pml4, u64 virt) {
+    u64 i[4]; va_split(virt, i);
 
-    uint64_t e = pml4[i[0]];
+    u64 e = pml4[i[0]];
     if (!(e & VMM_PRESENT)) return 0;
-    uint64_t *pdpt = phys_to_virt(e & ADDR_MASK);
+    u64 *pdpt = phys_to_virt(e & ADDR_MASK);
     e = pdpt[i[1]];
     if (!(e & VMM_PRESENT)) return 0;
     if (e & PAGE_PS) return (e & ADDR_MASK) | (virt & 0x3FFFFFFF);   /* 1 GiB */
-    uint64_t *pd = phys_to_virt(e & ADDR_MASK);
+    u64 *pd = phys_to_virt(e & ADDR_MASK);
     e = pd[i[2]];
     if (!(e & VMM_PRESENT)) return 0;
     if (e & PAGE_PS) return (e & ADDR_MASK) | (virt & 0x1FFFFF);     /* 2 MiB */
-    uint64_t *pt = phys_to_virt(e & ADDR_MASK);
+    u64 *pt = phys_to_virt(e & ADDR_MASK);
     e = pt[i[3]];
     if (!(e & VMM_PRESENT)) return 0;
     return (e & ADDR_MASK) | (virt & 0xFFF);
 }
 
 /* Read CR3 and strip the flags to get the active PML4 base. */
-SINLINE uint64_t *current_pml4(void) {
+SINLINE u64 *current_pml4(void) {
     return phys_to_virt(read_cr3() & ADDR_MASK);
 }
 
-int vmm_map(uint64_t virt, uint64_t phys, uint64_t flags) {
+int vmm_map(u64 virt, u64 phys, u64 flags) {
     return vmm_map_in(current_pml4(), virt, phys, flags);
 }
 
-int vmm_unmap(uint64_t virt) {
+int vmm_unmap(u64 virt) {
     return vmm_unmap_in(current_pml4(), virt);
 }
 
-uint64_t vmm_translate(uint64_t virt) {
+u64 vmm_translate(u64 virt) {
     return vmm_translate_in(current_pml4(), virt);
 }
 
@@ -220,12 +220,12 @@ uint64_t vmm_translate(uint64_t virt) {
  * copied. Costs 256 frames (1 MiB) once, at boot. */
 #ifndef VMM_HOST_TEST
 static void reserve_kernel_pml4_entries(void) {
-    uint64_t created = 0;
+    u64 created = 0;
     for (int i = ENTRIES_PER_TABLE / 2; i < ENTRIES_PER_TABLE; i++) {
         if (kernel_pml4[i] & VMM_PRESENT)
             continue;
 
-        uint64_t phys = pmm_alloc_frame();
+        u64 phys = pmm_alloc_frame();
         if (!phys) {
             log_write("VMM: out of memory reserving kernel PML4", KERNEL,
                       LOG_ERROR);

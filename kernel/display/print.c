@@ -8,32 +8,32 @@
 #include <display/print.h>
 #include <memory/hhdm.h>
 
-const static size_t NUM_COLS = 80;
-const static size_t NUM_ROWS = 25;
+const static usize NUM_COLS = 80;
+const static usize NUM_ROWS = 25;
 
 struct Char {
-  uint8_t character;
-  uint8_t color;
+  u8 character;
+  u8 color;
 };
 
 struct Char *buffer = (struct Char *)(HHDM_BASE + 0xb8000ULL);
-size_t col = 0;
-size_t row = 0;
-uint8_t color = PRINT_COLOR_WHITE | PRINT_COLOR_BLACK << 4;
+usize col = 0;
+usize row = 0;
+u8 color = PRINT_COLOR_WHITE | PRINT_COLOR_BLACK << 4;
 
-void clear_row(size_t row) {
+void clear_row(usize row) {
   struct Char empty = (struct Char){
     .character =  ' ',
     .color =  color,
   };
 
-  for (size_t col = 0; col < NUM_COLS; col++) {
+  for (usize col = 0; col < NUM_COLS; col++) {
     buffer[col + NUM_COLS * row] = empty;
   }
 }
 
 void print_clear() {
-  for (size_t i = 0; i < NUM_ROWS; i++) {
+  for (usize i = 0; i < NUM_ROWS; i++) {
     clear_row(i);
   }
 }
@@ -46,8 +46,8 @@ void print_newline() {
     return;
   }
 
-  for (size_t row = 1; row < NUM_ROWS; row++) {
-    for (size_t col = 0; col < NUM_COLS; col++) {
+  for (usize row = 1; row < NUM_ROWS; row++) {
+    for (usize col = 0; col < NUM_COLS; col++) {
       struct Char character = buffer[col + NUM_COLS * row];
       buffer[col + NUM_COLS * (row - 1)] = character;
     }
@@ -67,7 +67,7 @@ void print_write_char(char character) {
   }
 
   buffer[col + NUM_COLS * row] = (struct Char){
-    .character =  (uint8_t)character,
+    .character =  (u8)character,
     .color =  color,
   };
 
@@ -75,8 +75,8 @@ void print_write_char(char character) {
 }
 
 void print_write_str(const char *str) {
-  for (size_t i = 0; 1; i++) {
-    char character = (uint8_t)str[i];
+  for (usize i = 0; 1; i++) {
+    char character = (u8)str[i];
 
     if (character == '\0') {
       return;
@@ -86,7 +86,7 @@ void print_write_str(const char *str) {
   }
 }
 
-static void u64_to_hex(char *out, uint64_t value) {
+static void u64_to_hex(char *out, u64 value) {
     static const char digits[] = "0123456789ABCDEF";
 
     out[0] = '0';
@@ -100,12 +100,12 @@ static void u64_to_hex(char *out, uint64_t value) {
     out[18] = '\0';
 }
 
-void print_write_hex(uint64_t hex) {
+void print_write_hex(u64 hex) {
   char hex_str[19];
   u64_to_hex(hex_str, hex);
   print_write_str(hex_str);
 }
 
-void print_set_color(uint8_t foreground, uint8_t background) {
+void print_set_color(u8 foreground, u8 background) {
   color = foreground + (background << 4);
 }

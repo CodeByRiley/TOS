@@ -80,7 +80,7 @@ int ipc_send(int target_pid, const struct ipc_msg *m, int from_pid) {
     int next = (t->ipc->head + 1) & IPC_RING_MASK;
     if (next == t->ipc->tail) return -1;         /* full , caller can retry */
     struct ipc_msg copy = *m;
-    copy.from_pid = (uint32_t)from_pid;
+    copy.from_pid = (u32)from_pid;
     t->ipc->ring[t->ipc->head] = copy;
     t->ipc->head = next;
     return 0;

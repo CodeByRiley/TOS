@@ -23,14 +23,14 @@
 #define NV_PMC_BOOT_42 0x00000A00u
 
 static struct nvidia_device nvidia_devices[NVIDIA_MAX_DEVICES];
-static uint32_t _nvidia_device_count;
+static u32 _nvidia_device_count;
 
 int nvidia_device_count(void) {
     return (int)_nvidia_device_count;
 }
 
 int nvidia_display_active(void) {
-    for (uint32_t i = 0; i < _nvidia_device_count; i++) {
+    for (u32 i = 0; i < _nvidia_device_count; i++) {
         if (nvidia_devices[i].state == NVIDIA_DISPLAY_READY)
             return 1;
     }
@@ -48,7 +48,7 @@ static int nvidia_match(const struct device *device) {
         && pci->class_code == PCI_CLASS_DISPLAY;
 }
 
-static int bar_contains(uint64_t address, const struct pci_bar *bar) {
+static int bar_contains(u64 address, const struct pci_bar *bar) {
     if (!bar->valid || bar->is_io || bar->size == 0)
         return 0;
 
@@ -56,29 +56,29 @@ static int bar_contains(uint64_t address, const struct pci_bar *bar) {
     return address >= bar->base && address - bar->base < bar->size;
 }
 
-static uint32_t nvidia_reg_read32(const struct nvidia_device *device,
-                                  uint32_t offset) {
-    return *(volatile uint32_t *)(device->regs + offset);
+static u32 nvidia_reg_read32(const struct nvidia_device *device,
+                                  u32 offset) {
+    return *(volatile u32 *)(device->regs + offset);
 }
 
-static uint32_t nvidia_boot0_architecture(uint32_t boot0) {
-    uint32_t low = (boot0 >> 24) & 0x1Fu;
-    uint32_t high = (boot0 >> 8) & 0x1u;
+static u32 nvidia_boot0_architecture(u32 boot0) {
+    u32 low = (boot0 >> 24) & 0x1Fu;
+    u32 high = (boot0 >> 8) & 0x1u;
     return low | (high << 5);
 }
 
-static uint32_t nvidia_boot42_chip_id(uint32_t boot42) {
+static u32 nvidia_boot42_chip_id(u32 boot42) {
     /* NV_PMC_BOOT_42_CHIP_ID is bits 28:20 , nine bits (architecture in
      * 28:24, implementation in 23:20). A wider mask would leak reserved
      * bit 29 into the id. */
     return (boot42 >> 20) & 0x1FFu;
 }
 
-static uint32_t nvidia_boot42_implementation(uint32_t boot42) {
+static u32 nvidia_boot42_implementation(u32 boot42) {
     return (boot42 >> 20) & 0xFu;
 }
 
-static const char *nvidia_architecture_name(uint32_t architecture) {
+static const char *nvidia_architecture_name(u32 architecture) {
     switch (architecture) {
     case 0x11: return "Maxwell";
     case 0x12: return "Maxwell 2";
@@ -97,7 +97,7 @@ static const char *nvidia_architecture_name(uint32_t architecture) {
 }
 
 static int nvidia_map_control_bar(struct nvidia_device *state,
-                                  uint32_t device_index) {
+                                  u32 device_index) {
     const struct pci_bar *bar = &state->pci.bar[0];
     if (!bar->valid || bar->is_io || bar->base == 0
         || bar->size < NV_PMC_BOOT_42 + 4) {
@@ -110,7 +110,7 @@ static int nvidia_map_control_bar(struct nvidia_device *state,
         return -1;
     }
 
-    uint16_t original_command =
+    u16 original_command =
         pci_read16(state->pci.addr, PCI_CFG_COMMAND);
     if (pci_enable_memory(&state->pci) != 0) {
         log_write("nvidia: could not enable PCI memory decoding",
@@ -118,16 +118,16 @@ static int nvidia_map_control_bar(struct nvidia_device *state,
         return -1;
     }
 
-    uint64_t virt = NVIDIA_DEVICE_SLOT_BASE
-                  + (uint64_t)device_index * NVIDIA_DEVICE_SLOT_SIZE;
-    uint64_t flags = VMM_PRESENT | VMM_PCD | VMM_PWT | VMM_NX;
+    u64 virt = NVIDIA_DEVICE_SLOT_BASE
+                  + (u64)device_index * NVIDIA_DEVICE_SLOT_SIZE;
+    u64 flags = VMM_PRESENT | VMM_PCD | VMM_PWT | VMM_NX;
     if (vmm_map(virt, bar->base, flags) != 0) {
         pci_write16(state->pci.addr, PCI_CFG_COMMAND, original_command);
         log_write("nvidia: could not map BAR0 registers", KERNEL, LOG_ERROR);
         return -1;
     }
 
-    state->regs = (volatile uint8_t *)(uintptr_t)virt;
+    state->regs = (volatile u8 *)(uintptr_t)virt;
     state->regs_phys = bar->base;
     state->regs_size = bar->size;
     state->boot0 = nvidia_reg_read32(state, NV_PMC_BOOT_0);
@@ -174,10 +174,10 @@ static int nvidia_probe(struct device *device) {
     int has_mmio = 0;
 
     log_write_hex("nvidia: vendor:device =",
-                  ((uint32_t)pci->vendor << 16) | pci->device,
+                  ((u32)pci->vendor << 16) | pci->device,
                   KERNEL, LOG_INFO);
     log_write_hex("nvidia: subsystem =",
-                  ((uint32_t)pci->subsys_vendor << 16) | pci->subsys_id,
+                  ((u32)pci->subsys_vendor << 16) | pci->subsys_id,
                   KERNEL, LOG_INFO);
 
     for (int i = 0; i < 6; i++) {
@@ -186,7 +186,7 @@ static int nvidia_probe(struct device *device) {
             continue;
 
         has_mmio = 1;
-        log_write_hex("nvidia: MMIO BAR index =", (uint64_t)i,
+        log_write_hex("nvidia: MMIO BAR index =", (u64)i,
                       KERNEL, LOG_INFO);
         log_write_hex("nvidia: MMIO BAR base =", bar->base,
                       KERNEL, LOG_INFO);
@@ -230,11 +230,11 @@ static int nvidia_probe(struct device *device) {
     state->fwsec_app_id = 0;
     state->fwsec_present = 0;
 
-    uint64_t fb_phys = framebuffer_phys();
+    u64 fb_phys = framebuffer_phys();
     for (int i = 0; i < 6; i++) {
         if (bar_contains(fb_phys, &pci->bar[i])) {
             state->boot_framebuffer_bar = i;
-            log_write_hex("nvidia: boot framebuffer is in BAR", (uint64_t)i,
+            log_write_hex("nvidia: boot framebuffer is in BAR", (u64)i,
                           KERNEL, LOG_INFO);
             break;
         }
@@ -294,7 +294,7 @@ int nvidia_driver_register(void) {
 }
 
 void nvidia_driver_late_init(void) {
-    for (uint32_t i = 0; i < _nvidia_device_count; i++) {
+    for (u32 i = 0; i < _nvidia_device_count; i++) {
         struct nvidia_device *device = &nvidia_devices[i];
         if (device->state != NVIDIA_VBIOS_READY)
             continue;

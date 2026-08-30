@@ -4,10 +4,18 @@ set -euo pipefail
 # Run from the repository root; every path below is repo-relative.
 cd "$(dirname "$0")/.."
 
-# mtools and dosfstools are the whole of this script. Name them up front
-# instead of dying two hundred payloads in with "mcopy: command not found"
-# and half an image already written.
-for tool in dd mkfs.fat mmd mdir mcopy; do
+# FAT remains the default, while TOS_ROOTFS_TYPE=ext2 builds the same payload
+# into an ext2 image. Check only the tools needed by the selected backend.
+ROOTFS_TYPE="${TOS_ROOTFS_TYPE:-fat}"
+case "$ROOTFS_TYPE" in
+	fat) required_tools=(dd mkfs.fat mmd mdir mcopy) ;;
+	ext2) required_tools=(dd mkfs mktemp cp) ;;
+	*)
+		echo "create_disk: unsupported filesystem '$ROOTFS_TYPE'" >&2
+		exit 1
+		;;
+esac
+for tool in "${required_tools[@]}"; do
 	command -v "$tool" >/dev/null || {
 		echo "create_disk: $tool not found on PATH" >&2
 		echo "  Debian/Ubuntu: sudo apt install dosfstools mtools" >&2
@@ -24,9 +32,7 @@ MIN_SIZE=64
 IMG="${IMG:-build/disk.img}"
 mkdir -p "$(dirname "$IMG")"
 
-# (host_path::fat_dst_path) pairs. The volume is FAT32 with VFAT long
-# names, so destinations are the real names , no 8.3 mangling, and no
-# second spelling to keep in sync with the kernel's hardcoded paths.
+# (host_path::destination_path) pairs shared by both image formats.
 payloads=(
 	"rootfs/readme.txt::readme.txt"
 
@@ -154,6 +160,24 @@ if [[ -z "${DISK_SIZE_MIB:-}" ]]; then
 fi
 
 dd if=/dev/zero of="$IMG" bs=1M count="$DISK_SIZE_MIB" status=none
+
+if [[ "$ROOTFS_TYPE" == "ext2" ]]; then
+	staging="$(mktemp -d)"
+	trap 'rm -rf -- "$staging"' EXIT
+	mkdir -p "$staging/bin" "$staging/usr/bin" "$staging/usr/local/bin"
+	for entry in "${payloads[@]}"; do
+		host_path="${entry%%::*}"
+		destination="${entry##*::}"
+		mkdir -p "$staging/$(dirname "$destination")"
+		cp "$host_path" "$staging/$destination"
+	done
+	# Classic ext2 (no journal) with 1 KiB blocks. The backend also accepts
+	# the revision-0 128-byte inode layout, but modern tools prefer 256.
+	mke2fs -q -t ext2 -F -b 1024 -I 256 -d "$staging" "$IMG"
+	echo "$IMG created (${DISK_SIZE_MIB} MiB ext2)"
+	exit 0
+fi
+
 # -s 1 keeps one sector per cluster so the cluster count stays well clear
 # of the FAT32 floor no matter how small the payload set gets.
 mkfs.fat -F 32 -s 1 "$IMG" >/dev/null
@@ -196,4 +220,4 @@ for entry in "${payloads[@]}"; do
 	mcopy -i "$IMG" "$host_path" "::${fat_name}"
 done
 
-echo "$IMG created (${DISK_SIZE_MIB} MiB)"
+echo "$IMG created (${DISK_SIZE_MIB} MiB FAT32)"

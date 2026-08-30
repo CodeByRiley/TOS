@@ -1,0 +1,9 @@
+#ifndef KERNEL_FS_MAGIC_H
+#define KERNEL_FS_MAGIC_H
+
+#define EXT2_MAGIC 0xEF53
+#define EXT3_MAGIC 0xEF53
+
+#define EXFAT_MAGIC 0x2011BAB0
+
+#endif

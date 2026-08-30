@@ -18,11 +18,11 @@ _Static_assert(sizeof(struct net_ping_user) == 16,
 struct icmp_session {
   int in_use;
   int replied;
-  uint16_t ident;
-  uint16_t seq;
-  uint8_t dst[IPV4_ALEN];
-  uint64_t sent_ticks;
-  uint64_t reply_ticks;
+  u16 ident;
+  u16 seq;
+  u8 dst[IPV4_ALEN];
+  u64 sent_ticks;
+  u64 reply_ticks;
 };
 
 static struct {
@@ -30,21 +30,21 @@ static struct {
   struct icmp_session slot[ICMP_PING_SESSIONS];
 } pings = {.lock = SPINLOCK_INIT};
 
-static uint32_t icmp_ticks_to_ms(uint64_t ticks) {
-  uint32_t hz = pit_get_freq();
+static u32 icmp_ticks_to_ms(u64 ticks) {
+  u32 hz = pit_get_freq();
   if (hz == 0)
     return 0;
-  return (uint32_t)((ticks * 1000u) / hz);
+  return (u32)((ticks * 1000u) / hz);
 }
 
 /* ---------------- receive ---------------------------------------------- */
 
 static void icmp_echo_reply_input(const struct ipv4_hdr *ip,
                                   const struct icmp_hdr *icmp) {
-  uint16_t ident = from_be16(icmp->ident);
-  uint16_t seq = from_be16(icmp->sequence);
+  u16 ident = from_be16(icmp->ident);
+  u16 seq = from_be16(icmp->sequence);
 
-  uint64_t flags = spin_lock_irqsave(&pings.lock);
+  u64 flags = spin_lock_irqsave(&pings.lock);
   for (int i = 0; i < ICMP_PING_SESSIONS; i++) {
     struct icmp_session *s = &pings.slot[i];
     if (!s->in_use || s->replied)
@@ -64,9 +64,9 @@ static void icmp_echo_reply_input(const struct ipv4_hdr *ip,
 }
 
 static void icmp_echo_request_input(const struct ipv4_hdr *ip,
-                                    const uint8_t *payload, uint16_t len) {
-  uint8_t frame[ETH_FRAME_MAX];
-  uint8_t *reply_payload = frame + IPV4_HEADROOM;
+                                    const u8 *payload, u16 len) {
+  u8 frame[ETH_FRAME_MAX];
+  u8 *reply_payload = frame + IPV4_HEADROOM;
   memcpy(reply_payload, payload, len);
 
   /* Identifier, sequence, and body are echoed back unchanged - that is
@@ -83,8 +83,8 @@ static void icmp_echo_request_input(const struct ipv4_hdr *ip,
   ipv4_output_framed(frame, ip->src, IPPROTO_ICMP, len);
 }
 
-void icmp_input(const struct ipv4_hdr *ip, const uint8_t *payload,
-                uint16_t len) {
+void icmp_input(const struct ipv4_hdr *ip, const u8 *payload,
+                u16 len) {
   if (!ip || !payload || len < ICMP_HDR_LEN || len > IPV4_PAYLOAD_MAX)
     return;
 
@@ -114,13 +114,13 @@ void icmp_input(const struct ipv4_hdr *ip, const uint8_t *payload,
 /* ---------------- ping ------------------------------------------------- */
 
 static void icmp_session_release(int slot) {
-  uint64_t flags = spin_lock_irqsave(&pings.lock);
+  u64 flags = spin_lock_irqsave(&pings.lock);
   pings.slot[slot].in_use = 0;
   spin_unlock_irqrestore(&pings.lock, flags);
 }
 
-long icmp_ping(const uint8_t dst[IPV4_ALEN], uint16_t ident, uint16_t seq,
-               uint32_t timeout_ms, uint32_t *rtt_ms_out) {
+long icmp_ping(const u8 dst[IPV4_ALEN], u16 ident, u16 seq,
+               u32 timeout_ms, u32 *rtt_ms_out) {
   if (!dst || !netif_get())
     return -2;
 
@@ -128,7 +128,7 @@ long icmp_ping(const uint8_t dst[IPV4_ALEN], uint16_t ident, uint16_t seq,
    * task is still inside ipv4_output_framed on another CPU, so the slot
    * has to be findable by then or the reply is dropped as unmatched. */
   int slot = -1;
-  uint64_t flags = spin_lock_irqsave(&pings.lock);
+  u64 flags = spin_lock_irqsave(&pings.lock);
   for (int i = 0; i < ICMP_PING_SESSIONS; i++) {
     if (pings.slot[i].in_use)
       continue;
@@ -147,9 +147,9 @@ long icmp_ping(const uint8_t dst[IPV4_ALEN], uint16_t ident, uint16_t seq,
   if (slot < 0)
     return -2;
 
-  uint16_t len = ICMP_HDR_LEN + ICMP_PING_PAYLOAD;
-  uint8_t frame[ETH_FRAME_MAX];
-  uint8_t *payload = frame + IPV4_HEADROOM;
+  u16 len = ICMP_HDR_LEN + ICMP_PING_PAYLOAD;
+  u8 frame[ETH_FRAME_MAX];
+  u8 *payload = frame + IPV4_HEADROOM;
 
   struct icmp_hdr *req = (struct icmp_hdr *)payload;
   req->type = ICMP_ECHO_REQUEST;
@@ -160,8 +160,8 @@ long icmp_ping(const uint8_t dst[IPV4_ALEN], uint16_t ident, uint16_t seq,
   /* The classic incrementing byte pattern. Any filler would do, but a
    * pattern makes a corrupted reply obvious in a hex dump instead of
    * looking like a short read. */
-  for (uint16_t i = 0; i < ICMP_PING_PAYLOAD; i++)
-    payload[ICMP_HDR_LEN + i] = (uint8_t)('a' + (i % 23));
+  for (u16 i = 0; i < ICMP_PING_PAYLOAD; i++)
+    payload[ICMP_HDR_LEN + i] = (u8)('a' + (i % 23));
 
   req->checksum = 0;
   req->checksum = inet_checksum(payload, len);
@@ -173,17 +173,17 @@ long icmp_ping(const uint8_t dst[IPV4_ALEN], uint16_t ident, uint16_t seq,
     return -2;
   }
 
-  uint32_t hz = pit_get_freq();
+  u32 hz = pit_get_freq();
   if (hz == 0)
     hz = 1000;
-  uint64_t limit = ((uint64_t)timeout_ms * hz) / 1000u;
+  u64 limit = ((u64)timeout_ms * hz) / 1000u;
   if (limit == 0)
     limit = 1;
 
-  uint64_t start = pit_ticks();
+  u64 start = pit_ticks();
   for (;;) {
     int replied;
-    uint64_t rtt;
+    u64 rtt;
 
     flags = spin_lock_irqsave(&pings.lock);
     replied = pings.slot[slot].replied;

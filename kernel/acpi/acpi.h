@@ -9,7 +9,7 @@
 #ifndef ACPI_H
 #define ACPI_H
 
-#include "utilities/types.h"
+#include <utilities/types.h>
 #include <stdint.h>
 
 /* Signatures used to locate the four tables we care about. RSDP's
@@ -22,39 +22,39 @@
 /* ACPI 1.0 Root System Description Pointer (20 bytes). */
 struct PACKED acpi_rsdp_v1 {
     char     signature[8];
-    uint8_t  checksum;
+    u8  checksum;
     char     oem_id[6];
-    uint8_t  revision;                  /* 0 = v1.0, 2 = v2.0+ */
-    uint32_t rsdt_phys;
+    u8  revision;                  /* 0 = v1.0, 2 = v2.0+ */
+    u32 rsdt_phys;
 };
 
 /* ACPI 2.0+ RSDP (36 bytes; embeds v1 followed by extended fields). */
 struct PACKED acpi_rsdp_v2 {
     struct acpi_rsdp_v1 v1;
-    uint32_t length;
-    uint64_t xsdt_phys;
-    uint8_t  ext_checksum;
-    uint8_t  reserved[3];
+    u32 length;
+    u64 xsdt_phys;
+    u8  ext_checksum;
+    u8  reserved[3];
 };
 
 /* Header common to every SDT. `length` covers the header + variable body. */
 struct PACKED acpi_sdt_header {
     char     signature[4];
-    uint32_t length;
-    uint8_t  revision;
-    uint8_t  checksum;
+    u32 length;
+    u8  revision;
+    u8  checksum;
     char     oem_id[6];
     char     oem_table_id[8];
-    uint32_t oem_revision;
-    uint32_t creator_id;
-    uint32_t creator_revision;
+    u32 oem_revision;
+    u32 creator_id;
+    u32 creator_revision;
 };
 
 /* Multiple APIC Description Table , enumerates LAPICs / IOAPICs. */
 struct PACKED acpi_madt {
     struct acpi_sdt_header h;
-    uint32_t lapic_phys;                /* default LAPIC MMIO base */
-    uint32_t flags;                     /* bit 0: legacy PIC present */
+    u32 lapic_phys;                /* default LAPIC MMIO base */
+    u32 flags;                     /* bit 0: legacy PIC present */
     /* variable-length entries follow */
 };
 
@@ -68,11 +68,11 @@ struct PACKED acpi_madt {
 
 /* One CPU's LAPIC entry inside MADT. */
 struct PACKED madt_entry_local_apic {
-    uint8_t  type;                      /* = 0 */
-    uint8_t  length;                    /* = 8 */
-    uint8_t  acpi_processor_id;
-    uint8_t  apic_id;
-    uint32_t flags;                     /* bit 0: enabled, bit 1: online-capable */
+    u8  type;                      /* = 0 */
+    u8  length;                    /* = 8 */
+    u8  acpi_processor_id;
+    u8  apic_id;
+    u32 flags;                     /* bit 0: enabled, bit 1: online-capable */
 };
 
 #define MADT_LAPIC_FLAG_ENABLED         (1u << 0)
@@ -84,20 +84,20 @@ struct PACKED madt_entry_local_apic {
  * MCFG if present, and walk MADT for usable CPUs. Returns 0 when MADT was
  * parsed, -1 when ACPI or MADT is unavailable. Other valid tables remain
  * available even when MADT is absent. */
-int      acpi_init(uint64_t mb2_addr);
+int      acpi_init(u64 mb2_addr);
 
 /* Return the `index`th checksum-valid SDT with this four-byte signature.
  * The pointer remains valid for the lifetime of the kernel. */
 const struct acpi_sdt_header *acpi_find_table(const char signature[4],
-                                              uint32_t index);
+                                              u32 index);
 
 /* Default LAPIC MMIO physical base reported by MADT. */
-uint64_t acpi_lapic_phys(void);
+u64 acpi_lapic_phys(void);
 
 /* Number of usable LOCAL_APIC entries (enabled + online-capable). */
 int      acpi_cpu_count(void);
 
 /* APIC ID for cpu `idx` (0..count-1). */
-uint8_t  acpi_cpu_apic_id(int idx);
+u8  acpi_cpu_apic_id(int idx);
 
 #endif

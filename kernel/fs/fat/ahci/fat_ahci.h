@@ -1,4 +1,4 @@
-/* kernel/fs/fat_ahci.h , AHCI storage backend for the FAT driver.
+/* kernel/fs/fat/ahci/fat_ahci.h , AHCI storage backend for the FAT driver.
  *
  * fat.c operates on a RAM image and knows nothing about disks. This is the
  * half that does: it loads the image off an AHCI port at mount time and
@@ -9,7 +9,7 @@
  * on its own. Anything that needs a disk behind the image includes this;
  * everything else includes fs/fat.h and stays portable.
  *
- * Implementation: kernel/fs/fat_ahci.c.
+ * Implementation: kernel/fs/fat/ahci/fat_ahci.c.
  */
 #ifndef FAT_AHCI_H
 #define FAT_AHCI_H
@@ -25,6 +25,6 @@ int  fat_mount_from_ahci(struct AHCI_DEVICE_DATA *ahci_dev, int port);
 void fat_flush(void);
 
 /* Read one 512-byte sector straight off the disk, bypassing the image. */
-int  fat_read_sector(uint32_t lba, void *buf);
+int  fat_read_sector(u32 lba, void *buf);
 
 #endif

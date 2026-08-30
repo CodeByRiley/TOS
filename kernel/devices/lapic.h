@@ -9,6 +9,7 @@
 #ifndef LAPIC_H
 #define LAPIC_H
 
+#include <utilities/types.h>
 #include <stdint.h>
 
 /* --- LAPIC register offsets ----------------------------------------- */
@@ -65,22 +66,22 @@
 #define LAPIC_ICR_LEVEL_LEVEL (1u << 15)
 
 /* BSP entry: map MMIO and enable for this CPU. */
-void     lapic_init(uint64_t mmio_phys);
+void     lapic_init(u64 mmio_phys);
 
 /* AP entry: just enable , BSP already mapped the MMIO page. */
 void     lapic_enable_this_cpu(void);
 
-uint32_t lapic_read(uint32_t reg);
-void     lapic_write(uint32_t reg, uint32_t val);
-uint32_t lapic_id(void);
+u32 lapic_read(u32 reg);
+void     lapic_write(u32 reg, u32 val);
+u32 lapic_id(void);
 void     lapic_eoi(void);
 
 /* INIT-SIPI-SIPI sequence for AP startup. `vector` is the high byte of
  * the AP's real-mode start address: vec=0x08 → AP starts at 0x8000.
  * Caller handles inter-IPI delays (10 ms after INIT, 200 us after each
  * SIPI per Intel SDM). */
-void lapic_send_init(uint8_t apic_id);
-void lapic_send_startup(uint8_t apic_id, uint8_t vector);
-void lapic_send_fixed(uint8_t apic_id, uint8_t vector);
+void lapic_send_init(u8 apic_id);
+void lapic_send_startup(u8 apic_id, u8 vector);
+void lapic_send_fixed(u8 apic_id, u8 vector);
 
 #endif

@@ -33,19 +33,19 @@
  * So 0x8E is present, DPL 0, interrupt gate. Use 0xEE (DPL 3) only for a
  * vector userspace is meant to raise deliberately. */
 struct idt_entry {
-    uint16_t offset_low;    /* bits 0-15  of handler                       */
-    uint16_t selector;      /* GDT code segment (0x08 from boot GDT)       */
-    uint8_t  ist;           /* 0 = use current rsp, 1-7 = TSS IST stack    */
-    uint8_t  type_attr;
-    uint16_t offset_mid;    /* bits 16-31                                  */
-    uint32_t offset_high;   /* bits 32-63                                  */
-    uint32_t zero;
+    u16 offset_low;    /* bits 0-15  of handler                       */
+    u16 selector;      /* GDT code segment (0x08 from boot GDT)       */
+    u8  ist;           /* 0 = use current rsp, 1-7 = TSS IST stack    */
+    u8  type_attr;
+    u16 offset_mid;    /* bits 16-31                                  */
+    u32 offset_high;   /* bits 32-63                                  */
+    u32 zero;
 } PACKED;
 
 /* lidt operand. */
 struct idt_ptr {
-    uint16_t limit;
-    uint64_t base;
+    u16 limit;
+    u64 base;
 } PACKED;
 
 _Static_assert(sizeof(struct idt_entry) == 16,
@@ -59,15 +59,15 @@ _Static_assert(offsetof(struct idt_entry, offset_high) == 8,
  * when the interrupt crossed privilege levels; callers must check CS.RPL
  * before reading them. */
 struct interrupt_frame {
-    uint64_t r15, r14, r13, r12, r11, r10, r9, r8;
-    uint64_t rdi, rsi, rbp, rbx, rdx, rcx, rax;
-    uint64_t int_num;
-    uint64_t err_code;
-    uint64_t rip;
-    uint64_t cs;
-    uint64_t rflags;
-    uint64_t rsp;
-    uint64_t ss;
+    u64 r15, r14, r13, r12, r11, r10, r9, r8;
+    u64 rdi, rsi, rbp, rbx, rdx, rcx, rax;
+    u64 int_num;
+    u64 err_code;
+    u64 rip;
+    u64 cs;
+    u64 rflags;
+    u64 rsp;
+    u64 ss;
 };
 
 _Static_assert(offsetof(struct interrupt_frame, int_num) == 120,
@@ -84,7 +84,7 @@ void idt_load_this_cpu(void);
 
 /* Register a handler for IRQ `irq` (after PIC remap, IRQs are vectors
  * 0x20+). */
-void irq_install(uint8_t irq, void (*fn)(void));
+void irq_install(u8 irq, void (*fn)(void));
 
 /* setjmp-style exception trap. Returns 0 on first call; if any exception
  * fires before exception_recovery_clear(), the handler longjmps back and
@@ -94,8 +94,8 @@ void     exception_recovery_clear(void);
 
 /* Post-mortem getters valid after a faulted recovery. */
 int      exception_recovery_faulted(void);
-uint64_t exception_recovery_int_num(void);
-uint64_t exception_recovery_err_code(void);
-uint64_t exception_recovery_rip(void);
+u64 exception_recovery_int_num(void);
+u64 exception_recovery_err_code(void);
+u64 exception_recovery_rip(void);
 
 #endif

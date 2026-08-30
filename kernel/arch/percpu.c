@@ -21,27 +21,27 @@
 static struct cpu_local cpus[MAX_CPUS] ALIGNED(64);
 static int              cpu_count = 1;
 
-SINLINE void wrmsr(uint32_t msr, uint64_t val) {
-    uint32_t lo = (uint32_t)val;
-    uint32_t hi = (uint32_t)(val >> 32);
+SINLINE void wrmsr(u32 msr, u64 val) {
+    u32 lo = (u32)val;
+    u32 hi = (u32)(val >> 32);
     __asm__ volatile ("wrmsr" :: "c"(msr), "a"(lo), "d"(hi) : "memory");
 }
 
-SINLINE uint64_t rdmsr(uint32_t msr) {
-    uint32_t lo, hi;
+SINLINE u64 rdmsr(u32 msr) {
+    u32 lo, hi;
     __asm__ volatile ("rdmsr" : "=a"(lo), "=d"(hi) : "c"(msr));
-    return ((uint64_t)hi << 32) | lo;
+    return ((u64)hi << 32) | lo;
 }
 
 static void arm_kernel_gs(struct cpu_local *c) {
     /* Kernel state: ordinary GS references address cpu_local. SWAPGS moves
      * that pointer into KERNEL_GS_BASE while ring 3 runs and installs the
      * staged user value (zero until user GS is exposed) as the visible base. */
-    wrmsr(MSR_GS_BASE,        (uint64_t)c);
+    wrmsr(MSR_GS_BASE,        (u64)c);
     wrmsr(MSR_KERNEL_GS_BASE, 0);
 }
 
-void percpu_init_bsp(uint8_t bsp_lapic_id) {
+void percpu_init_bsp(u8 bsp_lapic_id) {
     memset(cpus, 0, sizeof(cpus));
     struct cpu_local *c = &cpus[0];
     c->self            = c;
@@ -54,11 +54,11 @@ void percpu_init_bsp(uint8_t bsp_lapic_id) {
     c->tss             = 0;
     c->online          = 1;
     arm_kernel_gs(c);
-    log_write_hex("PERCPU: bsp gs_base   =", (uint64_t)c, KERNEL, LOG_INFO);
+    log_write_hex("PERCPU: bsp gs_base   =", (u64)c, KERNEL, LOG_INFO);
     log_write_hex("PERCPU: bsp lapic_id  =", bsp_lapic_id, KERNEL, LOG_INFO);
 }
 
-void percpu_init_ap(int cpu_id, uint8_t lapic_id) {
+void percpu_init_ap(int cpu_id, u8 lapic_id) {
     /* Called from the BSP while staging AP boot. Fills the AP's cpu_local
      * slot but DOES NOT write GS_BASE , that MSR is per-CPU and must be
      * armed by the AP itself once it lands in long mode. */
@@ -90,9 +90,9 @@ struct cpu_local *percpu_this(void) {
 }
 
 int percpu_current_id(void) {
-    uint64_t base = rdmsr(MSR_GS_BASE);
+    u64 base = rdmsr(MSR_GS_BASE);
     for (int i = 0; i < MAX_CPUS; i++) {
-        if (base == (uint64_t)(uintptr_t)&cpus[i])
+        if (base == (u64)(uintptr_t)&cpus[i])
             return i;
     }
     return 0;

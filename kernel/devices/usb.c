@@ -47,10 +47,10 @@ void usb_init(void) {
     log_write("USB: Initializing.", KERNEL, LOG_INFO);
 
     /* USB ports may be split across several controllers. */
-    uint32_t found = 0;
-    uint32_t count = pci_device_count();
+    u32 found = 0;
+    u32 count = pci_device_count();
 
-    for (uint32_t i = 0; i < count; i++) {
+    for (u32 i = 0; i < count; i++) {
         struct pci_device dev;
         if (!pci_device_at(i, &dev))
             continue;

@@ -19,8 +19,10 @@
 #include <drivers/storage/ahci.h>
 #include <drivers/video/nvidia/nvidia.h>
 #include <drivers/video/virtio/virtio_gpu.h>
-#include <fs/fat.h>
-#include <fs/fat_ahci.h>
+#include <fs/ext2/ext2.h>
+#include <fs/fat/ahci/fat_ahci.h>
+#include <fs/fat/fat_vfs.h>
+#include <fs/vfs/vfs.h>
 #include <input/keyboard.h>
 #include <input/mouse.h>
 #include <interrupts/idt.h>
@@ -36,8 +38,8 @@
 #include <utilities/log.h>
 
 extern struct AHCI_DEVICE_DATA *g_ahci_dev;
-extern uint64_t *kernel_pml4;
-static uint8_t bsp_syscall_kstack[16384] ALIGNED(16);
+extern u64 *kernel_pml4;
+static u8 bsp_syscall_kstack[16384] ALIGNED(16);
 
 static void early_console_init(void) {
   print_clear();
@@ -56,7 +58,7 @@ static void arch_init(void) {
   log_write("pit initialised", KERNEL, LOG_INFO);
 }
 
-static void memory_init(uint64_t mb2_addr) {
+static void memory_init(u64 mb2_addr) {
   pmm_init(mb2_addr);
   vmm_init();
   vma_init();
@@ -65,14 +67,14 @@ static void memory_init(uint64_t mb2_addr) {
 
   // /* Demand-paging boot check. */
   // log_write("Testing Demand Paging...", KERNEL, LOG_INFO);
-  // uint64_t test_page = vma_alloc(4096);
+  // u64 test_page = vma_alloc(4096);
   // if (!test_page) {
   //   log_write("Demand Paging Test: vma_alloc failed!", KERNEL, LOG_ERROR);
   //   return;
   // }
   // log_write("Allocated unmapped VMA. Preparing to write to it...", KERNEL,
   //           LOG_INFO);
-  // uint32_t *ptr = (uint32_t *)test_page;
+  // u32 *ptr = (u32 *)test_page;
   // *ptr = 0xDEADBEEF;
   // if (*ptr == 0xDEADBEEF) {
   //   log_write("Demand Paging Success! Hardware fault handled dynamically.",
@@ -83,13 +85,13 @@ static void memory_init(uint64_t mb2_addr) {
   // vfree(test_page);
 }
 
-static void acpi_and_smp_init(uint64_t mb2_addr) {
-  uint8_t bsp_lapic_id = 0;
+static void acpi_and_smp_init(u64 mb2_addr) {
+  u8 bsp_lapic_id = 0;
   int cpu_count = 1;
 
   if (acpi_init(mb2_addr) == 0) {
     lapic_init(acpi_lapic_phys());
-    bsp_lapic_id = (uint8_t)lapic_id();
+    bsp_lapic_id = (u8)lapic_id();
     cpu_count = acpi_cpu_count();
   } else {
     log_write("ACPI: SMP unavailable, staying UP", KERNEL, LOG_INFO);
@@ -105,12 +107,12 @@ static void ipc_and_sched_init(void) {
   msg_init();
   log_write("message queue initialised", KERNEL, LOG_INFO);
   syscall_init_this_cpu(
-      (uint64_t)(bsp_syscall_kstack + sizeof(bsp_syscall_kstack)));
+      (u64)(bsp_syscall_kstack + sizeof(bsp_syscall_kstack)));
   sched_init();
   log_write("scheduler initialised", KERNEL, LOG_INFO);
 }
 
-static void display_init(uint64_t mb2_addr) {
+static void display_init(u64 mb2_addr) {
   log_write("initialising framebuffer", KERNEL, LOG_INFO);
   framebuffer_init(mb2_addr);
   log_write("framebuffer initialised", KERNEL, LOG_INFO);
@@ -161,7 +163,7 @@ static void devices_init(void) {
   ahci_init();
 }
 
-static void filesystem_init(uint64_t mb2_addr) {
+static void filesystem_init(u64 mb2_addr) {
   struct MB2_TAG_MODULE *m = mb2_find_module(mb2_addr, "rootfs");
   if (!m) {
     log_write("rootfs: no rootfs module", KERNEL, LOG_ERROR);
@@ -170,8 +172,12 @@ static void filesystem_init(uint64_t mb2_addr) {
   }
 
   bool fs_mounted = false;
+  vfs_init();
+  ext2_vfs_register();
+  fat_vfs_register();
 
-  if (g_ahci_dev && fat_mount_from_ahci(g_ahci_dev, 0) == 0) {
+  if (g_ahci_dev && fat_mount_from_ahci(g_ahci_dev, 0) == 0 &&
+      fat_vfs_attach("/") == 0) {
     log_write("rootfs: mounted from AHCI SATA drive", FILESYS, LOG_INFO);
     fs_mounted = true;
   } else {
@@ -180,9 +186,14 @@ static void filesystem_init(uint64_t mb2_addr) {
   }
 
   if (!fs_mounted && m) {
-    if (fat_init(phys_to_virt(m->mod_start), m->mod_end - m->mod_start) == 0) {
+    const char *filesystem_type = 0;
+    if (vfs_mount_auto("/", phys_to_virt(m->mod_start),
+                       m->mod_end - m->mod_start,
+                       &filesystem_type) == 0) {
       log_write("rootfs: mounted from Multiboot2 ramdisk module", FILESYS,
                 LOG_INFO);
+      if (filesystem_type)
+        log_write(filesystem_type, FILESYS, LOG_INFO);
       fs_mounted = true;
     }
   }
@@ -245,7 +256,7 @@ static void init_task_entry(void) {
     if (winman_pid < 0)
         log_write("winman: launch failed , TTY-only mode", USER, LOG_INFO);
     else
-        log_write_hex("winman: spawn returned pid =", (uint64_t)winman_pid, USER,
+        log_write_hex("winman: spawn returned pid =", (u64)winman_pid, USER,
                       LOG_INFO);
 
     for (int i = 0; i < WM_REGISTER_GRACE_TICKS && msg_input_owner() == 0; i++)
@@ -255,7 +266,7 @@ static void init_task_entry(void) {
         if (msg_input_owner() == 0) {
             char *sh_argv[] = { (char *)"sh", NULL };
             long code = process_exec("/system/bin/sh.elf", sh_argv);
-            log_write_hex("fallback shell exited code =", (uint64_t)code, USER,
+            log_write_hex("fallback shell exited code =", (u64)code, USER,
                           LOG_INFO);
         }
         task_sleep_ticks(50);
@@ -273,7 +284,7 @@ static void enable_interrupts_and_smp(void) {
   log_write("kernel booted", KERNEL, LOG_INFO);
 }
 
-void kernel_main(uint64_t mb2_addr) {
+void kernel_main(u64 mb2_addr) {
   early_console_init();
   arch_init();
   memory_init(mb2_addr);

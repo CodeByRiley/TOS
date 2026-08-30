@@ -13,7 +13,7 @@
 #include <display/print.h>
 
 /* Validate raw type byte → enum log_type. Returns 1 on hit. */
-static int log_type_from_u8(uint8_t value, enum log_type *out) {
+static int log_type_from_u8(u8 value, enum log_type *out) {
     switch (value) {
         case KERNEL:
         case SYSTEM:
@@ -28,7 +28,7 @@ static int log_type_from_u8(uint8_t value, enum log_type *out) {
 }
 
 /* Validate raw level byte → enum log_level. Returns 1 on hit. */
-static int log_level_from_u8(uint8_t value, enum log_level *out) {
+static int log_level_from_u8(u8 value, enum log_level *out) {
     switch (value) {
         case LOG_DEBUG:
         case LOG_INFO:
@@ -55,8 +55,8 @@ static const char *log_type_name(enum log_type type) {
 }
 
 /* Bounded string copy. NULs-terminates even when truncating. */
-static void log_copy_message(char *dst, uint64_t dst_cap, const char *src) {
-    uint64_t i = 0;
+static void log_copy_message(char *dst, u64 dst_cap, const char *src) {
+    u64 i = 0;
 
     if (dst_cap == 0) return;
 
@@ -71,7 +71,7 @@ static void log_copy_message(char *dst, uint64_t dst_cap, const char *src) {
 /* Initialise an entry with safe defaults and copy `message` into it.
  * Bad raw_type/raw_level fall back to SYSTEM / LOG_INFO. */
 static void log_init_entry(struct log_entry *entry, const char *message,
-                           uint8_t raw_type, uint8_t raw_level) {
+                           u8 raw_type, u8 raw_level) {
     entry->message[0] = '\0';
     entry->timestamp = 0;
     entry->level = LOG_INFO;
@@ -138,15 +138,15 @@ void log_write_entry(struct log_entry *entry) {
 }
 
 /* Plain message , no payload. */
-void log_write(const char *message, uint8_t raw_type, uint8_t raw_level) {
+void log_write(const char *message, u8 raw_type, u8 raw_level) {
     struct log_entry entry;
     log_init_entry(&entry, message, raw_type, raw_level);
     log_write_entry(&entry);
 }
 
 /* Message + hex payload. */
-void log_write_hex(const char *message, uint64_t value,
-                   uint8_t raw_type, uint8_t raw_level) {
+void log_write_hex(const char *message, u64 value,
+                   u8 raw_type, u8 raw_level) {
     struct log_entry entry;
     log_init_entry(&entry, message, raw_type, raw_level);
     entry.has_hex = 1;
@@ -156,7 +156,7 @@ void log_write_hex(const char *message, uint64_t value,
 
 /* Message + signed-int payload. */
 void log_write_int(const char *message, int64_t value,
-                   uint8_t raw_type, uint8_t raw_level) {
+                   u8 raw_type, u8 raw_level) {
     struct log_entry entry;
     log_init_entry(&entry, message, raw_type, raw_level);
     entry.has_int = 1;
@@ -166,7 +166,7 @@ void log_write_int(const char *message, int64_t value,
 
 /* Message + string payload. */
 void log_write_string(const char *message, const char *val,
-                      uint8_t raw_type, uint8_t raw_level) {
+                      u8 raw_type, u8 raw_level) {
     struct log_entry entry;
     log_init_entry(&entry, message, raw_type, raw_level);
     entry.has_string = 1;
@@ -176,8 +176,8 @@ void log_write_string(const char *message, const char *val,
 
 /* Pretty-print a CPU exception. Routed to both serial + VGA so the cause
  * is captured even if the framebuffer pipeline is the thing that broke. */
-void log_write_exception(uint64_t int_num, const char *name,
-                         uint64_t err_code, uint64_t rip) {
+void log_write_exception(u64 int_num, const char *name,
+                         u64 err_code, u64 rip) {
     serial_write_str("[KERNEL]: !! exception ");
     serial_write_hex(int_num);
     serial_write_str(" (");
@@ -214,7 +214,7 @@ void log_write_exception(uint64_t int_num, const char *name,
 #define LOG_FMT_BUF  512
 
 /* va_list variant */
-void log_write_vfmt(uint8_t raw_type, uint8_t raw_level, const char *fmt, va_list args) {
+void log_write_vfmt(u8 raw_type, u8 raw_level, const char *fmt, va_list args) {
     char buf[LOG_FMT_BUF];
 
     if (!fmt) {
@@ -233,7 +233,7 @@ void log_write_vfmt(uint8_t raw_type, uint8_t raw_level, const char *fmt, va_lis
 }
 
 /* printf-style entry point */
-void log_write_fmt(uint8_t raw_type, uint8_t raw_level, const char *fmt, ...) {
+void log_write_fmt(u8 raw_type, u8 raw_level, const char *fmt, ...) {
     va_list args;
 
     va_start(args, fmt);

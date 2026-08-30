@@ -13,7 +13,7 @@
  * without costing a slot.
  */
 #include <devices/rtc.h>
-#include <fs/fat.h>
+#include <fs/fat/fat.h>
 #include <utilities/log.h>
 #include <utilities/string.h>
 
@@ -62,27 +62,27 @@ enum fat_type {
 };
 
 struct PACKED bpb {
-  uint8_t jmp[3];
+  u8 jmp[3];
   char oem[8];
-  uint16_t bytes_per_sector;
-  uint8_t sectors_per_cluster;
-  uint16_t reserved_sectors;
-  uint8_t num_fats;
-  uint16_t root_entries;
-  uint16_t total_sectors_16;
-  uint8_t media;
-  uint16_t sectors_per_fat_16;
-  uint16_t sectors_per_track;
-  uint16_t heads;
-  uint32_t hidden_sectors;
-  uint32_t total_sectors_32;
+  u16 bytes_per_sector;
+  u8 sectors_per_cluster;
+  u16 reserved_sectors;
+  u8 num_fats;
+  u16 root_entries;
+  u16 total_sectors_16;
+  u8 media;
+  u16 sectors_per_fat_16;
+  u16 sectors_per_track;
+  u16 heads;
+  u32 hidden_sectors;
+  u32 total_sectors_32;
   /* FAT32 extended block. Only meaningful when sectors_per_fat_16 is 0. */
-  uint32_t sectors_per_fat_32;
-  uint16_t ext_flags;
-  uint16_t fs_version;
-  uint32_t root_cluster;
-  uint16_t fs_info_sector;
-  uint16_t backup_boot_sector;
+  u32 sectors_per_fat_32;
+  u16 ext_flags;
+  u16 fs_version;
+  u32 root_cluster;
+  u16 fs_info_sector;
+  u16 backup_boot_sector;
 };
 
 _Static_assert(sizeof(struct bpb) == 52, "BPB layout must match on-disk");
@@ -90,39 +90,39 @@ _Static_assert(sizeof(struct bpb) == 52, "BPB layout must match on-disk");
 struct PACKED dir_entry {
   char name[8];
   char ext[3];
-  uint8_t attr;
-  uint8_t nt_case;
-  uint8_t create_time_tenth;
-  uint16_t create_time;
-  uint16_t create_date;
-  uint16_t access_date;
-  uint16_t first_cluster_high;
-  uint16_t write_time;
-  uint16_t write_date;
-  uint16_t first_cluster_low;
-  uint32_t size;
+  u8 attr;
+  u8 nt_case;
+  u8 create_time_tenth;
+  u16 create_time;
+  u16 create_date;
+  u16 access_date;
+  u16 first_cluster_high;
+  u16 write_time;
+  u16 write_date;
+  u16 first_cluster_low;
+  u32 size;
 };
 
 _Static_assert(sizeof(struct dir_entry) == 32,
                "FAT directory entries must be 32 bytes");
 
 struct fat_dir {
-  uint32_t first_cluster;
+  u32 first_cluster;
   int is_root;
 };
 
 struct path_parts {
   const char *component[FAT_MAX_COMPONENTS];
-  uint8_t length[FAT_MAX_COMPONENTS];
-  uint8_t count;
+  u8 length[FAT_MAX_COMPONENTS];
+  u8 count;
 };
 
 struct dir_cursor {
   struct fat_dir dir;
-  uint32_t cluster;
-  uint32_t slot;
-  uint32_t index;
-  uint32_t clusters_seen;
+  u32 cluster;
+  u32 slot;
+  u32 index;
+  u32 clusters_seen;
   int ended;
 };
 
@@ -132,8 +132,8 @@ struct dir_cursor {
  * entry has to erase the whole range, not just the short slot. */
 struct dir_slot {
   struct dir_entry *entry;
-  uint32_t index;
-  uint32_t lfn_index;
+  u32 index;
+  u32 lfn_index;
 };
 
 /* Long-name accumulator. LFN slots precede their short entry and are
@@ -141,28 +141,28 @@ struct dir_slot {
  * entry arrives and its checksum matches. */
 struct lfn_state {
   char name[FAT_LFN_BUFFER];
-  uint32_t length;
-  uint32_t start_index;
-  uint8_t checksum;
-  uint8_t expect;
-  uint8_t valid;
+  u32 length;
+  u32 start_index;
+  u8 checksum;
+  u8 expect;
+  u8 valid;
 };
 
-static uint8_t *fs_image;
-static size_t fs_image_size;
-static uint16_t bytes_per_sec;
-static uint8_t sec_per_clus;
-static uint8_t num_fats;
-static uint32_t sectors_per_fat;
-static uint32_t fat_start_sec;
-static uint32_t root_start_sec;
-static uint32_t data_start_sec;
-static uint16_t root_entries;
-static uint32_t root_cluster;
-static uint32_t fsinfo_sec;
+static u8 *fs_image;
+static usize fs_image_size;
+static u16 bytes_per_sec;
+static u8 sec_per_clus;
+static u8 num_fats;
+static u32 sectors_per_fat;
+static u32 fat_start_sec;
+static u32 root_start_sec;
+static u32 data_start_sec;
+static u16 root_entries;
+static u32 root_cluster;
+static u32 fsinfo_sec;
 static enum fat_type fat_type;
 /* Exclusive upper bound; valid data clusters are [2, cluster_limit). */
-static uint32_t cluster_limit;
+static u32 cluster_limit;
 
 /* Installed by the storage backend once an image is mounted from a real
  * device. NULL means the RAM array is the only copy that exists, which is
@@ -170,48 +170,48 @@ static uint32_t cluster_limit;
 static fat_sector_writer sector_writer;
 
 /* Byte offsets of the 13 name characters inside an LFN slot. */
-static const uint8_t lfn_offsets[FAT_LFN_CHARS_PER_SLOT] = {
+static const u8 lfn_offsets[FAT_LFN_CHARS_PER_SLOT] = {
     1, 3, 5, 7, 9, 14, 16, 18, 20, 22, 24, 28, 30};
 
-static uint32_t cluster_bytes(void) {
-  return (uint32_t)sec_per_clus * bytes_per_sec;
+static u32 cluster_bytes(void) {
+  return (u32)sec_per_clus * bytes_per_sec;
 }
 
-static uint8_t *sector(uint32_t lba) {
-  return fs_image + (uint64_t)lba * bytes_per_sec;
+static u8 *sector(u32 lba) {
+  return fs_image + (u64)lba * bytes_per_sec;
 }
 
-static int cluster_is_valid(uint32_t cluster) {
+static int cluster_is_valid(u32 cluster) {
   return cluster >= 2 && cluster < cluster_limit;
 }
 
-static uint32_t cluster_eoc(void) {
+static u32 cluster_eoc(void) {
   return fat_type == FAT_TYPE_32 ? 0x0FFFFFFFu : 0xFFFFu;
 }
 
-static int cluster_is_eoc(uint32_t value) {
+static int cluster_is_eoc(u32 value) {
   return fat_type == FAT_TYPE_32 ? value >= 0x0FFFFFF8u : value >= 0xFFF8u;
 }
 
-static int cluster_is_bad(uint32_t value) {
+static int cluster_is_bad(u32 value) {
   return fat_type == FAT_TYPE_32 ? value == 0x0FFFFFF7u : value == 0xFFF7u;
 }
 
 /* FAT16 entries are 16 bits, FAT32 entries 28 bits inside a 32-bit slot. */
-static uint32_t fat_get(uint32_t cluster) {
-  uint8_t *table = sector(fat_start_sec);
+static u32 fat_get(u32 cluster) {
+  u8 *table = sector(fat_start_sec);
   if (fat_type == FAT_TYPE_32)
-    return ((uint32_t *)table)[cluster] & 0x0FFFFFFFu;
-  return ((uint16_t *)table)[cluster];
+    return ((u32 *)table)[cluster] & 0x0FFFFFFFu;
+  return ((u16 *)table)[cluster];
 }
 
 /* The FAT32 entry's top 4 bits are reserved and must survive a write. */
-static void fat_put(uint8_t *table, uint32_t cluster, uint32_t value) {
+static void fat_put(u8 *table, u32 cluster, u32 value) {
   if (fat_type == FAT_TYPE_32) {
-    uint32_t *slots = (uint32_t *)table;
+    u32 *slots = (u32 *)table;
     slots[cluster] = (slots[cluster] & 0xF0000000u) | (value & 0x0FFFFFFFu);
   } else {
-    ((uint16_t *)table)[cluster] = (uint16_t)value;
+    ((u16 *)table)[cluster] = (u16)value;
   }
 }
 
@@ -221,18 +221,18 @@ static void fat_put(uint8_t *table, uint32_t cluster, uint32_t value) {
 static void fsinfo_invalidate(void) {
   if (!fsinfo_sec)
     return;
-  uint8_t *info = sector(fsinfo_sec);
-  if (*(uint32_t *)info != 0x41615252u)
+  u8 *info = sector(fsinfo_sec);
+  if (*(u32 *)info != 0x41615252u)
     return;
-  *(uint32_t *)(info + 488) = 0xFFFFFFFFu; /* free cluster count  */
-  *(uint32_t *)(info + 492) = 0xFFFFFFFFu; /* next-free-cluster hint */
+  *(u32 *)(info + 488) = 0xFFFFFFFFu; /* free cluster count  */
+  *(u32 *)(info + 492) = 0xFFFFFFFFu; /* next-free-cluster hint */
 }
 
 /* Return 0 for a valid successor, 1 for EOC, and -1 for corruption. */
-static int next_cluster(uint32_t cluster, uint32_t *next) {
+static int next_cluster(u32 cluster, u32 *next) {
   if (!cluster_is_valid(cluster))
     return -1;
-  uint32_t value = fat_get(cluster);
+  u32 value = fat_get(cluster);
   if (cluster_is_eoc(value))
     return 1;
   if (cluster_is_bad(value) || !cluster_is_valid(value))
@@ -241,57 +241,57 @@ static int next_cluster(uint32_t cluster, uint32_t *next) {
   return 0;
 }
 
-static uint8_t *cluster_data(uint32_t cluster) {
+static u8 *cluster_data(u32 cluster) {
   if (!cluster_is_valid(cluster))
     return 0;
-  uint32_t lba = data_start_sec + (cluster - 2) * sec_per_clus;
+  u32 lba = data_start_sec + (cluster - 2) * sec_per_clus;
   return sector(lba);
 }
 
 /* FAT16 keeps first_cluster_high reserved and zero; only FAT32 uses it. */
-static uint32_t entry_cluster(const struct dir_entry *entry) {
-  uint32_t low = entry->first_cluster_low;
+static u32 entry_cluster(const struct dir_entry *entry) {
+  u32 low = entry->first_cluster_low;
   if (fat_type != FAT_TYPE_32)
     return low;
-  return low | ((uint32_t)entry->first_cluster_high << 16);
+  return low | ((u32)entry->first_cluster_high << 16);
 }
 
-static void entry_set_cluster(struct dir_entry *entry, uint32_t cluster) {
-  entry->first_cluster_low = (uint16_t)(cluster & 0xFFFF);
+static void entry_set_cluster(struct dir_entry *entry, u32 cluster) {
+  entry->first_cluster_low = (u16)(cluster & 0xFFFF);
   entry->first_cluster_high =
-      fat_type == FAT_TYPE_32 ? (uint16_t)(cluster >> 16) : 0;
+      fat_type == FAT_TYPE_32 ? (u16)(cluster >> 16) : 0;
 }
 
 int fat_type_bits(void) { return (int)fat_type; }
 
-int fat_init(uint8_t *image, size_t size) {
+int fat_init(u8 *image, usize size) {
   if (!image || size < 512)
     return -1;
 
   struct bpb *b = (struct bpb *)image;
-  uint32_t total_sectors =
+  u32 total_sectors =
       b->total_sectors_16 ? b->total_sectors_16 : b->total_sectors_32;
-  uint32_t fat_sectors =
+  u32 fat_sectors =
       b->sectors_per_fat_16 ? b->sectors_per_fat_16 : b->sectors_per_fat_32;
   if (b->bytes_per_sector < 512 || b->bytes_per_sector > 4096 ||
       (b->bytes_per_sector & (b->bytes_per_sector - 1)) != 0 ||
       b->sectors_per_cluster == 0 || b->reserved_sectors == 0 ||
       b->num_fats == 0 || fat_sectors == 0 || total_sectors == 0 ||
-      (uint64_t)total_sectors * b->bytes_per_sector > size)
+      (u64)total_sectors * b->bytes_per_sector > size)
     return -1;
 
-  uint32_t root_sectors =
-      ((uint32_t)b->root_entries * sizeof(struct dir_entry) +
+  u32 root_sectors =
+      ((u32)b->root_entries * sizeof(struct dir_entry) +
        b->bytes_per_sector - 1) /
       b->bytes_per_sector;
-  uint32_t fat_start = b->reserved_sectors;
-  uint32_t root_start = fat_start + (uint32_t)b->num_fats * fat_sectors;
-  uint32_t data_start = root_start + root_sectors;
+  u32 fat_start = b->reserved_sectors;
+  u32 root_start = fat_start + (u32)b->num_fats * fat_sectors;
+  u32 data_start = root_start + root_sectors;
   if (root_start < fat_start || data_start < root_start ||
       data_start >= total_sectors)
     return -1;
 
-  uint32_t data_clusters =
+  u32 data_clusters =
       (total_sectors - data_start) / b->sectors_per_cluster;
 
   /* The cluster count is the only thing that decides the FAT flavour --
@@ -304,10 +304,10 @@ int fat_init(uint8_t *image, size_t size) {
   else
     type = FAT_TYPE_32;
 
-  uint32_t entry_bytes = type == FAT_TYPE_32 ? 4 : 2;
-  uint32_t fat_entries =
-      (uint32_t)((uint64_t)fat_sectors * b->bytes_per_sector / entry_bytes);
-  uint32_t limit = data_clusters + 2;
+  u32 entry_bytes = type == FAT_TYPE_32 ? 4 : 2;
+  u32 fat_entries =
+      (u32)((u64)fat_sectors * b->bytes_per_sector / entry_bytes);
+  u32 limit = data_clusters + 2;
   if (limit > fat_entries)
     limit = fat_entries;
   if (limit <= 2)
@@ -346,7 +346,7 @@ int fat_init(uint8_t *image, size_t size) {
     fsinfo_sec = b->fs_info_sector;
 
   (void)fs_image_size;
-  log_write_hex("FAT: type          =", (uint64_t)fat_type, KERNEL, LOG_INFO);
+  log_write_hex("FAT: type          =", (u64)fat_type, KERNEL, LOG_INFO);
   log_write_hex("FAT: bytes/sector  =", bytes_per_sec, KERNEL, LOG_INFO);
   log_write_hex("FAT: sec/cluster   =", sec_per_clus, KERNEL, LOG_INFO);
   log_write_hex("FAT: fat start sec =", fat_start_sec, KERNEL, LOG_INFO);
@@ -364,7 +364,7 @@ static int split_path(const char *path, struct path_parts *parts) {
     return -1;
   parts->count = 0;
 
-  uint32_t pos = 0;
+  u32 pos = 0;
   for (;;) {
     while (pos < FAT_PATH_MAX && is_separator(path[pos]))
       pos++;
@@ -373,13 +373,13 @@ static int split_path(const char *path, struct path_parts *parts) {
     if (path[pos] == '\0')
       return 0;
 
-    uint32_t start = pos;
+    u32 start = pos;
     while (pos < FAT_PATH_MAX && path[pos] != '\0' && !is_separator(path[pos]))
       pos++;
     if (pos >= FAT_PATH_MAX)
       return -1;
 
-    uint32_t length = pos - start;
+    u32 length = pos - start;
     if (length == 1 && path[start] == '.')
       continue;
     if (length == 2 && path[start] == '.' && path[start + 1] == '.') {
@@ -392,7 +392,7 @@ static int split_path(const char *path, struct path_parts *parts) {
       return -1;
 
     parts->component[parts->count] = path + start;
-    parts->length[parts->count] = (uint8_t)length;
+    parts->length[parts->count] = (u8)length;
     parts->count++;
   }
 }
@@ -435,11 +435,11 @@ static int is_upper(char c) { return c >= 'A' && c <= 'Z'; }
 
 /* Split a name at its final '.'. A leading dot is part of the base, so
  * ".config" has no extension rather than an empty one. */
-static void split_extension(const char *name, uint32_t length,
-                            uint32_t *base_len, uint32_t *ext_at,
-                            uint32_t *ext_len) {
-  uint32_t dot = length;
-  for (uint32_t i = length; i > 1; i--) {
+static void split_extension(const char *name, u32 length,
+                            u32 *base_len, u32 *ext_at,
+                            u32 *ext_len) {
+  u32 dot = length;
+  for (u32 i = length; i > 1; i--) {
     if (name[i - 1] == '.') {
       dot = i - 1;
       break;
@@ -454,20 +454,20 @@ static void split_extension(const char *name, uint32_t length,
  * character is legal, both halves fit, and each half has uniform case --
  * anything else needs LFN slots to survive a round trip. `nt_case` comes
  * back with the flags that restore the original case on read. */
-static int short_name_exact(const char *name, uint32_t length,
-                            char out[FAT_NAME_LEN], uint8_t *nt_case) {
+static int short_name_exact(const char *name, u32 length,
+                            char out[FAT_NAME_LEN], u8 *nt_case) {
   /* A trailing dot has no 8.3 spelling: the extension field would be
    * empty and the name would read back without the dot. */
   if (length == 0 || length > 12 || name[length - 1] == '.')
     return -1;
 
-  uint32_t base_len, ext_at, ext_len;
+  u32 base_len, ext_at, ext_len;
   split_extension(name, length, &base_len, &ext_at, &ext_len);
   if (base_len == 0 || base_len > 8 || ext_len > 3)
     return -1;
 
   int base_lower = 0, base_upper = 0, ext_lower = 0, ext_upper = 0;
-  for (uint32_t i = 0; i < base_len; i++) {
+  for (u32 i = 0; i < base_len; i++) {
     if (!valid_short_char(name[i]))
       return -1;
     if (is_lower(name[i]))
@@ -475,7 +475,7 @@ static int short_name_exact(const char *name, uint32_t length,
     if (is_upper(name[i]))
       base_upper = 1;
   }
-  for (uint32_t i = 0; i < ext_len; i++) {
+  for (u32 i = 0; i < ext_len; i++) {
     char c = name[ext_at + i];
     if (!valid_short_char(c))
       return -1;
@@ -488,16 +488,16 @@ static int short_name_exact(const char *name, uint32_t length,
     return -1;
 
   memset(out, ' ', FAT_NAME_LEN);
-  for (uint32_t i = 0; i < base_len; i++)
+  for (u32 i = 0; i < base_len; i++)
     out[i] = to_upper(name[i]);
-  for (uint32_t i = 0; i < ext_len; i++)
+  for (u32 i = 0; i < ext_len; i++)
     out[8 + i] = to_upper(name[ext_at + i]);
 
   /* 0xE5 is the deleted marker; the standard escape is 0x05. */
-  if ((uint8_t)out[0] == 0xE5)
+  if ((u8)out[0] == 0xE5)
     out[0] = 0x05;
 
-  *nt_case = (uint8_t)((base_lower ? FAT_CASE_BASE_LOWER : 0) |
+  *nt_case = (u8)((base_lower ? FAT_CASE_BASE_LOWER : 0) |
                        (ext_lower ? FAT_CASE_EXT_LOWER : 0));
   return 0;
 }
@@ -505,10 +505,10 @@ static int short_name_exact(const char *name, uint32_t length,
 /* Checksum tying an LFN run to its short entry. Any edit to the short name
  * by an 8.3-only writer breaks it, which is exactly how such a writer
  * signals that the long name is now stale. */
-static uint8_t lfn_checksum(const char *name) {
-  uint8_t sum = 0;
+static u8 lfn_checksum(const char *name) {
+  u8 sum = 0;
   for (int i = 0; i < FAT_NAME_LEN; i++)
-    sum = (uint8_t)(((sum & 1) << 7) + (sum >> 1) + (uint8_t)name[i]);
+    sum = (u8)(((sum & 1) << 7) + (sum >> 1) + (u8)name[i]);
   return sum;
 }
 
@@ -526,7 +526,7 @@ static int dir_is_fixed_root(struct fat_dir dir) {
 }
 
 static int cursor_init(struct dir_cursor *cursor, struct fat_dir dir,
-                       uint32_t start_index) {
+                       u32 start_index) {
   memset(cursor, 0, sizeof(*cursor));
   cursor->dir = dir;
   cursor->index = start_index;
@@ -538,14 +538,14 @@ static int cursor_init(struct dir_cursor *cursor, struct fat_dir dir,
   if (!cluster_is_valid(dir.first_cluster))
     return -1;
 
-  uint32_t entries_per_cluster = cluster_bytes() / sizeof(struct dir_entry);
-  uint32_t clusters_to_skip = start_index / entries_per_cluster;
+  u32 entries_per_cluster = cluster_bytes() / sizeof(struct dir_entry);
+  u32 clusters_to_skip = start_index / entries_per_cluster;
   cursor->slot = start_index % entries_per_cluster;
   cursor->cluster = dir.first_cluster;
   cursor->clusters_seen = 1;
 
   while (clusters_to_skip--) {
-    uint32_t next;
+    u32 next;
     if (next_cluster(cursor->cluster, &next) != 0)
       return -1;
     cursor->cluster = next;
@@ -569,9 +569,9 @@ static struct dir_entry *cursor_next(struct dir_cursor *cursor) {
     return &root[cursor->slot++];
   }
 
-  uint32_t entries_per_cluster = cluster_bytes() / sizeof(struct dir_entry);
+  u32 entries_per_cluster = cluster_bytes() / sizeof(struct dir_entry);
   if (cursor->slot >= entries_per_cluster) {
-    uint32_t next;
+    u32 next;
     int status = next_cluster(cursor->cluster, &next);
     if (status != 0 || ++cursor->clusters_seen >= cluster_limit) {
       cursor->ended = 1;
@@ -592,7 +592,7 @@ static struct dir_entry *cursor_next(struct dir_cursor *cursor) {
 
 /* Push one sector of the RAM array at whatever is backing it. A no-op when
  * no backend is installed , the image is then RAM-only and already current. */
-static void fat_flush_sector(uint32_t lba) {
+static void fat_flush_sector(u32 lba) {
     if (!fs_image || !sector_writer) return;
 
     sector_writer(lba, sector(lba));
@@ -606,28 +606,28 @@ static void fat_flush_sector(uint32_t lba) {
  * of the sector holding the modified entry, so on any volume whose FAT spans
  * more than one sector it wrote the wrong sector to disk. One implementation
  * of this arithmetic is one place for that to be wrong. */
-static void fat_flush_bytes(const void *start, size_t len) {
+static void fat_flush_bytes(const void *start, usize len) {
   if (!fs_image || !sector_writer || !start || len == 0 || !bytes_per_sec)
     return;
 
-  uint64_t base = (uint64_t)(uintptr_t)fs_image;
-  uint64_t at = (uint64_t)(uintptr_t)start;
+  u64 base = (u64)(uintptr_t)fs_image;
+  u64 at = (u64)(uintptr_t)start;
   if (at < base)
     return;
 
-  uint64_t off = at - base;
+  u64 off = at - base;
   if (off >= fs_image_size)
     return;
   if (len > fs_image_size - off)
-    len = (size_t)(fs_image_size - off);
+    len = (usize)(fs_image_size - off);
 
-  uint32_t first = (uint32_t)(off / bytes_per_sec);
-  uint32_t last = (uint32_t)((off + len - 1) / bytes_per_sec);
-  for (uint32_t lba = first; lba <= last; lba++)
+  u32 first = (u32)(off / bytes_per_sec);
+  u32 last = (u32)((off + len - 1) / bytes_per_sec);
+  for (u32 lba = first; lba <= last; lba++)
     fat_flush_sector(lba);
 }
 
-static void erase_slots(struct fat_dir dir, uint32_t from, uint32_t to) {
+static void erase_slots(struct fat_dir dir, u32 from, u32 to) {
   struct dir_cursor cursor;
   if (cursor_init(&cursor, dir, from) != 0)
     return;
@@ -644,18 +644,18 @@ static int entry_is_lfn(const struct dir_entry *entry) {
 }
 
 /* Mirror writes to every FAT copy. */
-static void fat_set(uint32_t cluster, uint32_t value) {
+static void fat_set(u32 cluster, u32 value) {
   /* Width of one table entry, which is also the stride fat_put indexes by. */
-  size_t entry_width = (fat_type == FAT_TYPE_32) ? 4u : 2u;
+  usize entry_width = (fat_type == FAT_TYPE_32) ? 4u : 2u;
 
-  for (uint8_t f = 0; f < num_fats; f++) {
-    uint8_t *table = sector(fat_start_sec + f * sectors_per_fat);
+  for (u8 f = 0; f < num_fats; f++) {
+    u8 *table = sector(fat_start_sec + f * sectors_per_fat);
     fat_put(table, cluster, value);
 
     /* Flush the sector holding this cluster's entry, not the first sector of
      * the table , those are the same thing only for cluster numbers inside
      * the first sector. */
-    fat_flush_bytes(table + (size_t)cluster * entry_width, entry_width);
+    fat_flush_bytes(table + (usize)cluster * entry_width, entry_width);
   }
   fsinfo_invalidate();
   // Also flush the FSInfo sector if it exists!
@@ -663,7 +663,7 @@ static void fat_set(uint32_t cluster, uint32_t value) {
 }
 
 static int entry_is_free(const struct dir_entry *entry) {
-  uint8_t first = (uint8_t)entry->name[0];
+  u8 first = (u8)entry->name[0];
   return first == 0x00 || first == 0xE5;
 }
 
@@ -685,16 +685,16 @@ static void lfn_reset(struct lfn_state *state) {
  * a constant checksum. Anything out of order drops the run rather than
  * splicing together fragments of two different names. */
 static void lfn_feed(struct lfn_state *state, const struct dir_entry *entry,
-                     uint32_t index) {
-  const uint8_t *raw = (const uint8_t *)entry;
-  uint8_t marker = raw[0];
+                     u32 index) {
+  const u8 *raw = (const u8 *)entry;
+  u8 marker = raw[0];
 
   if (marker == 0xE5) {
     lfn_reset(state);
     return;
   }
 
-  uint8_t seq = marker & 0x1F;
+  u8 seq = marker & 0x1F;
   int last = (marker & 0x40) != 0;
   if (seq == 0 || seq > FAT_LFN_MAX_SLOTS) {
     lfn_reset(state);
@@ -706,17 +706,17 @@ static void lfn_feed(struct lfn_state *state, const struct dir_entry *entry,
     state->valid = 1;
     state->expect = seq;
     state->checksum = raw[13];
-    state->length = (uint32_t)seq * FAT_LFN_CHARS_PER_SLOT;
+    state->length = (u32)seq * FAT_LFN_CHARS_PER_SLOT;
     state->start_index = index;
   } else if (!state->valid || seq != state->expect || raw[13] != state->checksum) {
     lfn_reset(state);
     return;
   }
 
-  uint32_t base = (uint32_t)(seq - 1) * FAT_LFN_CHARS_PER_SLOT;
+  u32 base = (u32)(seq - 1) * FAT_LFN_CHARS_PER_SLOT;
   for (int i = 0; i < FAT_LFN_CHARS_PER_SLOT; i++) {
-    uint16_t ch =
-        (uint16_t)(raw[lfn_offsets[i]] | ((uint16_t)raw[lfn_offsets[i] + 1] << 8));
+    u16 ch =
+        (u16)(raw[lfn_offsets[i]] | ((u16)raw[lfn_offsets[i] + 1] << 8));
     /* 0xFFFF is padding past the terminator. Anything outside 7-bit ASCII
      * has no representation here, so it becomes '_' and simply will not
      * match a query -- which beats truncating the name silently. */
@@ -730,7 +730,7 @@ static void lfn_feed(struct lfn_state *state, const struct dir_entry *entry,
     state->name[base + i] = out;
   }
 
-  state->expect = (uint8_t)(seq - 1);
+  state->expect = (u8)(seq - 1);
 }
 
 /* Close a run against its short entry. Returns the long name, or NULL when
@@ -746,7 +746,7 @@ static const char *lfn_take(struct lfn_state *state,
    * the terminator when the final slot is not full. A run with no
    * terminator inside 260 characters claims a name longer than the format
    * allows, so treat it as corrupt rather than truncating it. */
-  uint32_t length = 0;
+  u32 length = 0;
   while (length < state->length && state->name[length] != '\0')
     length++;
   if (length == 0 || length > FAT_LFN_MAX)
@@ -756,14 +756,14 @@ static const char *lfn_take(struct lfn_state *state,
 }
 
 /* Render an entry's 8.3 name for display, honouring the NT case flags. */
-static uint32_t entry_short_name(const struct dir_entry *entry, char *out) {
-  uint32_t length = 0;
+static u32 entry_short_name(const struct dir_entry *entry, char *out) {
+  u32 length = 0;
   int base_lower = (entry->nt_case & FAT_CASE_BASE_LOWER) != 0;
   int ext_lower = (entry->nt_case & FAT_CASE_EXT_LOWER) != 0;
 
   for (int i = 0; i < 8 && entry->name[i] != ' '; i++) {
     char c = entry->name[i];
-    if (i == 0 && (uint8_t)c == 0x05)
+    if (i == 0 && (u8)c == 0x05)
       c = (char)0xE5;
     out[length++] = base_lower && is_upper(c) ? (char)(c + ('a' - 'A')) : c;
   }
@@ -803,7 +803,7 @@ static int find_in_directory(struct fat_dir dir, const char *target,
 
   struct dir_entry *entry;
   while ((entry = cursor_next(&cursor)) != 0) {
-    if ((uint8_t)entry->name[0] == 0x00)
+    if ((u8)entry->name[0] == 0x00)
       return -1;
 
     if (entry_is_lfn(entry)) {
@@ -830,10 +830,10 @@ static int find_in_directory(struct fat_dir dir, const char *target,
   return -1;
 }
 
-static int walk_directories(const struct path_parts *parts, uint32_t count,
+static int walk_directories(const struct path_parts *parts, u32 count,
                             struct fat_dir *out) {
   struct fat_dir current = root_directory();
-  for (uint32_t i = 0; i < count; i++) {
+  for (u32 i = 0; i < count; i++) {
     char component[FAT_LFN_MAX + 1];
     memcpy(component, parts->component[i], parts->length[i]);
     component[parts->length[i]] = '\0';
@@ -844,7 +844,7 @@ static int walk_directories(const struct path_parts *parts, uint32_t count,
     if (!(slot.entry->attr & FAT_ATTR_DIRECTORY))
       return -1;
 
-    uint32_t cluster = entry_cluster(slot.entry);
+    u32 cluster = entry_cluster(slot.entry);
     /* ".." pointing at the root is stored as cluster 0 by convention. */
     if (cluster == 0) {
       current = root_directory();
@@ -865,7 +865,7 @@ static int resolve_parent(const char *path, struct fat_dir *parent,
   if (split_path(path, &parts) != 0 || parts.count == 0)
     return -1;
 
-  uint32_t last = (uint32_t)parts.count - 1;
+  u32 last = (u32)parts.count - 1;
   memcpy(leaf, parts.component[last], parts.length[last]);
   leaf[parts.length[last]] = '\0';
 
@@ -905,7 +905,7 @@ int fat_open(const char *path, struct fat_file *file) {
   if (!entry || (entry->attr & FAT_ATTR_DIRECTORY))
     return -1;
 
-  uint32_t cluster = entry_cluster(entry);
+  u32 cluster = entry_cluster(entry);
   if (entry->size != 0 && !cluster_is_valid(cluster))
     return -1;
 
@@ -944,21 +944,21 @@ int fat_stat(const char *path, struct fat_stat *out) {
   return 0;
 }
 
-size_t fat_read(struct fat_file *file, void *buffer, size_t length) {
+usize fat_read(struct fat_file *file, void *buffer, usize length) {
   if (!file || !buffer)
     return 0;
-  uint8_t *out = (uint8_t *)buffer;
-  size_t total = 0;
-  uint32_t bytes = cluster_bytes();
+  u8 *out = (u8 *)buffer;
+  usize total = 0;
+  u32 bytes = cluster_bytes();
 
   while (length > 0 && file->pos < file->size) {
-    uint8_t *data = cluster_data(file->cur_cluster);
+    u8 *data = cluster_data(file->cur_cluster);
     if (!data)
       break;
-    uint32_t offset = file->pos % bytes;
-    uint32_t in_cluster = bytes - offset;
-    uint32_t in_file = file->size - file->pos;
-    size_t chunk = length;
+    u32 offset = file->pos % bytes;
+    u32 in_cluster = bytes - offset;
+    u32 in_file = file->size - file->pos;
+    usize chunk = length;
     if (chunk > in_cluster)
       chunk = in_cluster;
     if (chunk > in_file)
@@ -966,12 +966,12 @@ size_t fat_read(struct fat_file *file, void *buffer, size_t length) {
 
     memcpy(out, data + offset, chunk);
     out += chunk;
-    file->pos += (uint32_t)chunk;
+    file->pos += (u32)chunk;
     length -= chunk;
     total += chunk;
 
     if (file->pos % bytes == 0 && file->pos < file->size) {
-      uint32_t next;
+      u32 next;
       if (next_cluster(file->cur_cluster, &next) != 0)
         break;
       file->cur_cluster = next;
@@ -980,7 +980,7 @@ size_t fat_read(struct fat_file *file, void *buffer, size_t length) {
   return total;
 }
 
-int fat_seek(struct fat_file *file, uint32_t position) {
+int fat_seek(struct fat_file *file, u32 position) {
   if (!file)
     return -1;
   if (position > file->size)
@@ -991,14 +991,14 @@ int fat_seek(struct fat_file *file, uint32_t position) {
     return 0;
   }
 
-  uint32_t bytes = cluster_bytes();
-  uint32_t skip = position / bytes;
+  u32 bytes = cluster_bytes();
+  u32 skip = position / bytes;
   /* At an exact EOF boundary there is no containing cluster. Keep the
    * cursor on the final cluster so a subsequent append can extend it. */
   if (position == file->size && position % bytes == 0)
     skip--;
   while (skip--) {
-    uint32_t next;
+    u32 next;
     if (next_cluster(file->cur_cluster, &next) != 0)
       return -1;
     file->cur_cluster = next;
@@ -1007,8 +1007,8 @@ int fat_seek(struct fat_file *file, uint32_t position) {
   return 0;
 }
 
-static uint32_t alloc_cluster(void) {
-  for (uint32_t cluster = 2; cluster < cluster_limit; cluster++) {
+static u32 alloc_cluster(void) {
+  for (u32 cluster = 2; cluster < cluster_limit; cluster++) {
     if (fat_get(cluster) == 0) {
       fat_set(cluster, cluster_eoc());
       memset(cluster_data(cluster), 0, cluster_bytes());
@@ -1018,11 +1018,11 @@ static uint32_t alloc_cluster(void) {
   return 0;
 }
 
-static void free_chain(uint32_t first) {
-  uint32_t current = first;
-  uint32_t visited = 0;
+static void free_chain(u32 first) {
+  u32 current = first;
+  u32 visited = 0;
   while (cluster_is_valid(current) && visited++ < cluster_limit) {
-    uint32_t next = fat_get(current);
+    u32 next = fat_get(current);
     fat_set(current, 0);
     if (cluster_is_eoc(next) || !cluster_is_valid(next))
       break;
@@ -1033,13 +1033,13 @@ static void free_chain(uint32_t first) {
 /* Reserve `count` consecutive directory slots, extending the directory by
  * a cluster when it runs out. Consecutive matters: an LFN run and its short
  * entry must be adjacent, or nothing will pair them back up. */
-static int alloc_dir_slots(struct fat_dir dir, uint32_t count,
+static int alloc_dir_slots(struct fat_dir dir, u32 count,
                            struct dir_entry **out) {
-  uint32_t run = 0;
+  u32 run = 0;
 
   if (dir_is_fixed_root(dir)) {
     struct dir_entry *root = (struct dir_entry *)sector(root_start_sec);
-    for (uint32_t i = 0; i < root_entries; i++) {
+    for (u32 i = 0; i < root_entries; i++) {
       if (entry_is_free(&root[i])) {
         out[run++] = &root[i];
         if (run == count)
@@ -1051,17 +1051,17 @@ static int alloc_dir_slots(struct fat_dir dir, uint32_t count,
     return -1;
   }
 
-  uint32_t current = dir.first_cluster;
+  u32 current = dir.first_cluster;
   if (!cluster_is_valid(current))
     return -1;
-  uint32_t entries_per_cluster = cluster_bytes() / sizeof(struct dir_entry);
-  uint32_t visited = 0;
+  u32 entries_per_cluster = cluster_bytes() / sizeof(struct dir_entry);
+  u32 visited = 0;
 
   for (;;) {
     struct dir_entry *entries = (struct dir_entry *)cluster_data(current);
     if (!entries)
       return -1;
-    for (uint32_t i = 0; i < entries_per_cluster; i++) {
+    for (u32 i = 0; i < entries_per_cluster; i++) {
       if (entry_is_free(&entries[i])) {
         out[run++] = &entries[i];
         if (run == count)
@@ -1074,7 +1074,7 @@ static int alloc_dir_slots(struct fat_dir dir, uint32_t count,
     if (++visited >= cluster_limit)
       return -1;
 
-    uint32_t next;
+    u32 next;
     int status = next_cluster(current, &next);
     if (status < 0)
       return -1;
@@ -1098,7 +1098,7 @@ static int short_name_taken(struct fat_dir dir, const char name[FAT_NAME_LEN]) {
 
   struct dir_entry *entry;
   while ((entry = cursor_next(&cursor)) != 0) {
-    if ((uint8_t)entry->name[0] == 0x00)
+    if ((u8)entry->name[0] == 0x00)
       return 0;
     if (!entry_is_usable(entry))
       continue;
@@ -1112,13 +1112,13 @@ static int short_name_taken(struct fat_dir dir, const char name[FAT_NAME_LEN]) {
  * Illegal characters collapse to '_' so the alias stays a legal short name
  * whatever the long name contains. */
 static int short_name_alias(struct fat_dir dir, const char *name,
-                            uint32_t length, char out[FAT_NAME_LEN]) {
-  uint32_t base_len, ext_at, ext_len;
+                            u32 length, char out[FAT_NAME_LEN]) {
+  u32 base_len, ext_at, ext_len;
   split_extension(name, length, &base_len, &ext_at, &ext_len);
 
   char base[8];
-  uint32_t base_used = 0;
-  for (uint32_t i = 0; i < base_len && base_used < 8; i++) {
+  u32 base_used = 0;
+  for (u32 i = 0; i < base_len && base_used < 8; i++) {
     char c = name[i];
     if (c == ' ' || c == '.')
       continue;
@@ -1128,33 +1128,33 @@ static int short_name_alias(struct fat_dir dir, const char *name,
     base[base_used++] = '_';
 
   char ext[3];
-  uint32_t ext_used = 0;
-  for (uint32_t i = 0; i < ext_len && ext_used < 3; i++) {
+  u32 ext_used = 0;
+  for (u32 i = 0; i < ext_len && ext_used < 3; i++) {
     char c = name[ext_at + i];
     if (c == ' ' || c == '.')
       continue;
     ext[ext_used++] = valid_short_char(c) ? to_upper(c) : '_';
   }
 
-  for (uint32_t n = 1; n <= 999999; n++) {
+  for (u32 n = 1; n <= 999999; n++) {
     char suffix[7];
-    uint32_t suffix_len = 0;
-    for (uint32_t value = n; value; value /= 10)
+    u32 suffix_len = 0;
+    for (u32 value = n; value; value /= 10)
       suffix[suffix_len++] = (char)('0' + value % 10);
 
     /* "~N" has to fit inside the 8-byte base, so the stem shrinks as the
      * ordinal grows. */
-    uint32_t stem = 8 - (suffix_len + 1);
+    u32 stem = 8 - (suffix_len + 1);
     if (stem > base_used)
       stem = base_used;
 
     memset(out, ' ', FAT_NAME_LEN);
-    for (uint32_t i = 0; i < stem; i++)
+    for (u32 i = 0; i < stem; i++)
       out[i] = base[i];
     out[stem] = '~';
-    for (uint32_t i = 0; i < suffix_len; i++)
+    for (u32 i = 0; i < suffix_len; i++)
       out[stem + 1 + i] = suffix[suffix_len - 1 - i];
-    for (uint32_t i = 0; i < ext_used; i++)
+    for (u32 i = 0; i < ext_used; i++)
       out[8 + i] = ext[i];
 
     if (!short_name_taken(dir, out))
@@ -1164,40 +1164,40 @@ static int short_name_alias(struct fat_dir dir, const char *name,
 }
 
 static void write_lfn_slot(struct dir_entry *slot, const char *name,
-                           uint32_t length, uint8_t seq, int last,
-                           uint8_t checksum) {
-  uint8_t *raw = (uint8_t *)slot;
+                           u32 length, u8 seq, int last,
+                           u8 checksum) {
+  u8 *raw = (u8 *)slot;
   memset(raw, 0, sizeof(*slot));
-  raw[0] = (uint8_t)(seq | (last ? 0x40 : 0));
+  raw[0] = (u8)(seq | (last ? 0x40 : 0));
   raw[11] = FAT_ATTR_LFN;
   raw[13] = checksum;
 
-  uint32_t base = (uint32_t)(seq - 1) * FAT_LFN_CHARS_PER_SLOT;
+  u32 base = (u32)(seq - 1) * FAT_LFN_CHARS_PER_SLOT;
   for (int i = 0; i < FAT_LFN_CHARS_PER_SLOT; i++) {
-    uint32_t index = base + (uint32_t)i;
-    uint16_t ch;
+    u32 index = base + (u32)i;
+    u16 ch;
     if (index < length)
-      ch = (uint16_t)(uint8_t)name[index];
+      ch = (u16)(u8)name[index];
     else if (index == length)
       ch = 0x0000; /* terminator, only when the last slot is not full */
     else
       ch = 0xFFFF; /* padding */
-    raw[lfn_offsets[i]] = (uint8_t)(ch & 0xFF);
-    raw[lfn_offsets[i] + 1] = (uint8_t)(ch >> 8);
+    raw[lfn_offsets[i]] = (u8)(ch & 0xFF);
+    raw[lfn_offsets[i] + 1] = (u8)(ch >> 8);
   }
 }
 
 /* Create one directory entry, with LFN slots in front of it when the name
  * needs them. `cluster` seeds first_cluster; 0 for an empty file. */
-static int create_entry(struct fat_dir parent, const char *leaf, uint8_t attr,
-                        uint32_t cluster, struct dir_entry **out) {
-  uint32_t length = (uint32_t)strlen(leaf);
+static int create_entry(struct fat_dir parent, const char *leaf, u8 attr,
+                        u32 cluster, struct dir_entry **out) {
+  u32 length = (u32)strlen(leaf);
   if (length == 0 || length > FAT_LFN_MAX)
     return -1;
 
   char short_name[FAT_NAME_LEN];
-  uint8_t nt_case = 0;
-  uint32_t lfn_slots = 0;
+  u8 nt_case = 0;
+  u32 lfn_slots = 0;
 
   if (short_name_exact(leaf, length, short_name, &nt_case) != 0) {
     if (short_name_alias(parent, leaf, length, short_name) != 0)
@@ -1213,9 +1213,9 @@ static int create_entry(struct fat_dir parent, const char *leaf, uint8_t attr,
   /* Slots run highest sequence first, so slot[0] carries the last
    * fragment and the 0x40 marker. */
   if (lfn_slots) {
-    uint8_t checksum = lfn_checksum(short_name);
-    for (uint32_t i = 0; i < lfn_slots; i++) {
-      uint8_t seq = (uint8_t)(lfn_slots - i);
+    u8 checksum = lfn_checksum(short_name);
+    for (u32 i = 0; i < lfn_slots; i++) {
+      u8 seq = (u8)(lfn_slots - i);
       write_lfn_slot(slots[i], leaf, length, seq, i == 0, checksum);
     }
   }
@@ -1234,7 +1234,7 @@ static int create_entry(struct fat_dir parent, const char *leaf, uint8_t attr,
    * straddling a sector boundary gets both. Flushing only the short entry
    * would leave a name on disk whose fragments were never written. */
   fat_flush_bytes(slots[0],
-                  (size_t)(lfn_slots + 1) * sizeof(struct dir_entry));
+                  (usize)(lfn_slots + 1) * sizeof(struct dir_entry));
 
   *out = entry;
   return 0;
@@ -1284,15 +1284,15 @@ int fat_create(const char *path, struct fat_file *file) {
   return 0;
 }
 
-size_t fat_write(struct fat_file *file, const void *buffer, size_t length) {
+usize fat_write(struct fat_file *file, const void *buffer, usize length) {
   if (!file || !file->dir_ent || !buffer)
     return 0;
-  const uint8_t *in = (const uint8_t *)buffer;
-  size_t total = 0;
-  uint32_t bytes = cluster_bytes();
+  const u8 *in = (const u8 *)buffer;
+  usize total = 0;
+  u32 bytes = cluster_bytes();
 
   if (file->first_cluster == 0) {
-    uint32_t cluster = alloc_cluster();
+    u32 cluster = alloc_cluster();
     if (!cluster)
       return 0;
     file->first_cluster = cluster;
@@ -1303,7 +1303,7 @@ size_t fat_write(struct fat_file *file, const void *buffer, size_t length) {
   /* At an exact EOF boundary cur_cluster names the preceding cluster. */
   if (length > 0 && file->pos > 0 && file->pos == file->size &&
       file->pos % bytes == 0) {
-    uint32_t next;
+    u32 next;
     int status = next_cluster(file->cur_cluster, &next);
     if (status == 1) {
       next = alloc_cluster();
@@ -1317,12 +1317,12 @@ size_t fat_write(struct fat_file *file, const void *buffer, size_t length) {
   }
 
   while (length > 0) {
-    uint8_t *data = cluster_data(file->cur_cluster);
+    u8 *data = cluster_data(file->cur_cluster);
     if (!data)
       break;
-    uint32_t offset = file->pos % bytes;
-    uint32_t available = bytes - offset;
-    size_t chunk = length < available ? length : available;
+    u32 offset = file->pos % bytes;
+    u32 available = bytes - offset;
+    usize chunk = length < available ? length : available;
     memcpy(data + offset, in, chunk);
     /* File data is the bulk of what a write changes and was never pushed
      * through: only the FAT and deleted directory entries were, so a saved
@@ -1330,12 +1330,12 @@ size_t fat_write(struct fat_file *file, const void *buffer, size_t length) {
     fat_flush_bytes(data + offset, chunk);
 
     in += chunk;
-    file->pos += (uint32_t)chunk;
+    file->pos += (u32)chunk;
     length -= chunk;
     total += chunk;
 
     if (file->pos % bytes == 0 && length > 0) {
-      uint32_t next;
+      u32 next;
       int status = next_cluster(file->cur_cluster, &next);
       if (status == 1) {
         next = alloc_cluster();
@@ -1362,7 +1362,7 @@ size_t fat_write(struct fat_file *file, const void *buffer, size_t length) {
   /* Preserve the seek invariant for another overwrite call: positions
    * inside the file point at the cluster containing the next byte. */
   if (file->pos > 0 && file->pos < file->size && file->pos % bytes == 0) {
-    uint32_t next;
+    u32 next;
     if (next_cluster(file->cur_cluster, &next) == 0)
       file->cur_cluster = next;
   }
@@ -1372,7 +1372,7 @@ size_t fat_write(struct fat_file *file, const void *buffer, size_t length) {
 // /* Erase a slot range, LFN entries included. Leaving the LFN slots behind
 //  * would strand a run whose short entry no longer exists, and the next
 //  * created file would inherit that name. */
-// static void erase_slots(struct fat_dir dir, uint32_t from, uint32_t to) {
+// static void erase_slots(struct fat_dir dir, u32 from, u32 to) {
 //   struct dir_cursor cursor;
 //   if (cursor_init(&cursor, dir, from) != 0)
 //     return;
@@ -1390,7 +1390,7 @@ int fat_unlink(const char *path) {
   if (slot.entry->attr & FAT_ATTR_DIRECTORY)
     return -1;
 
-  uint32_t cluster = entry_cluster(slot.entry);
+  u32 cluster = entry_cluster(slot.entry);
   if (cluster)
     free_chain(cluster);
   erase_slots(parent, slot.lfn_index, slot.index);
@@ -1398,7 +1398,7 @@ int fat_unlink(const char *path) {
 }
 
 static void set_dot_entry(struct dir_entry *entry, int parent,
-                          uint32_t cluster) {
+                          u32 cluster) {
   memset(entry, 0, sizeof(*entry));
   memset(entry->name, ' ', FAT_NAME_LEN);
   entry->name[0] = '.';
@@ -1420,7 +1420,7 @@ int fat_mkdir(const char *path) {
       find_in_directory(parent, leaf, &existing) == 0)
     return -1;
 
-  uint32_t cluster = alloc_cluster();
+  u32 cluster = alloc_cluster();
   if (!cluster)
     return -1;
   struct dir_entry *children = (struct dir_entry *)cluster_data(cluster);
@@ -1456,7 +1456,7 @@ static int is_dot_entry(const struct dir_entry *entry) {
 }
 
 static int path_ends_with_dot_component(const char *path) {
-  uint32_t length = 0;
+  u32 length = 0;
   if (!path)
     return 0;
   while (length < FAT_PATH_MAX && path[length])
@@ -1466,10 +1466,10 @@ static int path_ends_with_dot_component(const char *path) {
 
   while (length > 0 && is_separator(path[length - 1]))
     length--;
-  uint32_t start = length;
+  u32 start = length;
   while (start > 0 && !is_separator(path[start - 1]))
     start--;
-  uint32_t component_length = length - start;
+  u32 component_length = length - start;
   return (component_length == 1 && path[start] == '.') ||
          (component_length == 2 && path[start] == '.' &&
           path[start + 1] == '.');
@@ -1483,7 +1483,7 @@ int fat_rmdir(const char *path) {
       !(slot.entry->attr & FAT_ATTR_DIRECTORY) || is_dot_entry(slot.entry))
     return -1;
 
-  uint32_t cluster = entry_cluster(slot.entry);
+  u32 cluster = entry_cluster(slot.entry);
   if (!cluster_is_valid(cluster))
     return -1;
 
@@ -1494,7 +1494,7 @@ int fat_rmdir(const char *path) {
 
   struct dir_entry *entry;
   while ((entry = cursor_next(&cursor)) != 0) {
-    if ((uint8_t)entry->name[0] == 0x00)
+    if ((u8)entry->name[0] == 0x00)
       break;
     if (entry_is_usable(entry) && !is_dot_entry(entry))
       return -1;
@@ -1508,13 +1508,13 @@ int fat_rmdir(const char *path) {
 /* FAT packs a date into 16 bits as year-since-1980:7 | month:4 | day:5, and a
  * time as hour:5 | minute:6 | (second/2):5 , two-second resolution is the
  * format's, not ours. */
-static uint16_t fat_encode_date(const struct rtc_time *t) {
-  uint16_t year = (uint16_t)(t->year - 1980);
-  return (uint16_t)((year << 9) | ((uint16_t)t->month << 5) | t->day);
+static u16 fat_encode_date(const struct rtc_time *t) {
+  u16 year = (u16)(t->year - 1980);
+  return (u16)((year << 9) | ((u16)t->month << 5) | t->day);
 }
 
-static uint16_t fat_encode_time(const struct rtc_time *t) {
-  return (uint16_t)(((uint16_t)t->hour << 11) | ((uint16_t)t->minute << 5) |
+static u16 fat_encode_time(const struct rtc_time *t) {
+  return (u16)(((u16)t->hour << 11) | ((u16)t->minute << 5) |
                     (t->second / 2));
 }
 
@@ -1530,8 +1530,8 @@ void fat_set_timestamp(struct dir_entry *entry) {
   if (!now.valid)
     return;
 
-  uint16_t date = fat_encode_date(&now);
-  uint16_t time = fat_encode_time(&now);
+  u16 date = fat_encode_date(&now);
+  u16 time = fat_encode_time(&now);
 
   entry->write_date = date;
   entry->write_time = time;
@@ -1546,8 +1546,8 @@ void fat_set_timestamp(struct dir_entry *entry) {
   }
 }
 
-long fat_read_dir(const char *path, uint32_t *index, char *buffer,
-                  size_t length) {
+long fat_read_dir(const char *path, u32 *index, char *buffer,
+                  usize length) {
   if (!index || !buffer || length == 0)
     return -1;
   struct fat_dir dir;
@@ -1561,10 +1561,10 @@ long fat_read_dir(const char *path, uint32_t *index, char *buffer,
   struct lfn_state lfn;
   lfn_reset(&lfn);
 
-  size_t written = 0;
+  usize written = 0;
   struct dir_entry *entry;
   while ((entry = cursor_next(&cursor)) != 0) {
-    if ((uint8_t)entry->name[0] == 0x00)
+    if ((u8)entry->name[0] == 0x00)
       break;
 
     if (entry_is_lfn(entry)) {
@@ -1578,7 +1578,7 @@ long fat_read_dir(const char *path, uint32_t *index, char *buffer,
 
     const char *long_name = lfn_take(&lfn, entry);
     char name[FAT_DIRENT_MAX];
-    size_t name_length;
+    usize name_length;
     if (long_name) {
       name_length = strlen(long_name);
       memcpy(name, long_name, name_length);
@@ -1589,7 +1589,7 @@ long fat_read_dir(const char *path, uint32_t *index, char *buffer,
       name[name_length++] = '/';
     name[name_length] = '\0';
 
-    size_t required = name_length + 1;
+    usize required = name_length + 1;
     if (required > length - written) {
       if (written == 0)
         return -1;
@@ -1606,12 +1606,12 @@ long fat_read_dir(const char *path, uint32_t *index, char *buffer,
   return (long)written;
 }
 
-long fat_read_root_dir(uint32_t *index, char *buffer, size_t length) {
+long fat_read_root_dir(u32 *index, char *buffer, usize length) {
   return fat_read_dir("/", index, buffer, length);
 }
 
-long fat_read_dir_one(const char *path, uint32_t *index, char *buffer,
-                      size_t length, int *is_dir) {
+long fat_read_dir_one(const char *path, u32 *index, char *buffer,
+                      usize length, int *is_dir) {
   if (!index || !buffer || length == 0)
     return -1;
 
@@ -1628,7 +1628,7 @@ long fat_read_dir_one(const char *path, uint32_t *index, char *buffer,
 
   struct dir_entry *entry;
   while ((entry = cursor_next(&cursor)) != 0) {
-    if ((uint8_t)entry->name[0] == 0x00)
+    if ((u8)entry->name[0] == 0x00)
       break;
 
     if (entry_is_lfn(entry)) {
@@ -1641,7 +1641,7 @@ long fat_read_dir_one(const char *path, uint32_t *index, char *buffer,
     }
 
     const char *long_name = lfn_take(&lfn, entry);
-    size_t name_length;
+    usize name_length;
     if (long_name) {
       name_length = strlen(long_name);
       if (name_length + 1 > length)
@@ -1665,24 +1665,24 @@ long fat_read_dir_one(const char *path, uint32_t *index, char *buffer,
 
 void fat_set_sector_writer(fat_sector_writer writer) { sector_writer = writer; }
 
-size_t fat_volume_size(const void *boot_sector, uint32_t *bytes_per_sector_out) {
+usize fat_volume_size(const void *boot_sector, u32 *bytes_per_sector_out) {
   if (bytes_per_sector_out)
     *bytes_per_sector_out = 0;
   if (!boot_sector)
     return 0;
 
   const struct bpb *b = (const struct bpb *)boot_sector;
-  uint32_t total = b->total_sectors_16 ? b->total_sectors_16
+  u32 total = b->total_sectors_16 ? b->total_sectors_16
                                        : b->total_sectors_32;
   if (!total || !b->bytes_per_sector)
     return 0;
 
   if (bytes_per_sector_out)
     *bytes_per_sector_out = b->bytes_per_sector;
-  return (size_t)total * b->bytes_per_sector;
+  return (usize)total * b->bytes_per_sector;
 }
 
-uint8_t *fat_image_base(size_t *size_out, uint32_t *bytes_per_sector_out) {
+u8 *fat_image_base(usize *size_out, u32 *bytes_per_sector_out) {
   if (size_out)
     *size_out = fs_image ? fs_image_size : 0;
   if (bytes_per_sector_out)

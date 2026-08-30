@@ -25,7 +25,7 @@
  * the mmap arena so a segment can never land on mmap or shmem, and it
  * doubles as the bound that keeps p_vaddr + p_memsz from wrapping. */
 
-uint64_t elf_load(const char *path, uint64_t *pml4) {
+u64 elf_load(const char *path, u64 *pml4) {
     FILE *fp = fopen(path, "rb");
     if (!fp) {
         log_write("elf: fopen failed", KERNEL, LOG_ERROR);
@@ -81,8 +81,8 @@ uint64_t elf_load(const char *path, uint64_t *pml4) {
             return 0;
         }
 
-        uint64_t va_start = ph.p_vaddr & ~0xFFFULL;
-        uint64_t va_end   = (ph.p_vaddr + ph.p_memsz + 0xFFF) & ~0xFFFULL;
+        u64 va_start = ph.p_vaddr & ~0xFFFULL;
+        u64 va_end   = (ph.p_vaddr + ph.p_memsz + 0xFFF) & ~0xFFFULL;
 
         /* NX on anything the ELF does not mark executable. Depends on
          * EFER.NXE, which enable_paging sets on the BSP and the AP
@@ -94,7 +94,7 @@ uint64_t elf_load(const char *path, uint64_t *pml4) {
          * never land on the same page. If that ever changes, the first
          * segment to map a shared page wins and an NX-first ordering
          * would make .text unexecutable. */
-        uint64_t flags = VMM_PRESENT | VMM_USER;
+        u64 flags = VMM_PRESENT | VMM_USER;
         if (ph.p_flags & PF_W) flags |= VMM_WRITE;
         if (!(ph.p_flags & PF_X)) flags |= VMM_NX;
 
@@ -109,9 +109,9 @@ uint64_t elf_load(const char *path, uint64_t *pml4) {
          * actually fires in practice, which is exactly the kind of bug that
          * shows up months later wearing a costume. */
         int mapped_since_yield = 0;
-        for (uint64_t va = va_start; va < va_end; va += 4096) {
+        for (u64 va = va_start; va < va_end; va += 4096) {
             if (!vmm_translate_in(pml4, va)) {
-                uint64_t phys = pmm_alloc_frame();
+                u64 phys = pmm_alloc_frame();
                 if (!phys) {
                     log_write("elf: failed to allocate physical frame", KERNEL, LOG_ERROR);
                     fclose(fp);
@@ -139,19 +139,19 @@ uint64_t elf_load(const char *path, uint64_t *pml4) {
          * be one flat read. BSS (memsz > filesz) keeps the zeros above. */
         fseek(fp, ph.p_offset, SEEK_SET);
         int copied_since_yield = 0;
-        for (uint64_t done = 0; done < ph.p_filesz; ) {
-            uint64_t va    = ph.p_vaddr + done;
+        for (u64 done = 0; done < ph.p_filesz; ) {
+            u64 va    = ph.p_vaddr + done;
             /* Page-aligned vaddr in, so the return is a clean frame base
              * and the offset below is not double-counted. */
-            uint64_t phys  = vmm_translate_in(pml4, va & ~0xFFFULL);
+            u64 phys  = vmm_translate_in(pml4, va & ~0xFFFULL);
             if (!phys) {
                 log_write("elf: segment page not mapped", KERNEL, LOG_ERROR);
                 fclose(fp);
                 return 0;
             }
-            size_t   chunk = 4096 - (va & 0xFFF);
+            usize   chunk = 4096 - (va & 0xFFF);
             if (chunk > ph.p_filesz - done) chunk = ph.p_filesz - done;
-            if (fread((uint8_t*)phys_to_virt(phys) + (va & 0xFFF), 1, chunk, fp) != chunk) {
+            if (fread((u8*)phys_to_virt(phys) + (va & 0xFFF), 1, chunk, fp) != chunk) {
                 log_write("elf: could not read full segment data", KERNEL, LOG_ERROR);
                 fclose(fp);
                 return 0;

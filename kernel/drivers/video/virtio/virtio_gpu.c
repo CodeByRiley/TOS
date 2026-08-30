@@ -30,18 +30,18 @@ static struct virtio_gpu gpu_state;
  * of mem_entry records, which still fit in 4 KiB up to ~340 entries (each is
  * 16 bytes). For framebuffers larger than 1.3 MiB we'll split the attach
  * across multiple commands. */
-static uint64_t scratch_req_phys;
-static uint64_t scratch_resp_phys;
-static uint8_t *scratch_req;
-static uint8_t *scratch_resp;
+static u64 scratch_req_phys;
+static u64 scratch_resp_phys;
+static u8 *scratch_req;
+static u8 *scratch_resp;
 
 /* virtio-gpu wire structures (subset we use). */
 struct gpu_ctrl_hdr {
-    uint32_t type;
-    uint32_t flags;
-    uint64_t fence_id;
-    uint32_t ctx_id;
-    uint32_t padding;
+    u32 type;
+    u32 flags;
+    u64 fence_id;
+    u32 ctx_id;
+    u32 padding;
 } PACKED;
 
 struct gpu_resp_display_info {
@@ -51,44 +51,44 @@ struct gpu_resp_display_info {
 
 struct gpu_resource_create_2d {
     struct gpu_ctrl_hdr hdr;
-    uint32_t resource_id;
-    uint32_t format;
-    uint32_t width;
-    uint32_t height;
+    u32 resource_id;
+    u32 format;
+    u32 width;
+    u32 height;
 } PACKED;
 
 struct gpu_resource_unref {
     struct gpu_ctrl_hdr hdr;
-    uint32_t resource_id;
-    uint32_t padding;
+    u32 resource_id;
+    u32 padding;
 } PACKED;
 
 struct gpu_set_scanout {
     struct gpu_ctrl_hdr hdr;
     struct virtio_gpu_rect r;
-    uint32_t scanout_id;
-    uint32_t resource_id;
+    u32 scanout_id;
+    u32 resource_id;
 } PACKED;
 
 struct gpu_resource_flush {
     struct gpu_ctrl_hdr hdr;
     struct virtio_gpu_rect r;
-    uint32_t resource_id;
-    uint32_t padding;
+    u32 resource_id;
+    u32 padding;
 } PACKED;
 
 struct gpu_transfer_to_host_2d {
     struct gpu_ctrl_hdr hdr;
     struct virtio_gpu_rect r;
-    uint64_t offset;
-    uint32_t resource_id;
-    uint32_t padding;
+    u64 offset;
+    u32 resource_id;
+    u32 padding;
 } PACKED;
 
 struct gpu_mem_entry {
-    uint64_t addr;
-    uint32_t length;
-    uint32_t padding;
+    u64 addr;
+    u32 length;
+    u32 padding;
 } PACKED;
 
 /* The driver submits one command at a time. Keeping this 16 KiB coalescing
@@ -98,13 +98,13 @@ static struct gpu_mem_entry backing_runs[1024];
 
 struct gpu_attach_backing_hdr {
     struct gpu_ctrl_hdr hdr;
-    uint32_t resource_id;
-    uint32_t nr_entries;
+    u32 resource_id;
+    u32 nr_entries;
 } PACKED;
 
-static int submit_two_buf(uint32_t req_len, uint32_t resp_len) {
-    uint16_t d0 = virtq_alloc_desc(&controlq);
-    uint16_t d1 = virtq_alloc_desc(&controlq);
+static int submit_two_buf(u32 req_len, u32 resp_len) {
+    u16 d0 = virtq_alloc_desc(&controlq);
+    u16 d1 = virtq_alloc_desc(&controlq);
     if (d0 == 0xFFFF || d1 == 0xFFFF) {
         log_write("gpu: no free descs", KERNEL, LOG_ERROR);
         return -1;
@@ -123,13 +123,13 @@ static int submit_two_buf(uint32_t req_len, uint32_t resp_len) {
     virtq_submit(&controlq, d0);
     virtio_queue_notify(&vdev, &controlq);
 
-    uint16_t got_id = 0;
-    uint32_t got_len = 0;
+    u16 got_id = 0;
+    u32 got_len = 0;
 
     /* Busy-wait for 1,000,000 iterations. QEMU processes virtio-gpu commands
      * almost instantly on an unloaded VM, so this loop usually exits in
      * under a microsecond. No sleeps, no yields, no 10ms delays! */
-    for (uint32_t i = 0; i < 1000000; i++) {
+    for (u32 i = 0; i < 1000000; i++) {
         if (virtq_reap(&controlq, &got_id, &got_len)) goto done;
         __asm__ volatile ("pause");
     }
@@ -144,19 +144,19 @@ done:
 
 /* Issue a command whose request body lives in scratch_req and whose response
  * goes to scratch_resp. Returns response type, or 0 on failure. */
-static uint32_t do_cmd(uint32_t req_len, uint32_t resp_len) {
+static u32 do_cmd(u32 req_len, u32 resp_len) {
     if (submit_two_buf(req_len, resp_len) != 0) return 0;
     struct gpu_ctrl_hdr *resp = (struct gpu_ctrl_hdr*)scratch_resp;
     return resp->type;
 }
 
-static int do_get_display_info(uint32_t *w, uint32_t *h) {
+static int do_get_display_info(u32 *w, u32 *h) {
     memset(scratch_req,  0, sizeof(struct gpu_ctrl_hdr));
     memset(scratch_resp, 0, sizeof(struct gpu_resp_display_info));
     struct gpu_ctrl_hdr *h_req = (struct gpu_ctrl_hdr*)scratch_req;
     h_req->type = VIRTIO_GPU_CMD_GET_DISPLAY_INFO;
 
-    uint32_t resp_type = do_cmd(sizeof(*h_req), sizeof(struct gpu_resp_display_info));
+    u32 resp_type = do_cmd(sizeof(*h_req), sizeof(struct gpu_resp_display_info));
     if (resp_type != VIRTIO_GPU_RESP_OK_DISPLAY_INFO) {
         log_write_hex("gpu: display_info bad resp =", resp_type, KERNEL, LOG_ERROR);
         return -1;
@@ -174,8 +174,8 @@ static int do_get_display_info(uint32_t *w, uint32_t *h) {
     return -1;
 }
 
-static int do_resource_create_2d(uint32_t rid, uint32_t format,
-                                 uint32_t w, uint32_t h) {
+static int do_resource_create_2d(u32 rid, u32 format,
+                                 u32 w, u32 h) {
     memset(scratch_req,  0, sizeof(struct gpu_resource_create_2d));
     memset(scratch_resp, 0, sizeof(struct gpu_ctrl_hdr));
     struct gpu_resource_create_2d *q = (struct gpu_resource_create_2d*)scratch_req;
@@ -184,7 +184,7 @@ static int do_resource_create_2d(uint32_t rid, uint32_t format,
     q->format      = format;
     q->width       = w;
     q->height      = h;
-    uint32_t t = do_cmd(sizeof(*q), sizeof(struct gpu_ctrl_hdr));
+    u32 t = do_cmd(sizeof(*q), sizeof(struct gpu_ctrl_hdr));
     if (t != VIRTIO_GPU_RESP_OK_NODATA) {
         log_write_hex("gpu: create_2d bad resp =", t, KERNEL, LOG_ERROR);
         return -1;
@@ -192,13 +192,13 @@ static int do_resource_create_2d(uint32_t rid, uint32_t format,
     return 0;
 }
 
-static int do_resource_unref(uint32_t rid) {
+static int do_resource_unref(u32 rid) {
     memset(scratch_req,  0, sizeof(struct gpu_resource_unref));
     memset(scratch_resp, 0, sizeof(struct gpu_ctrl_hdr));
     struct gpu_resource_unref *q = (struct gpu_resource_unref*)scratch_req;
     q->hdr.type    = VIRTIO_GPU_CMD_RESOURCE_UNREF;
     q->resource_id = rid;
-    uint32_t t = do_cmd(sizeof(*q), sizeof(struct gpu_ctrl_hdr));
+    u32 t = do_cmd(sizeof(*q), sizeof(struct gpu_ctrl_hdr));
     if (t != VIRTIO_GPU_RESP_OK_NODATA) {
         log_write_hex("gpu: unref bad resp =", t, KERNEL, LOG_ERROR);
         return -1;
@@ -206,10 +206,10 @@ static int do_resource_unref(uint32_t rid) {
     return 0;
 }
 
-static int do_attach_backing(uint32_t rid,
-                             const uint64_t *page_phys, uint32_t n_pages) {
+static int do_attach_backing(u32 rid,
+                             const u64 *page_phys, u32 n_pages) {
     /* Layout: [hdr][nr_entries x mem_entry]. Whole thing into scratch_req. */
-    const uint32_t max_entries =
+    const u32 max_entries =
         (4096 - sizeof(struct gpu_attach_backing_hdr)) /
         sizeof(struct gpu_mem_entry);
 
@@ -217,14 +217,14 @@ static int do_attach_backing(uint32_t rid,
      * the common case (pmm allocs sequentially when memory is fresh), and the
      * spec allows arbitrary entry length. Coalescing keeps us under the entry
      * cap for large framebuffers. */
-    uint32_t entries = 0;
+    u32 entries = 0;
     if (n_pages == 0) return -1;
 
     backing_runs[0].addr = page_phys[0];
     backing_runs[0].length = 4096;
     backing_runs[0].padding = 0;
     entries = 1;
-    for (uint32_t i = 1; i < n_pages; i++) {
+    for (u32 i = 1; i < n_pages; i++) {
         if (page_phys[i] == backing_runs[entries - 1].addr
                           + backing_runs[entries - 1].length) {
             backing_runs[entries - 1].length += 4096;
@@ -252,11 +252,11 @@ static int do_attach_backing(uint32_t rid,
     q->nr_entries  = entries;
 
     struct gpu_mem_entry *tail = (struct gpu_mem_entry*)(scratch_req + sizeof(*q));
-    for (uint32_t i = 0; i < entries; i++) tail[i] = backing_runs[i];
+    for (u32 i = 0; i < entries; i++) tail[i] = backing_runs[i];
 
-    uint32_t req_len = (uint32_t)sizeof(*q) + entries * (uint32_t)sizeof(struct gpu_mem_entry);
+    u32 req_len = (u32)sizeof(*q) + entries * (u32)sizeof(struct gpu_mem_entry);
     memset(scratch_resp, 0, sizeof(struct gpu_ctrl_hdr));
-    uint32_t t = do_cmd(req_len, sizeof(struct gpu_ctrl_hdr));
+    u32 t = do_cmd(req_len, sizeof(struct gpu_ctrl_hdr));
     if (t != VIRTIO_GPU_RESP_OK_NODATA) {
         log_write_hex("gpu: attach_backing bad resp =", t, KERNEL, LOG_ERROR);
         return -1;
@@ -264,8 +264,8 @@ static int do_attach_backing(uint32_t rid,
     return 0;
 }
 
-static int do_set_scanout(uint32_t scanout_id, uint32_t rid,
-                          uint32_t w, uint32_t h) {
+static int do_set_scanout(u32 scanout_id, u32 rid,
+                          u32 w, u32 h) {
     memset(scratch_req,  0, sizeof(struct gpu_set_scanout));
     memset(scratch_resp, 0, sizeof(struct gpu_ctrl_hdr));
     struct gpu_set_scanout *q = (struct gpu_set_scanout*)scratch_req;
@@ -276,7 +276,7 @@ static int do_set_scanout(uint32_t scanout_id, uint32_t rid,
     q->r.height    = h;
     q->scanout_id  = scanout_id;
     q->resource_id = rid;
-    uint32_t t = do_cmd(sizeof(*q), sizeof(struct gpu_ctrl_hdr));
+    u32 t = do_cmd(sizeof(*q), sizeof(struct gpu_ctrl_hdr));
     if (t != VIRTIO_GPU_RESP_OK_NODATA) {
         log_write_hex("gpu: set_scanout bad resp =", t, KERNEL, LOG_ERROR);
         return -1;
@@ -313,7 +313,7 @@ int virtio_gpu_init(void) {
 
     virtio_driver_ok(&vdev);
 
-    uint32_t w = 0, h = 0;
+    u32 w = 0, h = 0;
     if (do_get_display_info(&w, &h) != 0) return -1;
     gpu_state.scanout_w = w;
     gpu_state.scanout_h = h;
@@ -326,22 +326,22 @@ int virtio_gpu_init(void) {
     return 0;
 }
 
-int virtio_gpu_get_dims(uint32_t *w, uint32_t *h) {
+int virtio_gpu_get_dims(u32 *w, u32 *h) {
     if (!gpu_state.ready) return -1;
     *w = gpu_state.scanout_w;
     *h = gpu_state.scanout_h;
     return 0;
 }
 
-int virtio_gpu_create_scanout_2d(uint32_t resource_w, uint32_t resource_h,
-                                 uint32_t scanout_w, uint32_t scanout_h,
-                                 const uint64_t *page_phys, uint32_t n_pages) {
+int virtio_gpu_create_scanout_2d(u32 resource_w, u32 resource_h,
+                                 u32 scanout_w, u32 scanout_h,
+                                 const u64 *page_phys, u32 n_pages) {
     if (!gpu_state.ready) return -1;
     if (resource_w == 0 || resource_h == 0 || scanout_w == 0 || scanout_h == 0)
         return -1;
     if (scanout_w > resource_w || scanout_h > resource_h) return -1;
-    if ((uint64_t)n_pages * 4096 <
-        (uint64_t)resource_w * (uint64_t)resource_h * 4) return -1;
+    if ((u64)n_pages * 4096 <
+        (u64)resource_w * (u64)resource_h * 4) return -1;
 
     /* Tear down the previous resource if any. SET_SCANOUT with resource_id=0
      * detaches the scanout cleanly per spec; UNREF then drops the resource. */
@@ -353,7 +353,7 @@ int virtio_gpu_create_scanout_2d(uint32_t resource_w, uint32_t resource_h,
         gpu_state.resource_h = 0;
     }
 
-    uint32_t rid = 1;   /* virtio-gpu resource IDs are driver-assigned; 1 is fine. */
+    u32 rid = 1;   /* virtio-gpu resource IDs are driver-assigned; 1 is fine. */
     if (do_resource_create_2d(rid, VIRTIO_GPU_FORMAT_B8G8R8X8_UNORM,
                               resource_w, resource_h) != 0) return -1;
     if (do_attach_backing(rid, page_phys, n_pages) != 0) {
@@ -373,7 +373,7 @@ int virtio_gpu_create_scanout_2d(uint32_t resource_w, uint32_t resource_h,
     return 0;
 }
 
-int virtio_gpu_resize_scanout_2d(uint32_t w, uint32_t h) {
+int virtio_gpu_resize_scanout_2d(u32 w, u32 h) {
     if (!gpu_state.ready || !gpu_state.resource_id) return -1;
     if (w == 0 || h == 0 || w > gpu_state.resource_w || h > gpu_state.resource_h)
         return -1;
@@ -383,7 +383,7 @@ int virtio_gpu_resize_scanout_2d(uint32_t w, uint32_t h) {
     return 0;
 }
 
-int virtio_gpu_flush_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h) {
+int virtio_gpu_flush_rect(u32 x, u32 y, u32 w, u32 h) {
     if (!gpu_state.ready || !gpu_state.resource_id) return -1;
 
     /* TRANSFER_TO_HOST_2D: copy guest-side pixels into the host resource. */
@@ -396,10 +396,10 @@ int virtio_gpu_flush_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h) {
         q->r.y         = y;
         q->r.width     = w;
         q->r.height    = h;
-        q->offset      = (uint64_t)y * (uint64_t)gpu_state.resource_w * 4 +
-                         (uint64_t)x * 4;
+        q->offset      = (u64)y * (u64)gpu_state.resource_w * 4 +
+                         (u64)x * 4;
         q->resource_id = gpu_state.resource_id;
-        uint32_t t = do_cmd(sizeof(*q), sizeof(struct gpu_ctrl_hdr));
+        u32 t = do_cmd(sizeof(*q), sizeof(struct gpu_ctrl_hdr));
         if (t != VIRTIO_GPU_RESP_OK_NODATA) {
             log_write_hex("gpu: xfer2d bad resp =", t, KERNEL, LOG_ERROR);
             return -1;
@@ -416,7 +416,7 @@ int virtio_gpu_flush_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h) {
         q->r.width     = w;
         q->r.height    = h;
         q->resource_id = gpu_state.resource_id;
-        uint32_t t = do_cmd(sizeof(*q), sizeof(struct gpu_ctrl_hdr));
+        u32 t = do_cmd(sizeof(*q), sizeof(struct gpu_ctrl_hdr));
         if (t != VIRTIO_GPU_RESP_OK_NODATA) {
             log_write_hex("gpu: flush bad resp =", t, KERNEL, LOG_ERROR);
             return -1;
@@ -429,7 +429,7 @@ int virtio_gpu_poll_display_event(void) {
     if (!gpu_state.ready) return 0;
     volatile struct virtio_gpu_config *cfg =
         (volatile struct virtio_gpu_config*)vdev.device_cfg;
-    uint32_t ev = cfg->events_read;
+    u32 ev = cfg->events_read;
     if (!(ev & VIRTIO_GPU_EVENT_DISPLAY)) return 0;
     /* Ack: write the same bits to events_clear. */
     cfg->events_clear = VIRTIO_GPU_EVENT_DISPLAY;
@@ -437,7 +437,7 @@ int virtio_gpu_poll_display_event(void) {
     /* Re-read display info so subsequent virtio_gpu_get_dims reflects the
      * new size. The actual scanout still has the old resource attached;
      * caller is expected to resize its visible rectangle. */
-    uint32_t w = 0, h = 0;
+    u32 w = 0, h = 0;
     if (do_get_display_info(&w, &h) == 0) {
         gpu_state.scanout_w = w;
         gpu_state.scanout_h = h;

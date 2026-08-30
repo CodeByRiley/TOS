@@ -33,13 +33,14 @@ asm_offsets_dep := build/generated/asm_offsets.d
 
 CCDB = -MJ $@.json
 
-linker_script := boot/x86_64/linker.ld
-iso_dir       := boot/x86_64/iso
-kernel_bin    := dist/x86_64/kernel.bin
-disk_img      := build/disk.img
+linker_script   := boot/x86_64/linker.ld
+iso_dir         := boot/x86_64/iso
+kernel_bin      := dist/x86_64/kernel.bin
+ROOTFS_TYPE     ?= fat
+disk_img        := build/disk-$(ROOTFS_TYPE).img
 USERSPACE_CLEAN ?= 0
-BUILD_DOOM ?= 0
-BUILD_NETSURF ?= 0
+BUILD_DOOM      ?= 0
+BUILD_NETSURF   ?= 0
 
 # The disk image, the ISO and clean need POSIX tools that Windows does not
 # ship and MSYS2 does not package: xorriso, mtools, and a GRUB install with
@@ -136,7 +137,7 @@ endif
 $(disk_img): userspace tools/create_disk.sh $(rootfs_payload_files) | $(kernel_bin)
 	@echo "Creating Disk Image"
 	@mkdir -p $(dir $@)
-	@$(call run_linux,bash tools/create_disk.sh)
+	@$(call run_linux,IMG=$(disk_img) TOS_ROOTFS_TYPE=$(ROOTFS_TYPE) bash tools/create_disk.sh)
 	@test -s "$@"
 	@echo "Disk Image Finished"
 
@@ -176,7 +177,7 @@ $(kernel_bin): $(kernel_object_files) $(symtab_gen_obj) $(linker_script)
 
 .PHONY: build-x86_64
 build-x86_64: $(kernel_bin) $(disk_img)
-	$(call run_linux,bash tools/build_iso.sh)
+	$(call run_linux,DISK_IMAGE=$(disk_img) bash tools/build_iso.sh)
 
 # --- host + QEMU regression suites -------------------------------------
 HOST_CC ?= gcc
@@ -193,9 +194,11 @@ HOST_TEST_BINS := \
 	$(HOST_TEST_DIR)/vmm_test.exe \
 	$(HOST_TEST_DIR)/process_pml4_test.exe \
 	$(HOST_TEST_DIR)/fat_directory_test.exe \
+	$(HOST_TEST_DIR)/ext2_vfs_test.exe \
 	$(HOST_TEST_DIR)/stdio_mode_test.exe \
 	$(HOST_TEST_DIR)/bmp_decode_test.exe \
 	$(HOST_TEST_DIR)/gfx_ui_test.exe \
+	$(HOST_TEST_DIR)/userspace_runtime_test.exe \
 	$(HOST_TEST_DIR)/fb_damage_test.exe \
 	$(HOST_TEST_DIR)/holyd_compiler_test.exe
 
@@ -220,17 +223,32 @@ $(HOST_TEST_DIR)/process_pml4_test.exe: tests/process_pml4_test.c \
 		tests/process_pml4_test.c kernel/loader/process.c -o $@
 
 $(HOST_TEST_DIR)/fat_directory_test.exe: tests/fat_directory_test.c \
-		$(HOST_KERNEL_STUBS) kernel/fs/fat.c kernel/fs/fat.h \
+		$(HOST_KERNEL_STUBS) kernel/fs/fat/fat.c kernel/fs/fat/fat.h \
 		| $(HOST_TEST_DIR)
 	$(HOST_CC) $(HOST_TEST_CFLAGS) -I kernel \
-		tests/fat_directory_test.c kernel/fs/fat.c $(HOST_KERNEL_STUBS) -o $@
+		tests/fat_directory_test.c kernel/fs/fat/fat.c $(HOST_KERNEL_STUBS) -o $@
+
+$(HOST_TEST_DIR)/ext2-base.img: tools/create_ext2_test_image.sh \
+		tests/fixtures/ext2_root/seed/hello.txt | $(HOST_TEST_DIR)
+	$(call run_linux,bash tools/create_ext2_test_image.sh $@)
+
+EXT2_HOST_SRCS := kernel/fs/ext2/ext2_mount.c kernel/fs/ext2/ext2_inode.c \
+		kernel/fs/ext2/ext2_dir.c kernel/fs/ext2/ext2_file.c \
+		kernel/fs/ext2/ext2_vfs.c kernel/fs/vfs/vfs.c
+
+$(HOST_TEST_DIR)/ext2_vfs_test.exe: tests/ext2_vfs_test.c $(EXT2_HOST_SRCS) \
+		$(HOST_KERNEL_STUBS) $(HOST_TEST_DIR)/ext2-base.img | $(HOST_TEST_DIR)
+	$(HOST_CC) $(HOST_TEST_CFLAGS) -I kernel tests/ext2_vfs_test.c \
+		$(EXT2_HOST_SRCS) $(HOST_KERNEL_STUBS) -o $@
 
 $(HOST_TEST_DIR)/stdio_mode_test.exe: tests/stdio_mode_test.c \
-		$(HOST_KERNEL_STUBS) kernel/fs/stdio.c kernel/fs/fat.c \
-		kernel/fs/stdio.h kernel/fs/fat.h \
+		$(HOST_KERNEL_STUBS) kernel/fs/stdio.c kernel/fs/fat/fat.c \
+		kernel/fs/fat/fat_vfs.c kernel/fs/vfs/vfs.c \
+		kernel/fs/stdio.h kernel/fs/fat/fat.h kernel/fs/vfs/vfs.h \
 		| $(HOST_TEST_DIR)
-	$(HOST_CC) $(HOST_TEST_CFLAGS) -I kernel tests/stdio_mode_test.c \
-		kernel/fs/stdio.c kernel/fs/fat.c $(HOST_KERNEL_STUBS) -o $@
+	$(HOST_CC) $(HOST_TEST_CFLAGS) -fno-builtin -I kernel tests/stdio_mode_test.c \
+		kernel/fs/stdio.c kernel/fs/fat/fat.c kernel/fs/fat/fat_vfs.c \
+		kernel/fs/vfs/vfs.c $(HOST_KERNEL_STUBS) -o $@
 
 $(HOST_TEST_DIR)/bmp_decode_test.exe: tests/bmp_decode_test.c \
 		userspace/lib/bmp.c userspace/lib/bmp.h | $(HOST_TEST_DIR)
@@ -238,9 +256,18 @@ $(HOST_TEST_DIR)/bmp_decode_test.exe: tests/bmp_decode_test.c \
 		tests/bmp_decode_test.c userspace/lib/bmp.c -o $@
 
 $(HOST_TEST_DIR)/gfx_ui_test.exe: tests/gfx_ui_test.c userspace/lib/gfx.c \
-		userspace/lib/ui.c userspace/lib/bmp.c | $(HOST_TEST_DIR)
+		userspace/lib/ui.c userspace/lib/bmp.c userspace/lib/damage.c \
+		userspace/lib/page_alloc.c | $(HOST_TEST_DIR)
 	$(HOST_CC) $(HOST_TEST_CFLAGS) -I userspace -I userspace/lib tests/gfx_ui_test.c \
-		userspace/lib/gfx.c userspace/lib/ui.c userspace/lib/bmp.c -o $@
+		userspace/lib/gfx.c userspace/lib/ui.c userspace/lib/bmp.c \
+		userspace/lib/damage.c userspace/lib/page_alloc.c -o $@
+
+$(HOST_TEST_DIR)/userspace_runtime_test.exe: tests/userspace_runtime_test.c \
+		userspace/lib/event.c userspace/lib/wm.c userspace/lib/app.c \
+		userspace/lib/process.c | $(HOST_TEST_DIR)
+	$(HOST_CC) $(HOST_TEST_CFLAGS) -I userspace -I userspace/lib \
+		tests/userspace_runtime_test.c userspace/lib/event.c userspace/lib/wm.c \
+		userspace/lib/app.c userspace/lib/process.c -o $@
 
 $(HOST_TEST_DIR)/fb_damage_test.exe: tests/fb_damage_test.c | $(HOST_TEST_DIR)
 	$(HOST_CC) $(HOST_TEST_CFLAGS) $< -o $@
@@ -268,6 +295,7 @@ test-host: $(HOST_TEST_BINS)
 		echo "==> $$test_bin"; \
 		"$$test_bin"; \
 	done
+	$(call run_linux,e2fsck -fn build/tests/ext2-mutated.img)
 
 # --- holyd for Windows ----------------------------------------------------
 #

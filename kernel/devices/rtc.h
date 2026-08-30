@@ -10,18 +10,19 @@
 #ifndef RTC_H
 #define RTC_H
 
+#include <utilities/types.h>
 #include <stdint.h>
 
 /* Broken-down local time as the CMOS reports it. `year` is absolute
  * (2026, not 26). All fields are zero if the clock could not be read. */
 struct rtc_time {
-    uint16_t year;
-    uint8_t month;   /* 1-12 */
-    uint8_t day;     /* 1-31 */
-    uint8_t hour;    /* 0-23 */
-    uint8_t minute;  /* 0-59 */
-    uint8_t second;  /* 0-59 */
-    uint8_t valid;   /* 0 when the read failed or the clock is implausible */
+    u16 year;
+    u8 month;   /* 1-12 */
+    u8 day;     /* 1-31 */
+    u8 hour;    /* 0-23 */
+    u8 minute;  /* 0-59 */
+    u8 second;  /* 0-59 */
+    u8 valid;   /* 0 when the read failed or the clock is implausible */
 };
 
 /* Read the current time. Handles the update-in-progress flag, BCD encoding,
@@ -33,6 +34,6 @@ void rtc_read(struct rtc_time *out);
  * clock is unreadable. Whether that is UTC or local time is a property of
  * the machine's CMOS, not something this kernel can know , QEMU defaults to
  * UTC and `-rtc base=localtime` switches it. */
-uint64_t rtc_unix_epoch(void);
+u64 rtc_unix_epoch(void);
 
 #endif

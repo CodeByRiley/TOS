@@ -37,7 +37,7 @@
  *              of the target process's PML4 (top-level page table).
  * @return The virtual address of the image's entry point, or 0 on failure.
  */
-uint64_t pe_load(const char *path, uint64_t *pml4) {
+u64 pe_load(const char *path, u64 *pml4) {
     FILE *fp = fopen(path, "rb");
     if (!fp) {
         log_write("pe: fopen failed", KERNEL, LOG_ERROR);
@@ -76,15 +76,15 @@ uint64_t pe_load(const char *path, uint64_t *pml4) {
         return 0;
     }
 
-    uint64_t image_base = nt.optionalHeader.imageBase;
-    uint32_t size_of_image = nt.optionalHeader.sizeOfImage;
-    uint32_t entry_rva = nt.optionalHeader.addressOfEntryPoint;
+    u64 image_base = nt.optionalHeader.imageBase;
+    u32 size_of_image = nt.optionalHeader.sizeOfImage;
+    u32 entry_rva = nt.optionalHeader.addressOfEntryPoint;
 
     /* In ELF, PT_LOAD segments are typically under 0x70000000.
      * In 64-bit PE, ImageBase is usually 0x140000000 (5 GiB).
      * We must allow it to land in the MAP_FIXED region.
      * We still bound check it so it doesn't run into kernel space (PML4[256..511]). */
-    uint64_t kernel_half_limit = 0xFFFF800000000000ULL; // Upper bound for kernel space
+    u64 kernel_half_limit = 0xFFFF800000000000ULL; // Upper bound for kernel space
 
     if (size_of_image > kernel_half_limit ||
         image_base > kernel_half_limit - size_of_image) {
@@ -94,8 +94,8 @@ uint64_t pe_load(const char *path, uint64_t *pml4) {
     }
 
     /* PE sections follow the optional header. */
-    uint32_t num_sections = nt.fileHeader.numberOfSections;
-    uint32_t size_of_optional = nt.fileHeader.sizeOfOptionalHeader;
+    u32 num_sections = nt.fileHeader.numberOfSections;
+    u32 size_of_optional = nt.fileHeader.sizeOfOptionalHeader;
 
     long sections_offset = dos.e_lfanew + sizeof(nt.signature) + sizeof(struct IMAGE_FILE_HEADER) + size_of_optional;
 
@@ -112,33 +112,33 @@ uint64_t pe_load(const char *path, uint64_t *pml4) {
         if (sh.virtualSize == 0 && sh.sizeOfRawData == 0) continue;
 
         /* PE VirtualSize is like p_memsz. SizeOfRawData is like p_filesz. */
-        uint32_t memsz = sh.virtualSize;
-        uint32_t filesz = sh.sizeOfRawData;
+        u32 memsz = sh.virtualSize;
+        u32 filesz = sh.sizeOfRawData;
         if (filesz > memsz) memsz = filesz; // Sometimes SizeOfRawData is larger due to file alignment
 
         /* VirtualAddress is an RVA. Actual VA is ImageBase + VirtualAddress */
-        uint64_t va_base = image_base + sh.virtualAddress;
+        u64 va_base = image_base + sh.virtualAddress;
 
         // Bound check the section's virtual address range against user space limits
-        uint64_t user_limit = 0x0000800000000000ULL;
+        u64 user_limit = 0x0000800000000000ULL;
         if (memsz > user_limit || va_base > user_limit - memsz) {
             log_write("pe: section vaddr out of range", KERNEL, LOG_ERROR);
             fclose(fp);
             return 0;
         }
 
-        uint64_t va_start = va_base & ~0xFFFULL;
-        uint64_t va_end   = (va_base + memsz + 0xFFF) & ~0xFFFULL;
+        u64 va_start = va_base & ~0xFFFULL;
+        u64 va_end   = (va_base + memsz + 0xFFF) & ~0xFFFULL;
 
-        uint64_t flags = VMM_PRESENT | VMM_USER;
+        u64 flags = VMM_PRESENT | VMM_USER;
         if (sh.characteristics & IMAGE_SCN_MEM_WRITE) flags |= VMM_WRITE;
         if (!(sh.characteristics & IMAGE_SCN_MEM_EXECUTE)) flags |= VMM_NX;
 
         // Map missing pages and zero them, just like ELF PT_LOAD bss handling
         int mapped_since_yield = 0;
-        for (uint64_t va = va_start; va < va_end; va += 4096) {
+        for (u64 va = va_start; va < va_end; va += 4096) {
             if (!vmm_translate_in(pml4, va)) {
-                uint64_t phys = pmm_alloc_frame();
+                u64 phys = pmm_alloc_frame();
                 if (!phys) {
                     log_write("pe: failed to allocate physical frame", KERNEL, LOG_ERROR);
                     fclose(fp);
@@ -162,19 +162,19 @@ uint64_t pe_load(const char *path, uint64_t *pml4) {
         if (filesz > 0) {
             fseek(fp, sh.pointerToRawData, SEEK_SET);
             int copied_since_yield = 0;
-            for (uint64_t done = 0; done < filesz; ) {
-                uint64_t va    = va_base + done;
-                uint64_t phys  = vmm_translate_in(pml4, va & ~0xFFFULL);
+            for (u64 done = 0; done < filesz; ) {
+                u64 va    = va_base + done;
+                u64 phys  = vmm_translate_in(pml4, va & ~0xFFFULL);
                 if (!phys) {
                     log_write("pe: section page not mapped", KERNEL, LOG_ERROR);
                     fclose(fp);
                     return 0;
                 }
 
-                size_t   chunk = 4096 - (va & 0xFFF);
+                usize   chunk = 4096 - (va & 0xFFF);
                 if (chunk > filesz - done) chunk = filesz - done;
 
-                if (fread((uint8_t*)phys_to_virt(phys) + (va & 0xFFF), 1, chunk, fp) != chunk) {
+                if (fread((u8*)phys_to_virt(phys) + (va & 0xFFF), 1, chunk, fp) != chunk) {
                     log_write("pe: could not read full section data", KERNEL, LOG_ERROR);
                     fclose(fp);
                     return 0;

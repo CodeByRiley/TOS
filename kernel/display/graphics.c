@@ -24,7 +24,7 @@ struct gfx_rect gfx_rect_inset(struct gfx_rect r, int n) {
 
 /* Surfaces */
 
-void gfx_surface_init(struct gfx_surface *s, uint32_t *px,
+void gfx_surface_init(struct gfx_surface *s, u32 *px,
                       int w, int h, int stride) {
     s->px     = px;
     s->w      = w;
@@ -58,72 +58,72 @@ static struct gfx_rect clip_span(const struct gfx_surface *s,
     return out;
 }
 
-SINLINE uint32_t *row_at(const struct gfx_surface *s, int y) {
-    return s->px + (size_t)y * (size_t)s->stride;
+SINLINE u32 *row_at(const struct gfx_surface *s, int y) {
+    return s->px + (usize)y * (usize)s->stride;
 }
 
 /* Pixels */
 
-void gfx_pixel(struct gfx_surface *s, int x, int y, uint32_t color) {
+void gfx_pixel(struct gfx_surface *s, int x, int y, u32 color) {
     if (!gfx_rect_contains(s->clip, x, y)) return;
     row_at(s, y)[x] = color & 0x00FFFFFFu;
 }
 
-SINLINE void blend_into(uint32_t *dst, uint32_t argb) {
-    uint32_t a = argb >> 24;
+SINLINE void blend_into(u32 *dst, u32 argb) {
+    u32 a = argb >> 24;
     if (a == 0) return;
     if (a == 255) { *dst = argb & 0x00FFFFFFu; return; }
 
-    uint32_t d = *dst;
-    uint32_t inv = 255u - a;
-    uint32_t r = (((argb >> 16) & 0xFF) * a + ((d >> 16) & 0xFF) * inv) / 255u;
-    uint32_t g = (((argb >>  8) & 0xFF) * a + ((d >>  8) & 0xFF) * inv) / 255u;
-    uint32_t b = (( argb        & 0xFF) * a + ( d        & 0xFF) * inv) / 255u;
+    u32 d = *dst;
+    u32 inv = 255u - a;
+    u32 r = (((argb >> 16) & 0xFF) * a + ((d >> 16) & 0xFF) * inv) / 255u;
+    u32 g = (((argb >>  8) & 0xFF) * a + ((d >>  8) & 0xFF) * inv) / 255u;
+    u32 b = (( argb        & 0xFF) * a + ( d        & 0xFF) * inv) / 255u;
     *dst = (r << 16) | (g << 8) | b;
 }
 
-void gfx_blend(struct gfx_surface *s, int x, int y, uint32_t argb) {
+void gfx_blend(struct gfx_surface *s, int x, int y, u32 argb) {
     if (!gfx_rect_contains(s->clip, x, y)) return;
     blend_into(&row_at(s, y)[x], argb);
 }
 
 /* Fills */
 
-void gfx_fill(struct gfx_surface *s, struct gfx_rect r, uint32_t color) {
+void gfx_fill(struct gfx_surface *s, struct gfx_rect r, u32 color) {
     struct gfx_rect c = clip_span(s, r, 0, 0);
     if (gfx_rect_empty(c)) return;
 
     color &= 0x00FFFFFFu;
     for (int y = 0; y < c.h; y++) {
-        uint32_t *p = row_at(s, c.y + y) + c.x;
+        u32 *p = row_at(s, c.y + y) + c.x;
         for (int x = 0; x < c.w; x++) p[x] = color;
     }
 }
 
-void gfx_clear(struct gfx_surface *s, uint32_t color) {
+void gfx_clear(struct gfx_surface *s, u32 color) {
     gfx_fill(s, gfx_surface_bounds(s), color);
 }
 
-void gfx_fill_blend(struct gfx_surface *s, struct gfx_rect r, uint32_t argb) {
+void gfx_fill_blend(struct gfx_surface *s, struct gfx_rect r, u32 argb) {
     struct gfx_rect c = clip_span(s, r, 0, 0);
     if (gfx_rect_empty(c)) return;
 
     for (int y = 0; y < c.h; y++) {
-        uint32_t *p = row_at(s, c.y + y) + c.x;
+        u32 *p = row_at(s, c.y + y) + c.x;
         for (int x = 0; x < c.w; x++) blend_into(&p[x], argb);
     }
 }
 
-void gfx_hline(struct gfx_surface *s, int x, int y, int w, uint32_t color) {
+void gfx_hline(struct gfx_surface *s, int x, int y, int w, u32 color) {
     gfx_fill(s, gfx_rect_make(x, y, w, 1), color);
 }
 
-void gfx_vline(struct gfx_surface *s, int x, int y, int h, uint32_t color) {
+void gfx_vline(struct gfx_surface *s, int x, int y, int h, u32 color) {
     gfx_fill(s, gfx_rect_make(x, y, 1, h), color);
 }
 
 void gfx_frame(struct gfx_surface *s, struct gfx_rect r,
-               uint32_t color, int thickness) {
+               u32 color, int thickness) {
     if (thickness <= 0 || gfx_rect_empty(r)) return;
     if (thickness > r.w) thickness = r.w;
     if (thickness > r.h) thickness = r.h;
@@ -137,7 +137,7 @@ void gfx_frame(struct gfx_surface *s, struct gfx_rect r,
 }
 
 void gfx_bevel(struct gfx_surface *s, struct gfx_rect r,
-               uint32_t light, uint32_t dark, int thickness) {
+               u32 light, u32 dark, int thickness) {
     if (thickness <= 0 || gfx_rect_empty(r)) return;
 
     for (int i = 0; i < thickness; i++) {
@@ -168,11 +168,11 @@ void gfx_blit(struct gfx_surface *dst, int dx, int dy,
     if (gfx_rect_empty(c)) return;
 
     for (int y = 0; y < c.h; y++) {
-        const uint32_t *sp = src->px
-            + (size_t)(sr.y + skip_y + y) * (size_t)src->stride
-            + (size_t)(sr.x + skip_x);
-        uint32_t *dp = row_at(dst, c.y + y) + c.x;
-        memcpy(dp, sp, (size_t)c.w * sizeof(uint32_t));
+        const u32 *sp = src->px
+            + (usize)(sr.y + skip_y + y) * (usize)src->stride
+            + (usize)(sr.x + skip_x);
+        u32 *dp = row_at(dst, c.y + y) + c.x;
+        memcpy(dp, sp, (usize)c.w * sizeof(u32));
     }
 }
 
@@ -187,10 +187,10 @@ void gfx_blit_alpha(struct gfx_surface *dst, int dx, int dy,
     if (gfx_rect_empty(c)) return;
 
     for (int y = 0; y < c.h; y++) {
-        const uint32_t *sp = src->px
-            + (size_t)(sr.y + skip_y + y) * (size_t)src->stride
-            + (size_t)(sr.x + skip_x);
-        uint32_t *dp = row_at(dst, c.y + y) + c.x;
+        const u32 *sp = src->px
+            + (usize)(sr.y + skip_y + y) * (usize)src->stride
+            + (usize)(sr.x + skip_x);
+        u32 *dp = row_at(dst, c.y + y) + c.x;
         for (int x = 0; x < c.w; x++) blend_into(&dp[x], sp[x]);
     }
 }
@@ -210,11 +210,11 @@ void gfx_blit_scaled(struct gfx_surface *dst, int dx, int dy,
 
     for (int y = 0; y < c.h; y++) {
         int sy = sr.y + (skip_y + y) / scale;
-        const uint32_t *sp = src->px + (size_t)sy * (size_t)src->stride;
-        uint32_t *dp = row_at(dst, c.y + y) + c.x;
+        const u32 *sp = src->px + (usize)sy * (usize)src->stride;
+        u32 *dp = row_at(dst, c.y + y) + c.x;
 
         for (int x = 0; x < c.w; x++) {
-            uint32_t v = sp[sr.x + (skip_x + x) / scale];
+            u32 v = sp[sr.x + (skip_x + x) / scale];
             if (use_alpha) blend_into(&dp[x], v);
             else           dp[x] = v & 0x00FFFFFFu;
         }
@@ -223,25 +223,25 @@ void gfx_blit_scaled(struct gfx_surface *dst, int dx, int dy,
 
 /* Text */
 
-static const uint8_t *glyph_rows(char c) {
+static const u8 *glyph_rows(char c) {
     unsigned char u = (unsigned char)c;
     if (u < FONT_FIRST || u > FONT_LAST) return 0;
     return font8x8[u - FONT_FIRST];
 }
 
 static void glyph_common(struct gfx_surface *s, int x, int y, char c,
-                         uint32_t fg, uint32_t bg, int have_bg, int scale) {
+                         u32 fg, u32 bg, int have_bg, int scale) {
     if (scale < 1) scale = 1;
 
     if (have_bg)
         gfx_fill(s, gfx_rect_make(x, y, GFX_GLYPH_W * scale,
                                   GFX_GLYPH_H * scale), bg);
 
-    const uint8_t *rows = glyph_rows(c);
+    const u8 *rows = glyph_rows(c);
     if (!rows) return;
 
     for (int gy = 0; gy < GFX_GLYPH_H; gy++) {
-        uint8_t bits = rows[gy];
+        u8 bits = rows[gy];
         if (!bits) continue;
         for (int gx = 0; gx < GFX_GLYPH_W; gx++) {
             if (!(bits & (1u << gx))) continue;
@@ -252,25 +252,25 @@ static void glyph_common(struct gfx_surface *s, int x, int y, char c,
 }
 
 void gfx_glyph(struct gfx_surface *s, int x, int y, char c,
-               uint32_t fg, int scale) {
+               u32 fg, int scale) {
     glyph_common(s, x, y, c, fg, 0, 0, scale);
 }
 
 void gfx_glyph_bg(struct gfx_surface *s, int x, int y, char c,
-                  uint32_t fg, uint32_t bg, int scale) {
+                  u32 fg, u32 bg, int scale) {
     glyph_common(s, x, y, c, fg, bg, 1, scale);
 }
 
 void gfx_text_n(struct gfx_surface *s, int x, int y, const char *str,
-                size_t n, uint32_t fg, int scale) {
+                usize n, u32 fg, int scale) {
     if (!str) return;
     if (scale < 1) scale = 1;
-    for (size_t i = 0; i < n && str[i]; i++)
+    for (usize i = 0; i < n && str[i]; i++)
         gfx_glyph(s, x + (int)i * GFX_GLYPH_W * scale, y, str[i], fg, scale);
 }
 
 void gfx_text(struct gfx_surface *s, int x, int y, const char *str,
-              uint32_t fg, int scale) {
+              u32 fg, int scale) {
     if (!str) return;
     if (scale < 1) scale = 1;
     for (int i = 0; str[i]; i++)
@@ -278,7 +278,7 @@ void gfx_text(struct gfx_surface *s, int x, int y, const char *str,
 }
 
 void gfx_text_bg(struct gfx_surface *s, int x, int y, const char *str,
-                 uint32_t fg, uint32_t bg, int scale) {
+                 u32 fg, u32 bg, int scale) {
     if (!str) return;
     if (scale < 1) scale = 1;
     for (int i = 0; str[i]; i++)
@@ -306,14 +306,14 @@ int gfx_text_fit(const char *str, int scale, int max_w) {
 /* Masks and images */
 
 void gfx_mask_multi(struct gfx_surface *s, int x, int y,
-                    const uint8_t *mask, int mw, int mh,
-                    const uint32_t *colors, int ncolors, int scale) {
+                    const u8 *mask, int mw, int mh,
+                    const u32 *colors, int ncolors, int scale) {
     if (!mask || !colors || ncolors <= 0) return;
     if (scale < 1) scale = 1;
 
     for (int my = 0; my < mh; my++) {
         for (int mx = 0; mx < mw; mx++) {
-            uint8_t v = mask[(size_t)my * (size_t)mw + (size_t)mx];
+            u8 v = mask[(usize)my * (usize)mw + (usize)mx];
             if (v == 0 || v > ncolors) continue;
             gfx_fill(s, gfx_rect_make(x + mx * scale, y + my * scale,
                                       scale, scale), colors[v - 1]);
@@ -322,9 +322,9 @@ void gfx_mask_multi(struct gfx_surface *s, int x, int y,
 }
 
 void gfx_mask(struct gfx_surface *s, int x, int y,
-              const uint8_t *mask, int mw, int mh,
-              uint32_t color, int scale) {
-    uint32_t colors[3] = { color, color, color };
+              const u8 *mask, int mw, int mh,
+              u32 color, int scale) {
+    u32 colors[3] = { color, color, color };
     gfx_mask_multi(s, x, y, mask, mw, mh, colors, 3, scale);
 }
 
@@ -333,16 +333,16 @@ void gfx_draw_image(struct gfx_surface *s, int x, int y,
     if (!img || !img->pixels) return;
 
     struct gfx_surface src;
-    gfx_surface_init(&src, (uint32_t *)img->pixels, img->width, img->height,
+    gfx_surface_init(&src, (u32 *)img->pixels, img->width, img->height,
                      img->stride > 0 ? img->stride : img->width);
     gfx_blit_scaled(s, x, y, &src, gfx_rect_make(0, 0, 0, 0), scale, 1);
 }
 
 /* Sprites */
 
-void gfx_sprite_set_mask(struct gfx_sprite *sp, const uint8_t *mask,
+void gfx_sprite_set_mask(struct gfx_sprite *sp, const u8 *mask,
                          int mw, int mh,
-                         const uint32_t *colors, int ncolors) {
+                         const u32 *colors, int ncolors) {
     if (!sp) return;
     sp->mask   = mask;
     sp->mask_w = mw;

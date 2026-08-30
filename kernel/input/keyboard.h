@@ -10,10 +10,11 @@
 #define KEYBOARD_H
 
 #include <stdint.h>
+#include <utilities/types.h>
 
 struct kbd_key {
-    uint16_t keycode;     /* Linux KEY_* (see input/key_codes.h) */
-    uint8_t  pressed;     /* 1 = press, 0 = release              */
+    u16 keycode;     /* Linux KEY_* (see input/key_codes.h) */
+    u8  pressed;     /* 1 = press, 0 = release              */
 };
 
 struct kbd_event {
@@ -24,6 +25,6 @@ void keyboard_init(void);
 
 /* Pop one event into *pressed / *key. Returns 1 on success, 0 if ring
  * empty. Lossy on overflow , sticky modifier holds may desync. */
-int  keyboard_poll(int *pressed, uint16_t *key);
+int  keyboard_poll(int *pressed, u16 *key);
 
 #endif

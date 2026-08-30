@@ -10,8 +10,8 @@
 
 static const struct driver *drivers[DRIVER_MAX_DRIVERS];
 static struct device devices[DRIVER_MAX_DEVICES];
-static uint32_t driver_count;
-static uint32_t device_count;
+static u32 driver_count;
+static u32 device_count;
 static int pci_devices_probed;
 static int poll_task_started;
 
@@ -34,7 +34,7 @@ static void driver_poll_thread(void) {
     for (;;) {
         int worked = 0;
 
-        for (uint32_t i = 0; i < device_count; i++) {
+        for (u32 i = 0; i < device_count; i++) {
             struct device *device = &devices[i];
             if (device->driver && device->driver->poll) {
                 worked |= device->driver->poll(device);
@@ -68,7 +68,7 @@ static int bind_device(struct device *device) {
     return 1;
 
   log_write("DRIVER: binding device", KERNEL, LOG_INFO);
-  for (uint32_t i = 0; i < driver_count; i++) {
+  for (u32 i = 0; i < driver_count; i++) {
     const struct driver *driver = drivers[i];
     if (driver->bus != device->bus)
       continue;
@@ -118,13 +118,13 @@ int driver_register(const struct driver *driver) {
 
   /* Registration order is deliberately flexible: a driver registered after
    * bus enumeration still gets a chance to claim every unbound device. */
-  for (uint32_t i = 0; i < device_count; i++)
+  for (u32 i = 0; i < device_count; i++)
     bind_device(&devices[i]);
 
   return 0;
 }
 
-int driver_register_isa_device(uint16_t io_base, uint8_t irq) {
+int driver_register_isa_device(u16 io_base, u8 irq) {
   if (device_count >= DRIVER_MAX_DEVICES)
     return -1;
   log_write("DRIVER: registering device", KERNEL, LOG_INFO);
@@ -149,10 +149,10 @@ int driver_probe_pci_devices(void) {
     return 0;
   pci_devices_probed = 1;
 
-  uint32_t count = pci_device_count();
-  uint32_t imported = 0;
+  u32 count = pci_device_count();
+  u32 imported = 0;
 
-  for (uint32_t i = 0; i < count; i++) {
+  for (u32 i = 0; i < count; i++) {
     if (device_count >= DRIVER_MAX_DEVICES) {
       log_write("DRIVER: device table full", KERNEL, LOG_ERROR);
       break;
@@ -176,9 +176,9 @@ int driver_probe_pci_devices(void) {
   return (int)imported;
 }
 
-uint32_t driver_device_count(void) { return device_count; }
+u32 driver_device_count(void) { return device_count; }
 
-const struct device *driver_device_at(uint32_t index) {
+const struct device *driver_device_at(u32 index) {
   if (index >= device_count)
     return 0;
   return &devices[index];
@@ -189,7 +189,7 @@ int driver_snapshot(struct driver_snap *out, int max) {
     return 0;
 
   int n = 0;
-  for (uint32_t i = 0; i < driver_count && n < max; i++) {
+  for (u32 i = 0; i < driver_count && n < max; i++) {
     const struct driver *drv = drivers[i];
     if (!drv)
       continue;
@@ -201,14 +201,14 @@ int driver_snapshot(struct driver_snap *out, int max) {
     s->enabled = 0;
 
     const char *name = drv->name ? drv->name : "unnamed";
-    size_t k = 0;
+    usize k = 0;
     while (k + 1 < DRIVER_SNAP_NAME_MAX && name[k]) {
       s->name[k] = name[k];
       k++;
     }
     s->name[k] = '\0';
 
-    for (uint32_t j = 0; j < device_count; j++) {
+    for (u32 j = 0; j < device_count; j++) {
       const struct device *d = &devices[j];
       if (d->driver == drv) {
         s->bound_devices++;

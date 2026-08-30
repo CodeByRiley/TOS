@@ -40,7 +40,7 @@ static int tx_empty(void) { return inb(COM1 + 5) & 0x20; }
 void serial_write_char(char c) {
     while (!tx_empty()) {
     }
-    outb(COM1, (uint8_t)c);
+    outb(COM1, (u8)c);
 }
 
 /* Polled string write. Translates LF → CRLF so terminals render newlines
@@ -54,10 +54,10 @@ void serial_write_str(const char *s) {
 }
 
 /* "0x" + 16 hex digits, big-endian. */
-void serial_write_hex(uint64_t n) {
+void serial_write_hex(u64 n) {
     serial_write_str("0x");
     for (int i = 60; i >= 0; i -= 4) {
-        uint8_t nib = (n >> i) & 0xF;
+        u8 nib = (n >> i) & 0xF;
         serial_write_char(nib < 10 ? '0' + nib : 'a' + nib - 10);
     }
 }

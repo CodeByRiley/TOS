@@ -10,6 +10,8 @@
 #define MOUSE_H
 
 #include <stdint.h>
+#include <utilities/types.h>
+
 
 #define MOUSE_BTN_LEFT   0x01
 #define MOUSE_BTN_RIGHT  0x02
@@ -18,18 +20,18 @@
 struct mouse_event {
     int16_t dx;            /* relative since last event; +x = right    */
     int16_t dy;            /* relative since last event; +y = down     */
-    uint8_t buttons;       /* MOUSE_BTN_* mask of currently-held btns  */
-    uint8_t _pad;
+    u8 buttons;       /* MOUSE_BTN_* mask of currently-held btns  */
+    u8 _pad;
 };
 
 void mouse_init(void);
 
 /* Feed one USB HID boot-protocol mouse report: buttons, signed X, signed Y.
  * Extra bytes such as wheel data are ignored for now. */
-void mouse_hid_report(const uint8_t *report, uint16_t len);
+void mouse_hid_report(const u8 *report, u16 len);
 
 /* Feed a HID absolute tablet report: buttons, 16-bit X, 16-bit Y. */
-void mouse_hid_tablet_report(const uint8_t *report, uint16_t len);
+void mouse_hid_tablet_report(const u8 *report, u16 len);
 
 /* Pop one event into *out. Returns 1 on success, 0 if ring empty. */
 int  mouse_poll(struct mouse_event *out);
@@ -38,7 +40,7 @@ int  mouse_poll(struct mouse_event *out);
  * come from mouse_set_bounds (default: unbounded). */
 int32_t mouse_x(void);
 int32_t mouse_y(void);
-uint8_t mouse_buttons(void);
+u8 mouse_buttons(void);
 
 /* Set the clamp bounds (called when the framebuffer is resized). */
 void mouse_set_bounds(int32_t w, int32_t h);

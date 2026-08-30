@@ -21,14 +21,14 @@ _Static_assert(offsetof(struct netmon_frame_user, data) == 32,
 static struct {
   struct spinlock lock;
   struct netmon_frame_user ring[NETMON_RING_FRAMES];
-  uint64_t seq_next;
-  uint64_t rx_frames, rx_bytes;
-  uint64_t tx_frames, tx_bytes;
-  uint8_t mac[6];
-  uint8_t ipv4[4];
-  uint32_t link_up;
-  uint32_t speed_mbps;
-  uint32_t present;
+  u64 seq_next;
+  u64 rx_frames, rx_bytes;
+  u64 tx_frames, tx_bytes;
+  u8 mac[6];
+  u8 ipv4[4];
+  u32 link_up;
+  u32 speed_mbps;
+  u32 present;
 } monitor = {.lock = SPINLOCK_INIT};
 
 /* The driver's poll callback runs in a kernel task rather than an
@@ -36,8 +36,8 @@ static struct {
  * and would call straight into netmon_record(). Taking the IRQ-safe
  * variant now costs a pushfq and makes that change a non-event. */
 
-void netmon_bind(const uint8_t mac[6], const uint8_t ipv4[4]) {
-  uint64_t flags = spin_lock_irqsave(&monitor.lock);
+void netmon_bind(const u8 mac[6], const u8 ipv4[4]) {
+  u64 flags = spin_lock_irqsave(&monitor.lock);
   if (mac)
     memcpy(monitor.mac, mac, sizeof(monitor.mac));
   if (ipv4)
@@ -46,22 +46,22 @@ void netmon_bind(const uint8_t mac[6], const uint8_t ipv4[4]) {
   spin_unlock_irqrestore(&monitor.lock, flags);
 }
 
-void netmon_set_link(int up, uint32_t speed_mbps) {
-  uint64_t flags = spin_lock_irqsave(&monitor.lock);
+void netmon_set_link(int up, u32 speed_mbps) {
+  u64 flags = spin_lock_irqsave(&monitor.lock);
   monitor.link_up = up ? 1u : 0u;
   monitor.speed_mbps = speed_mbps;
   spin_unlock_irqrestore(&monitor.lock, flags);
 }
 
-void netmon_record(int direction, const void *frame, uint32_t length) {
+void netmon_record(int direction, const void *frame, u32 length) {
   if (!frame || length == 0)
     return;
 
-  uint32_t captured = length;
+  u32 captured = length;
   if (captured > NETMON_FRAME_BYTES)
     captured = NETMON_FRAME_BYTES;
 
-  uint64_t flags = spin_lock_irqsave(&monitor.lock);
+  u64 flags = spin_lock_irqsave(&monitor.lock);
 
   struct netmon_frame_user *slot =
       &monitor.ring[monitor.seq_next % NETMON_RING_FRAMES];
@@ -88,7 +88,7 @@ void netmon_record(int direction, const void *frame, uint32_t length) {
     monitor.rx_bytes += length;
   }
 
-  log_write_fmt(KERNEL, LOG_INFO,"netmon: captured frame %d, %d bytes, %s\n",
+  log_write_fmt(KERNEL, LOG_INFO,"netmon: captured frame %d, %d bytes, %s",
                slot->seq, slot->length,
                slot->direction == NETMON_DIR_TX ? "TX" : "RX");
 
@@ -99,7 +99,7 @@ long netmon_read_stats(struct netmon_stats_user *out) {
   if (!out)
     return -1;
 
-  uint64_t flags = spin_lock_irqsave(&monitor.lock);
+  u64 flags = spin_lock_irqsave(&monitor.lock);
   out->rx_frames = monitor.rx_frames;
   out->rx_bytes = monitor.rx_bytes;
   out->tx_frames = monitor.tx_frames;
@@ -118,19 +118,19 @@ long netmon_read_stats(struct netmon_stats_user *out) {
   return 0;
 }
 
-long netmon_read_frames(uint64_t *cursor, struct netmon_frame_user *out,
+long netmon_read_frames(u64 *cursor, struct netmon_frame_user *out,
                         long max) {
   if (!cursor || !out || max <= 0)
     return -1;
   if (max > NETMON_CAPTURE_BATCH)
     max = NETMON_CAPTURE_BATCH;
 
-  uint64_t flags = spin_lock_irqsave(&monitor.lock);
+  u64 flags = spin_lock_irqsave(&monitor.lock);
 
-  uint64_t oldest = monitor.seq_next > NETMON_RING_FRAMES
+  u64 oldest = monitor.seq_next > NETMON_RING_FRAMES
                         ? monitor.seq_next - NETMON_RING_FRAMES
                         : 0;
-  uint64_t at = *cursor;
+  u64 at = *cursor;
   /* Behind the ring: skip to what still exists. The caller sees the jump
    * in out[0].seq and can report the gap. */
   if (at < oldest)

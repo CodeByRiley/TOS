@@ -50,7 +50,7 @@ enum {
     LEN_Z,   LEN_J,  LEN_T
 };
 
-static void emit_uint(struct fmt_ctx *c, uint64_t v, int base, int upper,
+static void emit_uint(struct fmt_ctx *c, u64 v, int base, int upper,
                       int width, int precision, int flags,
                       char sign, const char *altprefix, int altprefixlen) {
     char tmp[32];
@@ -78,17 +78,17 @@ static void emit_uint(struct fmt_ctx *c, uint64_t v, int base, int upper,
 static void emit_int(struct fmt_ctx *c, int64_t v, int width, int precision,
                      int flags) {
     char sign = 0;
-    uint64_t u;
-    if (v < 0) { sign = '-'; u = (uint64_t)(-v); }
+    u64 u;
+    if (v < 0) { sign = '-'; u = (u64)(-v); }
     else {
-        u = (uint64_t)v;
+        u = (u64)v;
         if (flags & FL_PLUS)       sign = '+';
         else if (flags & FL_SPACE) sign = ' ';
     }
     emit_uint(c, u, 10, 0, width, precision, flags, sign, 0, 0);
 }
 
-int vsnprintf(char *buf, size_t size, const char *fmt, va_list ap) {
+int vsnprintf(char *buf, usize size, const char *fmt, va_list ap) {
     struct fmt_ctx c;
     if (buf && size > 0) {
         c.p   = buf;
@@ -161,7 +161,7 @@ int vsnprintf(char *buf, size_t size, const char *fmt, va_list ap) {
                     case LEN_H:  v = (short)va_arg(ap, int); break;
                     case LEN_L:  v = (int64_t)va_arg(ap, long); break;
                     case LEN_LL: v = (int64_t)va_arg(ap, long long); break;
-                    case LEN_Z:  v = (int64_t)va_arg(ap, size_t); break;
+                    case LEN_Z:  v = (int64_t)va_arg(ap, usize); break;
                     case LEN_J:  v = (int64_t)va_arg(ap, long long); break;
                     case LEN_T:  v = (int64_t)va_arg(ap, ptrdiff_t); break;
                     default:     v = (int64_t)va_arg(ap, int); break;
@@ -170,16 +170,16 @@ int vsnprintf(char *buf, size_t size, const char *fmt, va_list ap) {
                 break;
             }
             case 'u': case 'o': case 'x': case 'X': {
-                uint64_t v;
+                u64 v;
                 switch (lenmod) {
                     case LEN_HH: v = (unsigned char)va_arg(ap, unsigned int); break;
                     case LEN_H:  v = (unsigned short)va_arg(ap, unsigned int); break;
-                    case LEN_L:  v = (uint64_t)va_arg(ap, unsigned long); break;
-                    case LEN_LL: v = (uint64_t)va_arg(ap, unsigned long long); break;
-                    case LEN_Z:  v = (uint64_t)va_arg(ap, size_t); break;
-                    case LEN_J:  v = (uint64_t)va_arg(ap, unsigned long long); break;
-                    case LEN_T:  v = (uint64_t)va_arg(ap, ptrdiff_t); break;
-                    default:     v = (uint64_t)va_arg(ap, unsigned int); break;
+                    case LEN_L:  v = (u64)va_arg(ap, unsigned long); break;
+                    case LEN_LL: v = (u64)va_arg(ap, unsigned long long); break;
+                    case LEN_Z:  v = (u64)va_arg(ap, usize); break;
+                    case LEN_J:  v = (u64)va_arg(ap, unsigned long long); break;
+                    case LEN_T:  v = (u64)va_arg(ap, ptrdiff_t); break;
+                    default:     v = (u64)va_arg(ap, unsigned int); break;
                 }
                 int base  = (*fmt == 'o') ? 8 : (*fmt == 'u') ? 10 : 16;
                 int upper = (*fmt == 'X');
@@ -193,7 +193,7 @@ int vsnprintf(char *buf, size_t size, const char *fmt, va_list ap) {
                 break;
             }
             case 'p': {
-                uint64_t v = (uint64_t)va_arg(ap, void*);
+                u64 v = (u64)va_arg(ap, void*);
                 fmt_puts(&c, "0x");
                 emit_uint(&c, v, 16, 0, 16, -1, FL_ZERO, 0, 0, 0);
                 break;
@@ -225,7 +225,7 @@ int vsnprintf(char *buf, size_t size, const char *fmt, va_list ap) {
     return c.total;
 }
 
-int snprintf(char *buf, size_t size, const char *fmt, ...) {
+int snprintf(char *buf, usize size, const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
     int r = vsnprintf(buf, size, fmt, ap);

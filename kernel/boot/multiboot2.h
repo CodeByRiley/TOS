@@ -29,67 +29,67 @@
 
 /* Common header on every tag. `size` includes the header. */
 struct MB2_TAG {
-    uint32_t type;
-    uint32_t size;
+    u32 type;
+    u32 size;
 } PACKED;
 
 /* Memory map entry (mmap tag payload). */
 struct MB2_MMAP_ENTRY {
-    uint64_t base;
-    uint64_t len;
-    uint32_t type;
-    uint32_t reserved;
+    u64 base;
+    u64 len;
+    u32 type;
+    u32 reserved;
 } PACKED;
 
 struct MB2_TAG_MMAP {
-    uint32_t type;
-    uint32_t size;
-    uint32_t entry_size;
-    uint32_t entry_version;
+    u32 type;
+    u32 size;
+    u32 entry_size;
+    u32 entry_version;
     struct MB2_MMAP_ENTRY entries[];
 } PACKED;
 
 /* Module tag (GRUB modules loaded alongside the kernel). */
 struct MB2_TAG_MODULE {
-    uint32_t type;
-    uint32_t size;
-    uint32_t mod_start;     /* physical addr of module first byte         */
-    uint32_t mod_end;       /* physical addr one past last byte           */
+    u32 type;
+    u32 size;
+    u32 mod_start;     /* physical addr of module first byte         */
+    u32 mod_end;       /* physical addr one past last byte           */
     char     cmdline[];     /* null-terminated string                     */
 } PACKED;
 
 /* Framebuffer description. */
 struct MB2_TAG_FRAMEBUFFER {
-    uint32_t type;
-    uint32_t size;
-    uint64_t addr;          /* physical */
-    uint32_t pitch;         /* bytes per row */
-    uint32_t width;
-    uint32_t height;
-    uint8_t  bpp;
-    uint8_t  fb_type;
-    uint16_t reserved;
-    uint8_t  red_pos;
-    uint8_t  red_size;
-    uint8_t  green_pos;
-    uint8_t  green_size;
-    uint8_t  blue_pos;
-    uint8_t  blue_size;
+    u32 type;
+    u32 size;
+    u64 addr;          /* physical */
+    u32 pitch;         /* bytes per row */
+    u32 width;
+    u32 height;
+    u8  bpp;
+    u8  fb_type;
+    u16 reserved;
+    u8  red_pos;
+    u8  red_size;
+    u8  green_pos;
+    u8  green_size;
+    u8  blue_pos;
+    u8  blue_size;
 } PACKED;
 
 /* ACPI tag: bootloader copies the RSDP into payload[]. ACPI_OLD = 20-byte
  * v1 RSDP; ACPI_NEW = 36-byte v2 XSDP. Either may appear depending on
  * firmware , try ACPI_NEW first, fall back to ACPI_OLD. */
 struct MB2_TAG_ACPI {
-    uint32_t type;
-    uint32_t size;
-    uint8_t  rsdp[];
+    u32 type;
+    u32 size;
+    u8  rsdp[];
 } PACKED;
 
 /* Walk tags looking for one of the given `type`. Returns NULL if absent. */
-struct MB2_TAG        *mb2_find_tag(uint64_t mb2_addr, uint32_t type);
+struct MB2_TAG        *mb2_find_tag(u64 mb2_addr, u32 type);
 
 /* Walk module tags looking for one whose cmdline matches `cmdline`. */
-struct MB2_TAG_MODULE *mb2_find_module(uint64_t mb2_addr, const char *cmdline);
+struct MB2_TAG_MODULE *mb2_find_module(u64 mb2_addr, const char *cmdline);
 
 #endif

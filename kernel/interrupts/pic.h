@@ -11,15 +11,16 @@
 #define PIC_H
 
 #include <stdint.h>
+#include <utilities/types.h>
 
 /* Initialise + remap to vectors 0x20-0x2F. */
 void pic_remap(void);
 
 /* End-of-interrupt for IRQ `irq`. */
-void pic_send_eoi(uint8_t irq);
+void pic_send_eoi(u8 irq);
 
 /* Per-IRQ mask control. */
-void pic_set_mask(uint8_t irq);
-void pic_clear_mask(uint8_t irq);
+void pic_set_mask(u8 irq);
+void pic_clear_mask(u8 irq);
 
 #endif

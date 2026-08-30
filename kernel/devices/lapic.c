@@ -13,15 +13,15 @@
 
 #define LAPIC_VIRT_BASE 0xFFFFE00100000000ULL
 
-static volatile uint8_t *lapic_mmio = 0;
+static volatile u8 *lapic_mmio = 0;
 
-void lapic_init(uint64_t mmio_phys) {
+void lapic_init(u64 mmio_phys) {
     if (lapic_mmio) return;
     /* Map a single 4 KiB page. Mark uncacheable via PCD/PWT so MMIO loads
      * and stores don't get reordered or coalesced by the cache. */
     vmm_map(LAPIC_VIRT_BASE, mmio_phys,
             VMM_PRESENT | VMM_WRITE | VMM_PCD | VMM_PWT);
-    lapic_mmio = (volatile uint8_t*)LAPIC_VIRT_BASE;
+    lapic_mmio = (volatile u8*)LAPIC_VIRT_BASE;
     lapic_enable_this_cpu();
     log_write_hex("LAPIC: mapped phys =", mmio_phys, KERNEL, LOG_INFO);
     log_write_hex("LAPIC: id          =", lapic_id(), KERNEL, LOG_INFO);
@@ -34,15 +34,15 @@ void lapic_enable_this_cpu(void) {
     lapic_write(LAPIC_REG_TPR, 0);       /* accept all interrupt priorities */
 }
 
-uint32_t lapic_read(uint32_t reg) {
-    return *(volatile uint32_t*)(lapic_mmio + reg);
+u32 lapic_read(u32 reg) {
+    return *(volatile u32*)(lapic_mmio + reg);
 }
 
-void lapic_write(uint32_t reg, uint32_t val) {
-    *(volatile uint32_t*)(lapic_mmio + reg) = val;
+void lapic_write(u32 reg, u32 val) {
+    *(volatile u32*)(lapic_mmio + reg) = val;
 }
 
-uint32_t lapic_id(void) {
+u32 lapic_id(void) {
     return lapic_read(LAPIC_REG_ID) >> 24;
 }
 
@@ -57,24 +57,24 @@ static void icr_wait(void) {
     }
 }
 
-void lapic_send_init(uint8_t apic_id) {
-    lapic_write(LAPIC_REG_ICR_HIGH, (uint32_t)apic_id << 24);
+void lapic_send_init(u8 apic_id) {
+    lapic_write(LAPIC_REG_ICR_HIGH, (u32)apic_id << 24);
     lapic_write(LAPIC_REG_ICR_LOW,
                 LAPIC_ICR_INIT | LAPIC_ICR_PHYSICAL |
                 LAPIC_ICR_ASSERT | LAPIC_ICR_LEVEL_LEVEL);
     icr_wait();
 }
 
-void lapic_send_startup(uint8_t apic_id, uint8_t vector) {
-    lapic_write(LAPIC_REG_ICR_HIGH, (uint32_t)apic_id << 24);
+void lapic_send_startup(u8 apic_id, u8 vector) {
+    lapic_write(LAPIC_REG_ICR_HIGH, (u32)apic_id << 24);
     lapic_write(LAPIC_REG_ICR_LOW,
                 LAPIC_ICR_STARTUP | LAPIC_ICR_PHYSICAL |
-                LAPIC_ICR_ASSERT | (uint32_t)vector);
+                LAPIC_ICR_ASSERT | (u32)vector);
     icr_wait();
 }
 
-void lapic_send_fixed(uint8_t apic_id, uint8_t vector) {
-    lapic_write(LAPIC_REG_ICR_HIGH, (uint32_t)apic_id << 24);
+void lapic_send_fixed(u8 apic_id, u8 vector) {
+    lapic_write(LAPIC_REG_ICR_HIGH, (u32)apic_id << 24);
     lapic_write(LAPIC_REG_ICR_LOW,
                 LAPIC_ICR_FIXED | LAPIC_ICR_PHYSICAL |
                 LAPIC_ICR_ASSERT | LAPIC_ICR_LEVEL_EDGE | vector);

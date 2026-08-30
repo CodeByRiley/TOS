@@ -123,12 +123,12 @@ static volatile int       mouse_tail = 0;
 
 static volatile int32_t cur_x = 0;
 static volatile int32_t cur_y = 0;
-static volatile uint8_t cur_buttons = 0;
+static volatile u8 cur_buttons = 0;
 
 static int32_t bound_w = 0;          /* 0 => unbounded */
 static int32_t bound_h = 0;
 
-static uint8_t pkt[3];
+static u8 pkt[3];
 static int     pkt_idx = 0;
 
 /* The bounded poll prevents a stuck controller from hanging boot.
@@ -148,47 +148,47 @@ static int wait_out_full(void) {
     return -1;
 }
 
-static int ctrl_send(uint8_t cmd) {
+static int ctrl_send(u8 cmd) {
     if (wait_in_empty() != 0) return -1;
     outb(PS2_CMD, cmd);
     return 0;
 }
 
-static int data_send(uint8_t b) {
+static int data_send(u8 b) {
     if (wait_in_empty() != 0) return -1;
     outb(PS2_DATA, b);
     return 0;
 }
 
-static int data_recv(uint8_t *out) {
+static int data_recv(u8 *out) {
     if (wait_out_full() != 0) return -1;
     *out = inb(PS2_DATA);
     return 0;
 }
 
 /* Send one byte to the mouse and read its ACK (0xFA). */
-static int mouse_cmd(uint8_t cmd) {
+static int mouse_cmd(u8 cmd) {
     if (ctrl_send(CTRL_WRITE_AUX) != 0) return -1;
     if (data_send(cmd) != 0) return -1;
-    uint8_t resp;
+    u8 resp;
     if (data_recv(&resp) != 0) return -1;
     if (resp != MOUSE_ACK) return -1;
     return 0;
 }
 
 /* Send a command that requires an argument byte (e.g., sample rate, resolution) */
-static int mouse_cmd_arg(uint8_t cmd, uint8_t arg) {
+static int mouse_cmd_arg(u8 cmd, u8 arg) {
     if (mouse_cmd(cmd) != 0) return -1;       /* Send command, expect ACK */
     if (ctrl_send(CTRL_WRITE_AUX) != 0) return -1;
     if (data_send(arg) != 0) return -1;       /* Send argument */
 
-    uint8_t resp;
+    u8 resp;
     if (data_recv(&resp) != 0) return -1;     /* Expect second ACK */
     if (resp != MOUSE_ACK) return -1;
     return 0;
 }
 
-static void push_event(int16_t dx, int16_t dy, uint8_t buttons) {
+static void push_event(int16_t dx, int16_t dy, u8 buttons) {
     int next = (mouse_head + 1) & MOUSE_RING_MASK;
     if (next == mouse_tail) return;        /* drop on full */
     mouse_ring[mouse_head].dx      = dx;
@@ -212,15 +212,15 @@ static int16_t delta_i16(int32_t d) {
 }
 
 static void submit_at(int16_t dx, int16_t dy, int32_t nx, int32_t ny,
-                      uint8_t buttons) {
-    uint8_t old_buttons = cur_buttons;
+                      u8 buttons) {
+    u8 old_buttons = cur_buttons;
     cur_buttons = buttons;
     cur_x = nx;
     cur_y = ny;
 
     push_event(dx, dy, buttons);
 
-    uint32_t when = (uint32_t)pit_ticks();
+    u32 when = (u32)pit_ticks();
     int16_t  ax   = (int16_t)cur_x;
     int16_t  ay   = (int16_t)cur_y;
 
@@ -230,8 +230,8 @@ static void submit_at(int16_t dx, int16_t dy, int32_t nx, int32_t ny,
         msg_post(&m);
     }
 
-    uint8_t pressed_now  = buttons & ~old_buttons;
-    uint8_t released_now = old_buttons & ~buttons;
+    u8 pressed_now  = buttons & ~old_buttons;
+    u8 released_now = old_buttons & ~buttons;
     if (pressed_now) {
         struct msg m = { .type = MSG_MOUSE_DOWN, .param = pressed_now,
                          .x = ax, .y = ay, .when = when };
@@ -244,20 +244,20 @@ static void submit_at(int16_t dx, int16_t dy, int32_t nx, int32_t ny,
     }
 }
 
-static void submit_relative(int16_t dx, int16_t dy, uint8_t buttons) {
+static void submit_relative(int16_t dx, int16_t dy, u8 buttons) {
     int32_t nx = clamp_axis(cur_x + dx, bound_w);
     int32_t ny = clamp_axis(cur_y + dy, bound_h);
     submit_at(dx, dy, nx, ny, buttons);
 }
 
-static void submit_absolute(int32_t nx, int32_t ny, uint8_t buttons) {
+static void submit_absolute(int32_t nx, int32_t ny, u8 buttons) {
     nx = clamp_axis(nx, bound_w);
     ny = clamp_axis(ny, bound_h);
     submit_at(delta_i16(nx - cur_x), delta_i16(ny - cur_y), nx, ny, buttons);
 }
 
 static void parse_packet(void) {
-    uint8_t b0 = pkt[0];
+    u8 b0 = pkt[0];
     /* Lost sync , drop and let the state machine recover. */
     if (!(b0 & MOUSE_PKT_ALWAYS_ONE)) {
         pkt_idx = 0;
@@ -279,7 +279,7 @@ static void parse_packet(void) {
     /* PS/2 reports +Y as "up", we want screen coords (+Y down). */
     dy = -dy;
 
-    uint8_t buttons = 0;
+    u8 buttons = 0;
     if (b0 & 0x01) buttons |= MOUSE_BTN_LEFT;
     if (b0 & 0x02) buttons |= MOUSE_BTN_RIGHT;
     if (b0 & 0x04) buttons |= MOUSE_BTN_MIDDLE;
@@ -287,10 +287,10 @@ static void parse_packet(void) {
     submit_relative(dx, dy, buttons);
 }
 
-void mouse_hid_report(const uint8_t *report, uint16_t len) {
+void mouse_hid_report(const u8 *report, u16 len) {
     if (!report || len < 3) return;
 
-    uint8_t buttons = 0;
+    u8 buttons = 0;
     if (report[0] & 0x01) buttons |= MOUSE_BTN_LEFT;
     if (report[0] & 0x02) buttons |= MOUSE_BTN_RIGHT;
     if (report[0] & 0x04) buttons |= MOUSE_BTN_MIDDLE;
@@ -301,20 +301,20 @@ void mouse_hid_report(const uint8_t *report, uint16_t len) {
                     (int16_t)(int8_t)report[2], buttons);
 }
 
-void mouse_hid_tablet_report(const uint8_t *report, uint16_t len) {
+void mouse_hid_tablet_report(const u8 *report, u16 len) {
     if (!report || len < 5) return;
 
-    uint8_t buttons = 0;
+    u8 buttons = 0;
     if (report[0] & 0x01) buttons |= MOUSE_BTN_LEFT;
     if (report[0] & 0x02) buttons |= MOUSE_BTN_RIGHT;
     if (report[0] & 0x04) buttons |= MOUSE_BTN_MIDDLE;
 
-    uint32_t raw_x = (uint32_t)report[1] | ((uint32_t)report[2] << 8);
-    uint32_t raw_y = (uint32_t)report[3] | ((uint32_t)report[4] << 8);
-    int32_t nx = bound_w > 1 ? (int32_t)((raw_x * (uint32_t)(bound_w - 1)) /
+    u32 raw_x = (u32)report[1] | ((u32)report[2] << 8);
+    u32 raw_y = (u32)report[3] | ((u32)report[4] << 8);
+    int32_t nx = bound_w > 1 ? (int32_t)((raw_x * (u32)(bound_w - 1)) /
                                          0x7FFFu)
                              : (int32_t)raw_x;
-    int32_t ny = bound_h > 1 ? (int32_t)((raw_y * (uint32_t)(bound_h - 1)) /
+    int32_t ny = bound_h > 1 ? (int32_t)((raw_y * (u32)(bound_h - 1)) /
                                          0x7FFFu)
                              : (int32_t)raw_y;
     submit_absolute(nx, ny, buttons);
@@ -323,11 +323,11 @@ void mouse_hid_tablet_report(const uint8_t *report, uint16_t len) {
 static void mouse_handler(void) {
     /* Sanity: the ISR fires for IRQ12, but on some controllers spurious
      * shared writes can show up. Confirm aux bit before consuming the byte. */
-    uint8_t st = inb(PS2_STATUS);
+    u8 st = inb(PS2_STATUS);
     if (!(st & PS2_STATUS_OUT_FULL)) return;
     if (!(st & PS2_STATUS_AUX))      { (void)inb(PS2_DATA); return; }
 
-    uint8_t b = inb(PS2_DATA);
+    u8 b = inb(PS2_DATA);
     pkt[pkt_idx++] = b;
 
     if (pkt_idx == 1 && !(b & MOUSE_PKT_ALWAYS_ONE)) {
@@ -349,7 +349,7 @@ int mouse_poll(struct mouse_event *out) {
 
 int32_t mouse_x(void)       { return cur_x; }
 int32_t mouse_y(void)       { return cur_y; }
-uint8_t mouse_buttons(void) { return cur_buttons; }
+u8 mouse_buttons(void) { return cur_buttons; }
 
 void mouse_set_bounds(int32_t w, int32_t h) {
     bound_w = w;
@@ -375,7 +375,7 @@ void mouse_init(void) {
         log_write("mouse: read CCB failed", KERNEL, LOG_ERROR);
         return;
     }
-    uint8_t ccb;
+    u8 ccb;
     if (data_recv(&ccb) != 0) {
         log_write("mouse: read CCB data failed", KERNEL, LOG_ERROR);
         return;

@@ -71,21 +71,21 @@ void pic_remap(void) {
     outb(PIC2_DATA, PIC_MASK_ALL);
 }
 
-void pic_send_eoi(uint8_t irq) {
+void pic_send_eoi(u8 irq) {
     /* A slave IRQ reaches the CPU through the master, so both need the EOI ,
      * slave first, or the master unblocks before the slave has cleared. */
     if (irq >= 8) outb(PIC2_CMD, PIC_EOI);
     outb(PIC1_CMD, PIC_EOI);
 }
 
-void pic_set_mask(uint8_t irq) {
-    uint16_t port = (irq < 8) ? PIC1_DATA : PIC2_DATA;
+void pic_set_mask(u8 irq) {
+    u16 port = (irq < 8) ? PIC1_DATA : PIC2_DATA;
     if (irq >= 8) irq -= 8;
     outb(port, inb(port) | (1 << irq));
 }
 
-void pic_clear_mask(uint8_t irq) {
-    uint16_t port = (irq < 8) ? PIC1_DATA : PIC2_DATA;
+void pic_clear_mask(u8 irq) {
+    u16 port = (irq < 8) ? PIC1_DATA : PIC2_DATA;
     if (irq >= 8) irq -= 8;
     outb(port, inb(port) & ~(1 << irq));
 }

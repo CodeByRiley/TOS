@@ -30,9 +30,9 @@
 #define PMM_ISA_DMA_START 0x10000ULL
 #define PMM_ISA_DMA_END 0xA0000ULL
 
-#define u8t uint8_t
-#define u16t uint16_t
-#define u64t uint64_t
+#define u8t u8
+#define u16t u16
+#define u64t u64
 
 #ifndef PMM_HOST_TEST
 extern char _kernel_start[];
@@ -109,7 +109,7 @@ static void mark_region_free(u64t base, u64t length) {
 }
 
 #ifdef PMM_HOST_TEST
-void pmm_test_reset(uint8_t *storage, uint64_t frame_count) {
+void pmm_test_reset(u8 *storage, u64 frame_count) {
   bitmap = storage;
   bitmap_frames = frame_count;
   usable_frames = 0;
@@ -119,7 +119,7 @@ void pmm_test_reset(uint8_t *storage, uint64_t frame_count) {
     bitmap[i] = 0xFF;
 }
 
-void pmm_test_mark_free(uint64_t base, uint64_t length) {
+void pmm_test_mark_free(u64 base, u64 length) {
   u64t before = used_frames;
   mark_region_free(base, length);
   usable_frames += before - used_frames;
@@ -141,18 +141,18 @@ static void hhdm_extend(u64t highest_physical) {
   u64t *hhdm_pdpt = phys_to_virt(pml4[256] & PAGE_ADDR_MASK);
 
   /* Entries 0..3 were created by the bootstrap 4 GiB HHDM. */
-  for (uint64_t gib = BOOT_HHDM_GIB; gib < required_gib; gib++) {
-    uint64_t pd_phys = pmm_alloc_frame_below(BOOT_HHDM_LIMIT);
+  for (u64 gib = BOOT_HHDM_GIB; gib < required_gib; gib++) {
+    u64 pd_phys = pmm_alloc_frame_below(BOOT_HHDM_LIMIT);
     if (!pd_phys) {
       log_write("PMM: no low frame for HHDM page table", KERNEL, LOG_ERROR);
       for (;;)
         __asm__ volatile("cli; hlt");
     }
 
-    uint64_t *pd = phys_to_virt(pd_phys);
+    u64 *pd = phys_to_virt(pd_phys);
 
-    for (uint64_t entry = 0; entry < 512; entry++) {
-      uint64_t phys = gib * GIB + entry * PAGE_2M;
+    for (u64 entry = 0; entry < 512; entry++) {
+      u64 phys = gib * GIB + entry * PAGE_2M;
       pd[entry] = phys | PAGE_FLAGS;
     }
 
@@ -200,7 +200,7 @@ void pmm_init(u64t mb2_addr) {
   u64t bitmap_bytes = (bitmap_frames + 7) / 8;
 
   /* Place the bitmap clear of the kernel + GRUB info + below-1MB BIOS. */
-  u64t mb2_size = *(uint32_t *)phys_to_virt(mb2_addr);
+  u64t mb2_size = *(u32 *)phys_to_virt(mb2_addr);
   u64t min_bitmap_addr =
       max_u64((uintptr_t)_kernel_phys_end, mb2_addr + mb2_size);
   min_bitmap_addr = max_u64(min_bitmap_addr, 0x100000);

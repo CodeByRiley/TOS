@@ -12,33 +12,33 @@
 #include <stdint.h>
 
 struct PACKED elf64_header {
-    uint8_t ident[16];
-    uint16_t type;
-    uint16_t machine;
-    uint32_t version;
-    uint64_t entry;
-    uint64_t phoff;
-    uint64_t shoff;
-    uint32_t flags;
-    uint16_t ehsize;
-    uint16_t phentsize;
-    uint16_t phnum;
-    uint16_t shentsize;
-    uint16_t shnum;
-    uint16_t shstrndx;
+    u8 ident[16];
+    u16 type;
+    u16 machine;
+    u32 version;
+    u64 entry;
+    u64 phoff;
+    u64 shoff;
+    u32 flags;
+    u16 ehsize;
+    u16 phentsize;
+    u16 phnum;
+    u16 shentsize;
+    u16 shnum;
+    u16 shstrndx;
 };
 
 struct PACKED elf64_section {
-    uint32_t name;
-    uint32_t type;
-    uint64_t flags;
-    uint64_t address;
-    uint64_t offset;
-    uint64_t size;
-    uint32_t link;
-    uint32_t info;
-    uint64_t alignment;
-    uint64_t entry_size;
+    u32 name;
+    u32 type;
+    u64 flags;
+    u64 address;
+    u64 offset;
+    u64 size;
+    u32 link;
+    u32 info;
+    u64 alignment;
+    u64 entry_size;
 };
 
 struct firmware_choice {
@@ -48,13 +48,13 @@ struct firmware_choice {
     const char *ucode_file;
 };
 
-static int span_is_valid(uint64_t offset, uint64_t length, uint64_t total) {
+static int span_is_valid(u64 offset, u64 length, u64 total) {
     return offset <= total && length <= total - offset;
 }
 
-static int section_name_equals(const char *name, uint64_t available,
+static int section_name_equals(const char *name, u64 available,
                                const char *expected) {
-    uint64_t i = 0;
+    u64 i = 0;
     while (expected[i]) {
         if (i >= available || name[i] != expected[i])
             return 0;
@@ -65,8 +65,8 @@ static int section_name_equals(const char *name, uint64_t available,
 
 #define SHT_NOBITS 8
 
-static const struct elf64_section *find_section(const uint8_t *image,
-                                                 uint64_t image_size,
+static const struct elf64_section *find_section(const u8 *image,
+                                                 u64 image_size,
                                                  const char *wanted) {
     const struct elf64_header *header =
         (const struct elf64_header *)image;
@@ -75,7 +75,7 @@ static const struct elf64_section *find_section(const uint8_t *image,
     const struct elf64_section *names = &sections[header->shstrndx];
     const char *name_table = (const char *)(image + names->offset);
 
-    for (uint16_t i = 0; i < header->shnum; i++) {
+    for (u16 i = 0; i < header->shnum; i++) {
         const struct elf64_section *section = &sections[i];
         /* Skip sections we are not looking for rather than rejecting the
          * whole container: a SHT_NOBITS section legitimately has a size
@@ -96,11 +96,11 @@ static const struct elf64_section *find_section(const uint8_t *image,
     return 0;
 }
 
-static int build_signature_section_name(char *out, uint64_t out_size,
+static int build_signature_section_name(char *out, u64 out_size,
                                         const char *family_name) {
     static const char prefix[] = ".fwsignature_";
-    uint64_t prefix_length = sizeof(prefix) - 1;
-    uint64_t family_length = strlen(family_name);
+    u64 prefix_length = sizeof(prefix) - 1;
+    u64 family_length = strlen(family_name);
     if (prefix_length + family_length + 1 > out_size)
         return -1;
 
@@ -111,8 +111,8 @@ static int build_signature_section_name(char *out, uint64_t out_size,
 
 static int validate_gsp_container(struct nvidia_device *device,
                                   const char *family_name) {
-    const uint8_t *image = (const uint8_t *)device->gsp_firmware;
-    uint64_t size = device->gsp_firmware_size;
+    const u8 *image = (const u8 *)device->gsp_firmware;
+    u64 size = device->gsp_firmware_size;
     if (!image || size < sizeof(struct elf64_header))
         return -1;
 
@@ -127,8 +127,8 @@ static int validate_gsp_container(struct nvidia_device *device,
         || header->shnum == 0 || header->shstrndx >= header->shnum)
         return -1;
 
-    uint64_t section_table_size =
-        (uint64_t)header->shentsize * header->shnum;
+    u64 section_table_size =
+        (u64)header->shentsize * header->shnum;
     if (!span_is_valid(header->shoff, section_table_size, size))
         return -1;
 
@@ -158,7 +158,7 @@ static int validate_gsp_container(struct nvidia_device *device,
     if (version_text[version->size - 1] != '\0')
         return -1;
 
-    memcpy(device->firmware_version, version_text, (size_t)version->size);
+    memcpy(device->firmware_version, version_text, (usize)version->size);
     device->firmware_version[sizeof(device->firmware_version) - 1] = '\0';
     device->gsp_image = image + firmware_image->offset;
     device->gsp_image_size = firmware_image->size;
@@ -167,8 +167,8 @@ static int validate_gsp_container(struct nvidia_device *device,
     return 0;
 }
 
-static struct firmware_choice select_firmware(uint32_t architecture,
-                                               uint32_t implementation) {
+static struct firmware_choice select_firmware(u32 architecture,
+                                               u32 implementation) {
     struct firmware_choice choice = {0};
 
     switch (architecture) {

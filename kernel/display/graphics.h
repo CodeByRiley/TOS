@@ -18,7 +18,7 @@
 #ifndef GRAPHICS_H
 #define GRAPHICS_H
 
-#include "utilities/types.h"
+#include <utilities/types.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -50,13 +50,13 @@ struct gfx_rect gfx_rect_inset(struct gfx_rect r, int n);
 /* Surfaces */
 
 struct gfx_surface {
-    uint32_t       *px;
+    u32       *px;
     int             w, h;
     int             stride;     /* pixels per row, not bytes */
     struct gfx_rect clip;
 };
 
-void gfx_surface_init(struct gfx_surface *s, uint32_t *px,
+void gfx_surface_init(struct gfx_surface *s, u32 *px,
                       int w, int h, int stride);
 
 struct gfx_rect gfx_clip_push(struct gfx_surface *s, struct gfx_rect r);
@@ -69,20 +69,20 @@ SINLINE struct gfx_rect gfx_surface_bounds(const struct gfx_surface *s) {
 
 /* Pixels and fills */
 
-void gfx_pixel(struct gfx_surface *s, int x, int y, uint32_t color);
-void gfx_blend(struct gfx_surface *s, int x, int y, uint32_t argb);
+void gfx_pixel(struct gfx_surface *s, int x, int y, u32 color);
+void gfx_blend(struct gfx_surface *s, int x, int y, u32 argb);
 
-void gfx_clear(struct gfx_surface *s, uint32_t color);
-void gfx_fill(struct gfx_surface *s, struct gfx_rect r, uint32_t color);
-void gfx_fill_blend(struct gfx_surface *s, struct gfx_rect r, uint32_t argb);
+void gfx_clear(struct gfx_surface *s, u32 color);
+void gfx_fill(struct gfx_surface *s, struct gfx_rect r, u32 color);
+void gfx_fill_blend(struct gfx_surface *s, struct gfx_rect r, u32 argb);
 
-void gfx_hline(struct gfx_surface *s, int x, int y, int w, uint32_t color);
-void gfx_vline(struct gfx_surface *s, int x, int y, int h, uint32_t color);
+void gfx_hline(struct gfx_surface *s, int x, int y, int w, u32 color);
+void gfx_vline(struct gfx_surface *s, int x, int y, int h, u32 color);
 
 void gfx_frame(struct gfx_surface *s, struct gfx_rect r,
-               uint32_t color, int thickness);
+               u32 color, int thickness);
 void gfx_bevel(struct gfx_surface *s, struct gfx_rect r,
-               uint32_t light, uint32_t dark, int thickness);
+               u32 light, u32 dark, int thickness);
 
 /* Blitting */
 
@@ -97,16 +97,16 @@ void gfx_blit_scaled(struct gfx_surface *dst, int dx, int dy,
 /* ---------------- Text --------------------------------------------------- */
 
 void gfx_glyph(struct gfx_surface *s, int x, int y, char c,
-               uint32_t fg, int scale);
+               u32 fg, int scale);
 void gfx_glyph_bg(struct gfx_surface *s, int x, int y, char c,
-                  uint32_t fg, uint32_t bg, int scale);
+                  u32 fg, u32 bg, int scale);
 
 void gfx_text(struct gfx_surface *s, int x, int y, const char *str,
-              uint32_t fg, int scale);
+              u32 fg, int scale);
 void gfx_text_bg(struct gfx_surface *s, int x, int y, const char *str,
-                 uint32_t fg, uint32_t bg, int scale);
+                 u32 fg, u32 bg, int scale);
 void gfx_text_n(struct gfx_surface *s, int x, int y, const char *str,
-                size_t n, uint32_t fg, int scale);
+                usize n, u32 fg, int scale);
 
 void gfx_text_size(const char *str, int scale, int *out_w, int *out_h);
 int  gfx_text_fit(const char *str, int scale, int max_w);
@@ -114,14 +114,14 @@ int  gfx_text_fit(const char *str, int scale, int max_w);
 /* ---------------- Masks and images -------------------------------------- */
 
 void gfx_mask(struct gfx_surface *s, int x, int y,
-              const uint8_t *mask, int mw, int mh,
-              uint32_t color, int scale);
+              const u8 *mask, int mw, int mh,
+              u32 color, int scale);
 void gfx_mask_multi(struct gfx_surface *s, int x, int y,
-                    const uint8_t *mask, int mw, int mh,
-                    const uint32_t *colors, int ncolors, int scale);
+                    const u8 *mask, int mw, int mh,
+                    const u32 *colors, int ncolors, int scale);
 
 struct gfx_image {
-    const uint32_t *pixels;
+    const u32 *pixels;
     int             width, height;
     int             stride;      /* pixels per row; <= 0 means width */
 };
@@ -135,15 +135,15 @@ void gfx_draw_image(struct gfx_surface *s, int x, int y,
  */
 struct gfx_sprite {
     struct gfx_image image;       /* pixels != 0 when image art is set */
-    const uint8_t   *mask;        /* fallback; mh rows of mw bytes */
+    const u8   *mask;        /* fallback; mh rows of mw bytes */
     int              mask_w, mask_h;
-    uint32_t         colors[3];
+    u32         colors[3];
     int              ncolors;
 };
 
-void gfx_sprite_set_mask(struct gfx_sprite *sp, const uint8_t *mask,
+void gfx_sprite_set_mask(struct gfx_sprite *sp, const u8 *mask,
                          int mw, int mh,
-                         const uint32_t *colors, int ncolors);
+                         const u32 *colors, int ncolors);
 void gfx_sprite_set_image(struct gfx_sprite *sp,
                           const struct gfx_image *image);
 

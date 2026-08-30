@@ -10,6 +10,7 @@
 #ifndef LOG_H
 #define LOG_H
 
+#include <utilities/types.h>
 #include <stdint.h>
 #include <stdarg.h>
 #include <devices/serial.h>
@@ -39,19 +40,19 @@ enum log_type {
  * to be populated at a time; the `has_*` flags pick which one renders. */
 struct log_entry {
     char           message[256];
-    uint64_t       timestamp;
+    u64       timestamp;
     enum log_level level;
     enum log_type  type;
-    uint8_t        has_string;
-    uint8_t        has_hex;
-    uint8_t        has_int;
-    uint64_t       hex_value;
+    u8        has_string;
+    u8        has_hex;
+    u8        has_int;
+    u64       hex_value;
     const char    *string_value;
     int64          int_value;
 };
 
 /* Plain message , no payload. */
-void log_write(const char *message, uint8_t raw_type, uint8_t raw_level);
+void log_write(const char *message, u8 raw_type, u8 raw_level);
 
 /* Rich record. Caller fills in `entry` (including has_* flags). */
 void log_write_entry(struct log_entry *entry);
@@ -59,19 +60,19 @@ void log_write_entry(struct log_entry *entry);
 /* CPU exception logger , pretty-prints the IDT vector, name, error code,
  * and faulting RIP. Page faults are serial-only because framebuffer output
  * may itself be the failing mapping. */
-void log_write_exception(uint64_t int_num, const char *name,
-                         uint64_t err_code, uint64_t rip);
+void log_write_exception(u64 int_num, const char *name,
+                         u64 err_code, u64 rip);
 
 /* Convenience wrappers that produce a single-payload entry. */
-void log_write_hex(const char *message, uint64_t value,
-                   uint8_t raw_type, uint8_t raw_level);
+void log_write_hex(const char *message, u64 value,
+                   u8 raw_type, u8 raw_level);
 void log_write_int(const char *message, int64_t value,
-                   uint8_t raw_type, uint8_t raw_level);
+                   u8 raw_type, u8 raw_level);
 void log_write_string(const char *message, const char *val,
-                      uint8_t raw_type, uint8_t raw_level);
+                      u8 raw_type, u8 raw_level);
 
 /* printf-style logging */
-void log_write_fmt(uint8_t raw_type, uint8_t raw_level, const char *fmt, ...);
-void log_write_vfmt(uint8_t raw_type, uint8_t raw_level, const char *fmt, va_list args);
+void log_write_fmt(u8 raw_type, u8 raw_level, const char *fmt, ...);
+void log_write_vfmt(u8 raw_type, u8 raw_level, const char *fmt, va_list args);
 
 #endif

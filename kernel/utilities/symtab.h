@@ -1,7 +1,7 @@
 #ifndef TOS_UTILITIES_SYMTAB_H
 #define TOS_UTILITIES_SYMTAB_H
 
-#include "utilities/types.h"
+#include <utilities/types.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -16,7 +16,7 @@
  * any load-address changes without regeneration of individual entries.
  */
 struct ksym {
-    uint64_t offset;
+    u64 offset;
     const char *name;
 };
 
@@ -28,7 +28,7 @@ struct ksym {
  * null table. Pass two links the generated definitions in and they win.
  */
 extern const struct ksym __ksymtab[] WEAK;
-extern const size_t __ksymtab_count WEAK;
+extern const usize __ksymtab_count WEAK;
 
 /*
  * Resolve a virtual address to the nearest preceding function symbol.
@@ -38,6 +38,6 @@ extern const size_t __ksymtab_count WEAK;
  * On success, *offset_out receives the byte offset from the symbol's
  * entry point to the queried address.
  */
-const char *symtab_resolve(uint64_t address, uint64_t *offset_out);
+const char *symtab_resolve(u64 address, u64 *offset_out);
 
 #endif /* TOS_UTILITIES_SYMTAB_H */

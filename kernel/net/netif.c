@@ -16,9 +16,9 @@ void netif_register(const struct netif *nif) {
 
 struct netif *netif_get(void) { return registered ? &interface : (void *)0; }
 
-void netif_set_ipv4(const uint8_t ipv4[IPV4_ALEN],
-                    const uint8_t netmask[IPV4_ALEN],
-                    const uint8_t gateway[IPV4_ALEN]) {
+void netif_set_ipv4(const u8 ipv4[IPV4_ALEN],
+                    const u8 netmask[IPV4_ALEN],
+                    const u8 gateway[IPV4_ALEN]) {
   if (!registered)
     return;
   if (ipv4)
@@ -29,7 +29,7 @@ void netif_set_ipv4(const uint8_t ipv4[IPV4_ALEN],
     memcpy(interface.gateway, gateway, IPV4_ALEN);
 }
 
-int netif_tx(const void *frame, uint16_t len) {
+int netif_tx(const void *frame, u16 len) {
   if (!registered || !frame || len == 0)
     return -1;
   return interface.tx(interface.driver_data, frame, len);

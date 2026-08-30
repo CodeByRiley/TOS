@@ -70,8 +70,8 @@ static void chan_inject(struct tty_chan *ch, char c) {
     }
 }
 
-static size_t chan_read(struct tty_chan *ch, char *buf, size_t max) {
-    size_t count = 0;
+static usize chan_read(struct tty_chan *ch, char *buf, usize max) {
+    usize count = 0;
     while (count < max && ch->in_tail != ch->in_head) {
         buf[count++] = ch->in[ch->in_tail];
         ch->in_tail = (ch->in_tail + 1) % TTY_INPUT_SIZE;
@@ -89,8 +89,8 @@ static void chan_drain_push(struct tty_chan *ch, char c) {
     ch->drain_head = next;
 }
 
-static size_t chan_drain(struct tty_chan *ch, char *out, size_t max) {
-    size_t n = 0;
+static usize chan_drain(struct tty_chan *ch, char *out, usize max) {
+    usize n = 0;
     while (n < max && ch->drain_tail != ch->drain_head) {
         out[n++] = ch->drain[ch->drain_tail];
         ch->drain_tail = (ch->drain_tail + 1) & DRAIN_RING_MASK;
@@ -100,7 +100,7 @@ static size_t chan_drain(struct tty_chan *ch, char *out, size_t max) {
 
 void tty_inject_input(char c) { tty_inject_input_ch(TTY_KERNEL, c); }
 
-size_t tty_read_input(char *buf, size_t max) {
+usize tty_read_input(char *buf, usize max) {
     return tty_read_input_ch(TTY_KERNEL, buf, max);
 }
 
@@ -110,13 +110,13 @@ void tty_inject_input_ch(int idx, char c) {
     chan_inject(&chans[idx], c);
 }
 
-size_t tty_read_input_ch(int idx, char *buf, size_t max) {
+usize tty_read_input_ch(int idx, char *buf, usize max) {
     if (!chan_valid(idx) || !buf)
         return 0;
     return chan_read(&chans[idx], buf, max);
 }
 
-size_t tty_drain_ch(int idx, char *out, size_t max) {
+usize tty_drain_ch(int idx, char *out, usize max) {
     if (!chan_valid(idx) || !out)
         return 0;
     return chan_drain(&chans[idx], out, max);
@@ -175,12 +175,12 @@ static int     dirty;
 static int     active = 1;
 static int     ready  = 0;
 static int     px_w, px_h, stride;
-static uint32_t *fb;
+static u32 *fb;
 
 /* Pre-expanded glyph row: byte → 8 pixels of TTY_FG/TTY_BG. Built once in
  * tty_init from TTY_FG/TTY_BG. 8 KiB BSS. Per-row glyph draw becomes a
  * single memcpy(32 B) instead of 8 conditional pixel writes. */
-static uint32_t glyph_lut[256][FONT_GLYPH_W];
+static u32 glyph_lut[256][FONT_GLYPH_W];
 
 /* Modify cell_width and cell_height to check for TTF */
 static int cell_width(void) {
@@ -213,8 +213,8 @@ static void draw_glyph(int gx, int gy, char c) {
          * background write, so an overwritten or erased cell would otherwise
          * keep the old glyph. */
         for (int y = 0; y < ch; y++) {
-            uint32_t *row = (uint32_t*)((uint8_t*)fb +
-                                        (uint32_t)(py + y) * (uint32_t)stride) + px;
+            u32 *row = (u32*)((u8*)fb +
+                                        (u32)(py + y) * (u32)stride) + px;
             for (int i = 0; i < cw; i++) row[i] = TTY_BG;
         }
 
@@ -233,16 +233,16 @@ static void draw_glyph(int gx, int gy, char c) {
         return;
     }
 
-    const uint8_t *glyph;
-    static const uint8_t blank[FONT_GLYPH_H] = {0};
+    const u8 *glyph;
+    static const u8 blank[FONT_GLYPH_H] = {0};
     if (c < FONT_FIRST || c > FONT_LAST) glyph = blank;
     else                                 glyph = font8x8[(int)c - FONT_FIRST];
 
     if (scale == 1) {
-        uint8_t *fbp = (uint8_t*)fb + (uint32_t)py * (uint32_t)stride;
+        u8 *fbp = (u8*)fb + (u32)py * (u32)stride;
         for (int r = 0; r < FONT_GLYPH_H; r++) {
-            uint32_t *row = (uint32_t*)fbp + px;
-            memcpy(row, glyph_lut[glyph[r]], FONT_GLYPH_W * sizeof(uint32_t));
+            u32 *row = (u32*)fbp + px;
+            memcpy(row, glyph_lut[glyph[r]], FONT_GLYPH_W * sizeof(u32));
             fbp += stride;
         }
         return;
@@ -251,10 +251,10 @@ static void draw_glyph(int gx, int gy, char c) {
     for (int r = 0; r < FONT_GLYPH_H; r++) {
         for (int sy = 0; sy < scale; sy++) {
             int y = py + r * scale + sy;
-            uint32_t *row = (uint32_t*)((uint8_t*)fb +
-                                       (uint32_t)y * (uint32_t)stride) + px;
+            u32 *row = (u32*)((u8*)fb +
+                                       (u32)y * (u32)stride) + px;
             for (int cidx = 0; cidx < FONT_GLYPH_W; cidx++) {
-                uint32_t color = ((glyph[r] >> cidx) & 1) ? TTY_FG : TTY_BG;
+                u32 color = ((glyph[r] >> cidx) & 1) ? TTY_FG : TTY_BG;
                 for (int sx = 0; sx < scale; sx++)
                     row[cidx * scale + sx] = color;
             }
@@ -276,8 +276,8 @@ static void render(void) {
 }
 
 static void scroll_one(void) {
-    memmove(grid, grid + cols, (size_t)(rows - 1) * (size_t)cols);
-    memset(grid + (rows - 1) * cols, 0, (size_t)cols);
+    memmove(grid, grid + cols, (usize)(rows - 1) * (usize)cols);
+    memset(grid + (rows - 1) * cols, 0, (usize)cols);
 }
 
 static void newline(void) {
@@ -305,9 +305,9 @@ static int reflow_grid(int new_cols, int new_rows) {
     if (new_cols <= 0 || new_rows <= 0) return -1;
     if (new_cols == cols && new_rows == rows) return 0;
 
-    char *new_grid = (char*)kmalloc((size_t)new_cols * (size_t)new_rows);
+    char *new_grid = (char*)kmalloc((usize)new_cols * (usize)new_rows);
     if (!new_grid) return -1;
-    memset(new_grid, 0, (size_t)new_cols * (size_t)new_rows);
+    memset(new_grid, 0, (usize)new_cols * (usize)new_rows);
 
     int new_cx = 0;
     int new_cy = 0;
@@ -319,7 +319,7 @@ static int reflow_grid(int new_cols, int new_rows) {
         for (int r = 0; r < copy_rows; r++) {
             memcpy(new_grid + (dst_y0 + r) * new_cols,
                    grid     + (src_y0 + r) * cols,
-                   (size_t)copy_cols);
+                   (usize)copy_cols);
         }
         new_cx = cx < new_cols ? cx : new_cols - 1;
         new_cy = cy - src_y0 + dst_y0;
@@ -353,12 +353,12 @@ void tty_init(void) {
         log_write("tty: invalid grid dims", KERNEL, LOG_ERROR);
         return;
     }
-    grid = (char*)kmalloc((size_t)cols * (size_t)rows);
+    grid = (char*)kmalloc((usize)cols * (usize)rows);
     if (!grid) {
         log_write("tty: grid kmalloc failed", KERNEL, LOG_ERROR);
         return;
     }
-    memset(grid, 0, (size_t)cols * (size_t)rows);
+    memset(grid, 0, (usize)cols * (usize)rows);
     build_glyph_lut();
     cx = cy = 0;
     dirty = 1;
@@ -372,7 +372,7 @@ void tty_resize(void) {
     int new_px_w   = (int)framebuffer_width();
     int new_px_h   = (int)framebuffer_height();
     int new_stride = (int)framebuffer_pitch();
-    uint32_t *new_fb = framebuffer_buffer();
+    u32 *new_fb = framebuffer_buffer();
 
     int new_cols = (new_px_w - 2 * TTY_PAD) / cell_width();
     int new_rows = (new_px_h - 2 * TTY_PAD) / cell_height();
@@ -437,14 +437,14 @@ void tty_putc(char c) {
     dirty = 1;
 }
 
-void tty_write(const char *buf, size_t n) {
+void tty_write(const char *buf, usize n) {
     if (!buf) return;
-    for (size_t i = 0; i < n; i++) tty_putc(buf[i]);
+    for (usize i = 0; i < n; i++) tty_putc(buf[i]);
 }
 
 void tty_clear(void) {
     if (!ready) return;
-    memset(grid, 0, (size_t)cols * (size_t)rows);
+    memset(grid, 0, (usize)cols * (usize)rows);
     cx = cy = 0;
     dirty = 1;
     /* Also notify drain consumers (winman) so their mirror clears too. */
@@ -453,7 +453,7 @@ void tty_clear(void) {
 
 int tty_push(void) {
     if (!ready) return -1;
-    size_t bytes = (size_t)cols * (size_t)rows;
+    usize bytes = (usize)cols * (usize)rows;
     if (saved_grid) { kfree(saved_grid); saved_grid = 0; }
     saved_grid = (char*)kmalloc(bytes);
     if (!saved_grid) return -1;
@@ -469,7 +469,7 @@ int tty_push(void) {
 
 int tty_pop(void) {
     if (!ready || !saved_grid) return -1;
-    size_t bytes = (size_t)cols * (size_t)rows;
+    usize bytes = (usize)cols * (usize)rows;
     memcpy(grid, saved_grid, bytes);
     cx = saved_cx;
     cy = saved_cy;
@@ -491,7 +491,7 @@ void tty_set_active(int on) {
 
 int tty_is_active(void) { return active; }
 
-size_t tty_drain(char *out, size_t max) {
+usize tty_drain(char *out, usize max) {
     return tty_drain_ch(TTY_KERNEL, out, max);
 }
 
@@ -502,7 +502,7 @@ size_t tty_drain(char *out, size_t max) {
  * control codes are exactly what tells winman to clear, save, restore or
  * rescale the console window mirroring them. */
 
-void tty_write_ch(int idx, const char *buf, size_t n) {
+void tty_write_ch(int idx, const char *buf, usize n) {
     if (!buf)
         return;
     if (idx == TTY_KERNEL) {
@@ -511,7 +511,7 @@ void tty_write_ch(int idx, const char *buf, size_t n) {
     }
     if (!chan_valid(idx))
         return;
-    for (size_t i = 0; i < n; i++)
+    for (usize i = 0; i < n; i++)
         chan_drain_push(&chans[idx], buf[i]);
 }
 
@@ -565,9 +565,9 @@ int tty_zoom_ch(int idx, int delta) {
  * the backbuffer to the scanout when we drew something. In MB2 mode both
  * calls degrade to no-ops, so the thread behaves identically there. */
 void tty_thread_entry(void) {
-    uint32_t seen_resize_generation = framebuffer_resize_generation();
+    u32 seen_resize_generation = framebuffer_resize_generation();
     for (;;) {
-        uint32_t resize_generation = framebuffer_resize_generation();
+        u32 resize_generation = framebuffer_resize_generation();
         if (resize_generation != seen_resize_generation) {
             seen_resize_generation = resize_generation;
             tty_resize();

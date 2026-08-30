@@ -22,14 +22,14 @@
 
 /* QEMU's slirp gateway is 10.0.2.2 and it serves a /24. Static addressing
  * until DHCP lands, at which point netif_set_ipv4 replaces all three. */
-static const uint8_t e1000_ipv4_addr[IPV4_ALEN] = {10, 0, 2, 30};
-static const uint8_t e1000_ipv4_mask[IPV4_ALEN] = {255, 255, 255, 0};
-static const uint8_t e1000_ipv4_gateway[IPV4_ALEN] = {10, 0, 2, 2};
-static uint64_t next_mmio_virt = MMIO_VIRT_BASE;
+static const u8 e1000_ipv4_addr[IPV4_ALEN] = {10, 0, 2, 30};
+static const u8 e1000_ipv4_mask[IPV4_ALEN] = {255, 255, 255, 0};
+static const u8 e1000_ipv4_gateway[IPV4_ALEN] = {10, 0, 2, 2};
+static u64 next_mmio_virt = MMIO_VIRT_BASE;
 
-static int e1000_wait_clear(struct e1000_dev *nic, uint32_t reg,
-                            uint32_t mask) {
-  for (uint32_t i = 0; i < E1000_POLL_LIMIT; i++) {
+static int e1000_wait_clear(struct e1000_dev *nic, u32 reg,
+                            u32 mask) {
+  for (u32 i = 0; i < E1000_POLL_LIMIT; i++) {
     if ((E1000_READ(nic, reg) & mask) == 0)
       return 0;
   }
@@ -37,15 +37,15 @@ static int e1000_wait_clear(struct e1000_dev *nic, uint32_t reg,
 }
 
 
-static int e1000_eeprom_read(struct e1000_dev *nic, uint8_t word_offset,
-                             uint16_t *out) {
-  uint32_t eerd = ((uint32_t)word_offset << 8) | EERD_START;
+static int e1000_eeprom_read(struct e1000_dev *nic, u8 word_offset,
+                             u16 *out) {
+  u32 eerd = ((u32)word_offset << 8) | EERD_START;
   E1000_WRITE(nic, REG_EERD, eerd);
 
-  for (uint32_t i = 0; i < E1000_POLL_LIMIT; i++) {
-    uint32_t value = E1000_READ(nic, REG_EERD);
+  for (u32 i = 0; i < E1000_POLL_LIMIT; i++) {
+    u32 value = E1000_READ(nic, REG_EERD);
     if (value & EERD_DONE) {
-      *out = (uint16_t)((value >> 16) & 0xFFFF);
+      *out = (u16)((value >> 16) & 0xFFFF);
       return 0;
     }
   }
@@ -54,37 +54,37 @@ static int e1000_eeprom_read(struct e1000_dev *nic, uint8_t word_offset,
 }
 
 static void e1000_read_mac_from_registers(struct e1000_dev *nic) {
-  uint32_t ral = E1000_READ(nic, REG_RAL);
-  uint32_t rah = E1000_READ(nic, REG_RAH);
-  nic->mac_addr[0] = (uint8_t)(ral & 0xFF);
-  nic->mac_addr[1] = (uint8_t)((ral >> 8) & 0xFF);
-  nic->mac_addr[2] = (uint8_t)((ral >> 16) & 0xFF);
-  nic->mac_addr[3] = (uint8_t)((ral >> 24) & 0xFF);
-  nic->mac_addr[4] = (uint8_t)(rah & 0xFF);
-  nic->mac_addr[5] = (uint8_t)((rah >> 8) & 0xFF);
+  u32 ral = E1000_READ(nic, REG_RAL);
+  u32 rah = E1000_READ(nic, REG_RAH);
+  nic->mac_addr[0] = (u8)(ral & 0xFF);
+  nic->mac_addr[1] = (u8)((ral >> 8) & 0xFF);
+  nic->mac_addr[2] = (u8)((ral >> 16) & 0xFF);
+  nic->mac_addr[3] = (u8)((ral >> 24) & 0xFF);
+  nic->mac_addr[4] = (u8)(rah & 0xFF);
+  nic->mac_addr[5] = (u8)((rah >> 8) & 0xFF);
 }
 
 static int e1000_read_mac_address(struct e1000_dev *nic) {
-  uint16_t word0, word1, word2;
+  u16 word0, word1, word2;
 
   if (e1000_eeprom_read(nic, 0, &word0) == 0 &&
       e1000_eeprom_read(nic, 1, &word1) == 0 &&
       e1000_eeprom_read(nic, 2, &word2) == 0) {
-    nic->mac_addr[0] = (uint8_t)(word0 & 0xFF);
-    nic->mac_addr[1] = (uint8_t)(word0 >> 8);
-    nic->mac_addr[2] = (uint8_t)(word1 & 0xFF);
-    nic->mac_addr[3] = (uint8_t)(word1 >> 8);
-    nic->mac_addr[4] = (uint8_t)(word2 & 0xFF);
-    nic->mac_addr[5] = (uint8_t)(word2 >> 8);
+    nic->mac_addr[0] = (u8)(word0 & 0xFF);
+    nic->mac_addr[1] = (u8)(word0 >> 8);
+    nic->mac_addr[2] = (u8)(word1 & 0xFF);
+    nic->mac_addr[3] = (u8)(word1 >> 8);
+    nic->mac_addr[4] = (u8)(word2 & 0xFF);
+    nic->mac_addr[5] = (u8)(word2 >> 8);
   } else {
     log_write("e1000: EEPROM read timed out, using receive address", KERNEL,
               LOG_WARN);
     e1000_read_mac_from_registers(nic);
   }
 
-  uint32_t mac_low = nic->mac_addr[0] | (nic->mac_addr[1] << 8) |
+  u32 mac_low = nic->mac_addr[0] | (nic->mac_addr[1] << 8) |
                      (nic->mac_addr[2] << 16) | (nic->mac_addr[3] << 24);
-  uint32_t mac_high = nic->mac_addr[4] | (nic->mac_addr[5] << 8);
+  u32 mac_high = nic->mac_addr[4] | (nic->mac_addr[5] << 8);
 
   E1000_WRITE(nic, 0x5400, mac_low);
   E1000_WRITE(nic, 0x5404, mac_high | (1 << 31)); // Set AV bit
@@ -96,7 +96,7 @@ static int e1000_read_mac_address(struct e1000_dev *nic) {
 }
 
 static int e1000_alloc_rx_ring(struct e1000_dev *nic) {
-  uint64_t phys = pmm_alloc_frame();
+  u64 phys = pmm_alloc_frame();
   if (!phys)
     return -1;
 
@@ -109,7 +109,7 @@ static int e1000_alloc_rx_ring(struct e1000_dev *nic) {
 static int e1000_alloc_rx_buffers(struct e1000_dev *nic) {
   nic->rx_current = 0;
   for (int i = 0; i < E1000_NUM_RX_DESC; i++) {
-    uint64_t phys = pmm_alloc_frame();
+    u64 phys = pmm_alloc_frame();
     if (!phys)
       return -1;
 
@@ -138,7 +138,7 @@ static void e1000_setup_rx_registers(struct e1000_dev *nic) {
 }
 
 static int e1000_alloc_tx_ring(struct e1000_dev *nic) {
-  uint64_t phys = pmm_alloc_frame();
+  u64 phys = pmm_alloc_frame();
   if (!phys)
     return -1;
 
@@ -148,7 +148,7 @@ static int e1000_alloc_tx_ring(struct e1000_dev *nic) {
   nic->tx_current = 0;
 
   for (int i = 0; i < E1000_NUM_TX_DESC; i++) {
-    uint64_t buf_phys = pmm_alloc_frame();
+    u64 buf_phys = pmm_alloc_frame();
     if (!buf_phys)
       return -1;
 
@@ -179,7 +179,7 @@ static void e1000_setup_tx_registers(struct e1000_dev *nic) {
 }
 
 static void e1000_enable_bus_master(const struct pci_device *pci) {
-  uint16_t cmd = pci_read16(pci->addr, PCI_CFG_COMMAND);
+  u16 cmd = pci_read16(pci->addr, PCI_CFG_COMMAND);
   cmd |= PCI_CMD_MEM | PCI_CMD_BUS_MASTER;
   pci_write16(pci->addr, PCI_CFG_COMMAND, cmd);
 }
@@ -187,22 +187,22 @@ static void e1000_enable_bus_master(const struct pci_device *pci) {
 /* netif tx callback. Must not block: reached from the driver poll task
  * today and from the IRQ handler once that path lands. A full ring is
  * reported as failure rather than spun on. */
-static int e1000_tx(void *driver_data, const void *frame, uint16_t len) {
+static int e1000_tx(void *driver_data, const void *frame, u16 len) {
   struct e1000_dev *nic = (struct e1000_dev *)driver_data;
   if (!nic || !frame || len > E1000_FRAME_MAX)
     return -1;
 
-  uint32_t idx = nic->tx_current;
+  u32 idx = nic->tx_current;
   struct e1000_tx_desc *desc = &nic->tx_ring_virt[idx];
   if (!(desc->status & TXD_STATUS_DD)) {
     log_write("e1000: TX ring full! Cannot send reply", KERNEL, LOG_ERROR);
     return -1;
   }
   log_write("e1000: Forwarding TX packet!", KERNEL, LOG_INFO);
-  uint16_t wire_len = len < E1000_FRAME_MIN ? E1000_FRAME_MIN : len;
+  u16 wire_len = len < E1000_FRAME_MIN ? E1000_FRAME_MIN : len;
   memcpy(nic->tx_buffers[idx], frame, len);
   if (wire_len > len) {
-    memset((uint8_t *)nic->tx_buffers[idx] + len, 0, wire_len - len);
+    memset((u8 *)nic->tx_buffers[idx] + len, 0, wire_len - len);
   }
 
   desc->addr = nic->tx_buffer_phys[idx];
@@ -296,8 +296,8 @@ static int e1000_init_hardware(struct e1000_dev *nic) {
 
 /* STATUS bit 1 is Link Up; bits 7:6 encode 10 / 100 / 1000 Mb/s. */
 static void e1000_report_link(struct e1000_dev *nic) {
-  uint32_t status = E1000_READ(nic, REG_STATUS);
-  static const uint32_t speeds[4] = {10, 100, 1000, 1000};
+  u32 status = E1000_READ(nic, REG_STATUS);
+  static const u32 speeds[4] = {10, 100, 1000, 1000};
   netmon_set_link((status & 0x2u) != 0, speeds[(status >> 6) & 0x3u]);
 }
 
@@ -320,12 +320,12 @@ static int e1000_poll_rx(struct device *dev) {
       break;
 
     // We have a valid packet!
-    uint16_t packet_len = desc->len;
+    u16 packet_len = desc->len;
 
     /* tests/netmon_test.py counts this line to check the RX ring keeps
      * receiving past the first frame. One line per frame, not a flood -
      * silence it and that test reports a wedged ring that is fine. */
-    log_write_fmt(KERNEL, LOG_INFO, "[e1000] Received packet! Length: %d bytes\n", packet_len);
+    log_write_fmt(KERNEL, LOG_INFO, "[e1000] Received packet! Length: %d bytes", packet_len);
     // log_write_fmt(KERNEL, LOG_INFO, "        rx_current: %d, rx_ring_phys: %p, rx_buffers[rx_current]: %p\n", nic->rx_current, nic->rx_ring_phys, nic->rx_buffers[nic->rx_current]);
 
     netmon_record(NETMON_DIR_RX, nic->rx_buffers[nic->rx_current],
@@ -336,7 +336,7 @@ static int e1000_poll_rx(struct device *dev) {
     log_write_fmt(KERNEL, LOG_INFO, "[e1000] Packet length: %d expecting 1514", packet_len);
     if (packet_len <= E1000_FRAME_MAX) {
       log_write_fmt(KERNEL, LOG_INFO, "[e1000] Packet length is less than max, we accept", packet_len);
-      eth_input((const uint8_t *)nic->rx_buffers[nic->rx_current], packet_len);
+      eth_input((const u8 *)nic->rx_buffers[nic->rx_current], packet_len);
     } else {
       log_write_fmt(KERNEL, LOG_WARN, "[e1000] Dropping oversized frame of length %d", packet_len);
     }
@@ -351,7 +351,7 @@ static int e1000_poll_rx(struct device *dev) {
     // very first frame, so the NIC decides it has nowhere to put anything
     // and silently drops every packet from then on.
     desc->status = 0; // Clear DD bit
-    uint32_t consumed = nic->rx_current;
+    u32 consumed = nic->rx_current;
     nic->rx_current = (nic->rx_current + 1) % E1000_NUM_RX_DESC;
     E1000_WRITE(nic, REG_RXDESCTAIL, consumed);
     handled++;
@@ -395,7 +395,7 @@ static int e1000_probe(struct device *dev) {
     }
   }
 
-  nic->mmio_base = (volatile uint8_t *)mmio_virt;
+  nic->mmio_base = (volatile u8 *)mmio_virt;
   nic->bus = dev->bus_info.pci.addr.bus;
   nic->device = dev->bus_info.pci.addr.dev;
   nic->function = dev->bus_info.pci.addr.fn;

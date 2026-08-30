@@ -57,7 +57,7 @@ int ttf_load(struct ttf_font *font, const char *path) {
         return -1;
     }
 
-    if (fread(font->file_buffer, 1, (size_t)size, f) != (size_t)size) {
+    if (fread(font->file_buffer, 1, (usize)size, f) != (usize)size) {
         kfree(font->file_buffer);
         font->file_buffer = NULL;
         fclose(f);

@@ -10,6 +10,7 @@
 #ifndef VMM_H
 #define VMM_H
 
+#include <utilities/types.h>
 #include <stdint.h>
 
 /* Page table entry (all four levels share this layout) */
@@ -53,24 +54,24 @@
 void     vmm_init(void);
 
 /* Operate on the boot kernel_pml4. */
-int      vmm_map(uint64_t virt, uint64_t phys, uint64_t flags);
-int      vmm_unmap(uint64_t virt);
-uint64_t vmm_translate(uint64_t virt);   /* returns 0 if unmapped */
+int      vmm_map(u64 virt, u64 phys, u64 flags);
+int      vmm_unmap(u64 virt);
+u64 vmm_translate(u64 virt);   /* returns 0 if unmapped */
 
 /* Per-PML4 variants. Operate on the supplied PML4 as an HHDM pointer;
  * physical addresses remain physical in the entries themselves.
  * The non-_in versions are wrappers that pass kernel_pml4. */
-int      vmm_map_in(uint64_t *pml4, uint64_t virt, uint64_t phys, uint64_t flags);
-int      vmm_unmap_in(uint64_t *pml4, uint64_t virt);
-uint64_t vmm_translate_in(uint64_t *pml4, uint64_t virt);
+int      vmm_map_in(u64 *pml4, u64 virt, u64 phys, u64 flags);
+int      vmm_unmap_in(u64 *pml4, u64 virt);
+u64 vmm_translate_in(u64 *pml4, u64 virt);
 
 /* Change permissions on an already-mapped page, keeping its frame and its
  * VMM_SHARED ownership bit. Returns -1 if the page is not mapped. */
-int      vmm_protect_in(uint64_t *pml4, uint64_t virt, uint64_t flags);
+int      vmm_protect_in(u64 *pml4, u64 virt, u64 flags);
 
 
 /* Raw leaf PTE (frame + flags), or 0 if unmapped. Callers mask with
  * ~0xFFF for the frame and test VMM_* for the flags. */
-uint64_t vmm_entry_in(uint64_t *pml4, uint64_t virt);
+u64 vmm_entry_in(u64 *pml4, u64 virt);
 
 #endif

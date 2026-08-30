@@ -34,20 +34,20 @@
 #define IPV4_DEFAULT_TTL 64
 
 struct ipv4_hdr {
-  uint8_t version_ihl;
-  uint8_t tos;
-  uint16_t total_length;
-  uint16_t id;
-  uint16_t flags_fragment;
-  uint8_t ttl;
-  uint8_t protocol;
-  uint16_t checksum;
-  uint8_t src[IPV4_ALEN];
-  uint8_t dst[IPV4_ALEN];
+  u8 version_ihl;
+  u8 tos;
+  u16 total_length;
+  u16 id;
+  u16 flags_fragment;
+  u8 ttl;
+  u8 protocol;
+  u16 checksum;
+  u8 src[IPV4_ALEN];
+  u8 dst[IPV4_ALEN];
 } PACKED;
 
 /* Called by eth_input for ETH_TYPE_IPV4 frames. */
-void ipv4_input(const struct eth_hdr *eth, const uint8_t *packet, uint16_t len);
+void ipv4_input(const struct eth_hdr *eth, const u8 *packet, u16 len);
 
 /* Fill in the IPv4 header of a frame whose payload already sits at
  * frame + IPV4_HEADROOM, then resolve and transmit.
@@ -55,11 +55,11 @@ void ipv4_input(const struct eth_hdr *eth, const uint8_t *packet, uint16_t len);
  *   1  queued behind an ARP request
  *  -1  no interface, no route, or payload over the MTU
  * `frame` must be writable for at least IPV4_HEADROOM + payload_len. */
-int ipv4_output_framed(uint8_t *frame, const uint8_t dst[IPV4_ALEN],
-                       uint8_t protocol, uint16_t payload_len);
+int ipv4_output_framed(u8 *frame, const u8 dst[IPV4_ALEN],
+                       u8 protocol, u16 payload_len);
 
 /* Copying convenience wrapper for callers without headroom. */
-int ipv4_output(const uint8_t dst[IPV4_ALEN], uint8_t protocol,
-                const void *payload, uint16_t payload_len);
+int ipv4_output(const u8 dst[IPV4_ALEN], u8 protocol,
+                const void *payload, u16 payload_len);
 
 #endif /* NET_IPV4_H */

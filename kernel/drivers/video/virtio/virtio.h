@@ -65,49 +65,49 @@
 #define VIRTQ_USED_F_NO_NOTIFY      1
 
 struct virtq_desc {
-    uint64_t addr;     /* guest-physical */
-    uint32_t len;
-    uint16_t flags;
-    uint16_t next;
+    u64 addr;     /* guest-physical */
+    u32 len;
+    u16 flags;
+    u16 next;
 } PACKED;
 
 struct virtq_avail {
-    uint16_t flags;
-    uint16_t idx;
-    uint16_t ring[];   /* size = qsize; followed by optional used_event u16 */
+    u16 flags;
+    u16 idx;
+    u16 ring[];   /* size = qsize; followed by optional used_event u16 */
 } PACKED;
 
 struct virtq_used_elem {
-    uint32_t id;
-    uint32_t len;
+    u32 id;
+    u32 len;
 } PACKED;
 
 struct virtq_used {
-    uint16_t flags;
-    uint16_t idx;
+    u16 flags;
+    u16 idx;
     struct virtq_used_elem ring[];   /* size = qsize; followed by avail_event */
 } PACKED;
 
 /* virtio 1.1, 4.1.4.3 , common configuration structure. Field offsets
  * and widths are part of the spec; do not reorder. */
 struct virtio_pci_common_cfg {
-    uint32_t device_feature_select;     /* 0x00 RW */
-    uint32_t device_feature;             /* 0x04 RO */
-    uint32_t driver_feature_select;      /* 0x08 RW */
-    uint32_t driver_feature;             /* 0x0C RW */
-    uint16_t msix_config;                /* 0x10 RW */
-    uint16_t num_queues;                 /* 0x12 RO */
-    uint8_t  device_status;              /* 0x14 RW */
-    uint8_t  config_generation;          /* 0x15 RO */
+    u32 device_feature_select;     /* 0x00 RW */
+    u32 device_feature;             /* 0x04 RO */
+    u32 driver_feature_select;      /* 0x08 RW */
+    u32 driver_feature;             /* 0x0C RW */
+    u16 msix_config;                /* 0x10 RW */
+    u16 num_queues;                 /* 0x12 RO */
+    u8  device_status;              /* 0x14 RW */
+    u8  config_generation;          /* 0x15 RO */
 
-    uint16_t queue_select;               /* 0x16 RW */
-    uint16_t queue_size;                 /* 0x18 RW */
-    uint16_t queue_msix_vector;          /* 0x1A RW */
-    uint16_t queue_enable;               /* 0x1C RW */
-    uint16_t queue_notify_off;           /* 0x1E RO */
-    uint64_t queue_desc;                 /* 0x20 RW */
-    uint64_t queue_driver;               /* 0x28 RW */
-    uint64_t queue_device;               /* 0x30 RW */
+    u16 queue_select;               /* 0x16 RW */
+    u16 queue_size;                 /* 0x18 RW */
+    u16 queue_msix_vector;          /* 0x1A RW */
+    u16 queue_enable;               /* 0x1C RW */
+    u16 queue_notify_off;           /* 0x1E RO */
+    u64 queue_desc;                 /* 0x20 RW */
+    u64 queue_driver;               /* 0x28 RW */
+    u64 queue_device;               /* 0x30 RW */
 } PACKED;
 
 /* Driver-side view of a virtio device after probe + cap parse. */
@@ -115,35 +115,35 @@ struct virtio_dev {
     void *pci;                          /* opaque pci_device*              */
 
     volatile struct virtio_pci_common_cfg *common;
-    volatile uint8_t  *isr;
-    volatile uint8_t  *notify_base;
-    uint32_t           notify_off_multiplier;
-    volatile uint8_t  *device_cfg;
+    volatile u8  *isr;
+    volatile u8  *notify_base;
+    u32           notify_off_multiplier;
+    volatile u8  *device_cfg;
 
-    uint16_t num_queues;
+    u16 num_queues;
 };
 
 /* One virtqueue + its backing pages. */
 struct virtq {
-    uint16_t qidx;
-    uint16_t qsize;
-    uint16_t notify_off;
-    uint16_t free_head;
-    uint16_t num_free;
-    uint16_t last_used_idx;
+    u16 qidx;
+    u16 qsize;
+    u16 notify_off;
+    u16 free_head;
+    u16 num_free;
+    u16 last_used_idx;
 
     volatile struct virtq_desc  *desc;
     volatile struct virtq_avail *avail;
     volatile struct virtq_used  *used;
 
-    uint64_t desc_phys;
-    uint64_t avail_phys;
-    uint64_t used_phys;
+    u64 desc_phys;
+    u64 avail_phys;
+    u64 used_phys;
 
     /* Backing pages (one phys page per ring). */
-    uint64_t desc_page;
-    uint64_t avail_page;
-    uint64_t used_page;
+    u64 desc_page;
+    u64 avail_page;
+    u64 used_page;
 };
 
 /* Probe a PCI device, parse virtio caps, map config regions, fill *out.
@@ -151,14 +151,14 @@ struct virtq {
 int  virtio_pci_init(void *pci_device_ptr, struct virtio_dev *out);
 
 /* Reset the device, set ACKNOWLEDGE | DRIVER, negotiate features. */
-int  virtio_negotiate(struct virtio_dev *dev, uint64_t wanted);
+int  virtio_negotiate(struct virtio_dev *dev, u64 wanted);
 
 /* Final DRIVER_OK after queues are set up. */
 void virtio_driver_ok(struct virtio_dev *dev);
 
 /* Allocate + register one virtqueue. qsize is requested; the device may
  * clamp down. */
-int  virtio_queue_setup(struct virtio_dev *dev, uint16_t qidx, struct virtq *vq);
+int  virtio_queue_setup(struct virtio_dev *dev, u16 qidx, struct virtq *vq);
 
 /* Mark the queue enabled in the device after virtio_queue_setup. */
 void virtio_queue_enable(struct virtio_dev *dev, struct virtq *vq);
@@ -168,14 +168,14 @@ void virtio_queue_notify(struct virtio_dev *dev, struct virtq *vq);
 
 /* Descriptor-pool helpers. virtq_alloc_desc returns desc index, or
  * 0xFFFF if empty. */
-uint16_t virtq_alloc_desc(struct virtq *vq);
-void     virtq_free_desc (struct virtq *vq, uint16_t idx);
+u16 virtq_alloc_desc(struct virtq *vq);
+void     virtq_free_desc (struct virtq *vq, u16 idx);
 
 /* Submit a single-buffer (or descriptor-chain head) to the avail ring. */
-void     virtq_submit    (struct virtq *vq, uint16_t head);
+void     virtq_submit    (struct virtq *vq, u16 head);
 
 /* Try to reap one used entry. Returns 1 if harvested into *out_id /
  * *out_len, 0 if the ring was empty. */
-int      virtq_reap      (struct virtq *vq, uint16_t *out_id, uint32_t *out_len);
+int      virtq_reap      (struct virtq *vq, u16 *out_id, u32 *out_len);
 
 #endif

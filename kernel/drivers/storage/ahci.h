@@ -253,7 +253,7 @@ int ahci_read_sector(struct AHCI_DEVICE_DATA *dev, int port, u64 lba,
 
 /* Write `count` 512-byte sectors starting at `lba` from the physical buffer
  * `buf_phys`. Returns 0 on success, -1 on error or timeout. */
-int ahci_write_sector(struct AHCI_DEVICE_DATA *dev, int port, uint64_t lba,
-                      uint32_t count, void *buf_phys);
+int ahci_write_sector(struct AHCI_DEVICE_DATA *dev, int port, u64 lba,
+                      u32 count, void *buf_phys);
 
 #endif

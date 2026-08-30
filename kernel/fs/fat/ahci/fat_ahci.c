@@ -3,8 +3,8 @@
 #include "memory/heap.h"
 #include "memory/hhdm.h"
 #include "memory/vmm.h"
-#include <fs/fat.h>
-#include <fs/fat_ahci.h>
+#include <fs/fat/fat.h>
+#include <fs/fat/ahci/fat_ahci.h>
 #include <utilities/log.h>
 #include <utilities/string.h>
 
@@ -15,28 +15,28 @@
 extern struct AHCI_DEVICE_DATA *g_ahci_dev;
 
 /* Heap addresses need page-table translation because they are outside HHDM. */
-static uint64_t dma_phys(const void *virt) {
-    return vmm_translate((uint64_t)(uintptr_t)virt);
+static u64 dma_phys(const void *virt) {
+    return vmm_translate((u64)(uintptr_t)virt);
 }
 
 /* Limit DMA to physically contiguous pages. `base` must be page-aligned. */
-static uint32_t dma_run_sectors(const uint8_t *base, uint32_t max_sectors,
-                                uint32_t bytes_per_sector) {
+static u32 dma_run_sectors(const u8 *base, u32 max_sectors,
+                                u32 bytes_per_sector) {
     if (!bytes_per_sector || !max_sectors)
         return 0;
 
-    uint64_t first = dma_phys(base);
+    u64 first = dma_phys(base);
     if (!first)
         return 0;
 
-    uint32_t per_page = PAGE_SIZE / bytes_per_sector;
+    u32 per_page = PAGE_SIZE / bytes_per_sector;
     if (per_page == 0)
         per_page = 1; /* sector larger than a page: one at a time */
 
-    uint32_t run = per_page;
+    u32 run = per_page;
     while (run < max_sectors) {
-        const uint8_t *next = base + (size_t)run * bytes_per_sector;
-        if (dma_phys(next) != first + (uint64_t)run * bytes_per_sector)
+        const u8 *next = base + (usize)run * bytes_per_sector;
+        if (dma_phys(next) != first + (u64)run * bytes_per_sector)
             break;
         run += per_page;
     }
@@ -47,11 +47,11 @@ static uint32_t dma_run_sectors(const uint8_t *base, uint32_t max_sectors,
 static int ahci_backed;
 
 /* Write-through callback used by fat.c. */
-static void ahci_sector_writer(uint32_t lba, void *data) {
+static void ahci_sector_writer(u32 lba, void *data) {
     if (!g_ahci_dev)
         return;
 
-    uint64_t phys = dma_phys(data);
+    u64 phys = dma_phys(data);
     if (!phys)
         return;
     ahci_write_sector(g_ahci_dev, 0, lba, 1, (void *)phys);
@@ -60,42 +60,42 @@ static void ahci_sector_writer(uint32_t lba, void *data) {
 int fat_mount_from_ahci(struct AHCI_DEVICE_DATA *ahci_dev, int port) {
     if (!ahci_dev) return -1;
 
-    uint8_t *bpb_buf = kmalloc(512);
+    u8 *bpb_buf = kmalloc(512);
     if (!bpb_buf) return -1;
 
-    uint64_t bpb_phys = dma_phys(bpb_buf);
+    u64 bpb_phys = dma_phys(bpb_buf);
     if (!bpb_phys ||
         ahci_read_sector(ahci_dev, port, 0, 1, (void*)bpb_phys) != 0) {
         kfree(bpb_buf);
         return -1;
     }
 
-    uint32_t bytes_per_sector = 0;
-    size_t disk_size = fat_volume_size(bpb_buf, &bytes_per_sector);
+    u32 bytes_per_sector = 0;
+    usize disk_size = fat_volume_size(bpb_buf, &bytes_per_sector);
     if (!disk_size) {
         kfree(bpb_buf);
         return -1;
     }
-    uint32_t total_sectors = (uint32_t)(disk_size / bytes_per_sector);
+    u32 total_sectors = (u32)(disk_size / bytes_per_sector);
 
     /* Page alignment keeps DMA run boundaries aligned with frames. */
-    uint8_t *ram_raw = kmalloc(disk_size + PAGE_SIZE);
+    u8 *ram_raw = kmalloc(disk_size + PAGE_SIZE);
     if (!ram_raw) {
         kfree(bpb_buf);
         return -1;
     }
-    uint8_t *ram_disk =
-        (uint8_t *)(((uintptr_t)ram_raw + PAGE_SIZE - 1) & ~(uintptr_t)(PAGE_SIZE - 1));
+    u8 *ram_disk =
+        (u8 *)(((uintptr_t)ram_raw + PAGE_SIZE - 1) & ~(uintptr_t)(PAGE_SIZE - 1));
 
     /* Read the image without crossing physical gaps. */
-    uint32_t sectors_read = 0;
+    u32 sectors_read = 0;
     while (sectors_read < total_sectors) {
-        uint8_t *dst = ram_disk + (size_t)sectors_read * bytes_per_sector;
-        uint32_t left = total_sectors - sectors_read;
-        uint32_t want = left < FAT_AHCI_CHUNK ? left : FAT_AHCI_CHUNK;
+        u8 *dst = ram_disk + (usize)sectors_read * bytes_per_sector;
+        u32 left = total_sectors - sectors_read;
+        u32 want = left < FAT_AHCI_CHUNK ? left : FAT_AHCI_CHUNK;
 
-        uint32_t chunk = dma_run_sectors(dst, want, bytes_per_sector);
-        uint64_t buf_phys = dma_phys(dst);
+        u32 chunk = dma_run_sectors(dst, want, bytes_per_sector);
+        u64 buf_phys = dma_phys(dst);
         if (chunk == 0 || !buf_phys ||
             ahci_read_sector(ahci_dev, port, sectors_read, chunk,
                              (void*)buf_phys) != 0) {
@@ -121,22 +121,22 @@ int fat_mount_from_ahci(struct AHCI_DEVICE_DATA *ahci_dev, int port) {
 }
 
 void fat_flush(void) {
-    size_t image_size = 0;
-    uint32_t bytes_per_sector = 0;
-    uint8_t *image = fat_image_base(&image_size, &bytes_per_sector);
+    usize image_size = 0;
+    u32 bytes_per_sector = 0;
+    u8 *image = fat_image_base(&image_size, &bytes_per_sector);
     if (!image || !bytes_per_sector || !g_ahci_dev || !ahci_backed) return;
 
-    uint32_t total_sectors = (uint32_t)(image_size / bytes_per_sector);
-    uint32_t sectors_written = 0;
+    u32 total_sectors = (u32)(image_size / bytes_per_sector);
+    u32 sectors_written = 0;
 
     while (sectors_written < total_sectors) {
-        uint8_t *src = image + (size_t)sectors_written * bytes_per_sector;
-        uint32_t left = total_sectors - sectors_written;
-        uint32_t want = left < FAT_AHCI_CHUNK ? left : FAT_AHCI_CHUNK;
+        u8 *src = image + (usize)sectors_written * bytes_per_sector;
+        u32 left = total_sectors - sectors_written;
+        u32 want = left < FAT_AHCI_CHUNK ? left : FAT_AHCI_CHUNK;
 
         /* BUG: Crossing a physical gap would write unrelated memory. */
-        uint32_t chunk = dma_run_sectors(src, want, bytes_per_sector);
-        uint64_t buf_phys = dma_phys(src);
+        u32 chunk = dma_run_sectors(src, want, bytes_per_sector);
+        u64 buf_phys = dma_phys(src);
 
         if (chunk == 0 || !buf_phys ||
             ahci_write_sector(g_ahci_dev, 0, sectors_written, chunk,
@@ -149,12 +149,12 @@ void fat_flush(void) {
     log_write("FAT: Disk flushed to AHCI.", KERNEL, LOG_INFO);
 }
 
-int fat_read_sector(uint32_t lba, void *buf) {
+int fat_read_sector(u32 lba, void *buf) {
     if (!g_ahci_dev) return -1;
 
     void *dma_buf = kmalloc(512);
     if (!dma_buf) return -1;
-    uint64_t buf_phys = dma_phys(dma_buf);
+    u64 buf_phys = dma_phys(dma_buf);
     if (!buf_phys) {
         kfree(dma_buf);
         return -1;

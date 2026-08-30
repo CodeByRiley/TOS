@@ -10,9 +10,8 @@
  * teardown , the window's appearance is a pure function of the handful of
  * variables in main(), recomputed every frame.
  */
+#include <lib/app.h>
 #include <lib/syscall.h>
-#include <lib/wm.h>
-#include <lib/gfx.h>
 #include <lib/ui.h>
 #include <include/key_codes.h>
 
@@ -81,16 +80,15 @@ static void draw_swatches(struct gfx_surface *s, struct gfx_rect r,
 }
 
 int main(void) {
-    struct wm_window win;
-    if (wm_window_create(WIN_W, WIN_H, "uidemo", &win) != 0) {
-        printf("uidemo: wm_window_create failed\n");
+    struct app application;
+    if (app_open(&application, WIN_W, WIN_H, "uidemo") != 0) {
+        printf("uidemo: app_open failed\n");
         return 1;
     }
-    printf("uidemo: window %d %dx%d\n", win.handle, win.w, win.h);
+    printf("uidemo: window %d %dx%d\n", application.window.handle,
+           application.window.w, application.window.h);
 
-    struct gfx_surface surface;
-    gfx_surface_init(&surface, (uint32_t *)(uintptr_t)win.surface_va,
-                     win.w, win.h, (int)(win.pitch / 4));
+    struct gfx_surface *surface = &application.surface;
 
     struct ui_context ui;
     memset(&ui, 0, sizeof(ui));
@@ -109,11 +107,11 @@ int main(void) {
          * frame that saw neither would swallow the click entirely. */
         int button_edges = 0;
         struct wm_event ev;
-        while (button_edges < 1 && wm_poll_event(&ev)) {
+        while (button_edges < 1 && app_poll_event(&application, &ev)) {
             switch (ev.type) {
             case WM_EV_KEY_DOWN:
                 if (ev.param == KEY_ESC) {
-                    wm_window_destroy(win.handle);
+                    app_close(&application);
                     return 0;
                 }
                 break;
@@ -138,18 +136,12 @@ int main(void) {
                 break;
 
             case WM_EV_RESIZE:
-                /* The old surface va dies with the old backing. */
-                win.surface_va = ev.surface_va;
-                win.pitch      = ev.pitch;
-                win.w          = ev.w;
-                win.h          = ev.h;
-                gfx_surface_init(&surface,
-                                 (uint32_t *)(uintptr_t)win.surface_va,
-                                 win.w, win.h, (int)(win.pitch / 4));
+                /* app_poll_event already rebound application.surface. */
+                memset(&ui, 0, sizeof(ui));
                 break;
 
             case WM_EV_QUIT:
-                wm_window_destroy(win.handle);
+                app_close(&application);
                 return 0;
 
             default:
@@ -160,9 +152,9 @@ int main(void) {
         if (auto_run) count = (count + 1) % 101;
 
         /* ---- one frame ------------------------------------------------ */
-        ui_begin(&ui, &surface, 0, mouse_x, mouse_y, buttons);
+        ui_begin(&ui, surface, 0, mouse_x, mouse_y, buttons);
 
-        struct gfx_rect bounds = gfx_surface_bounds(&surface);
+        struct gfx_rect bounds = gfx_surface_bounds(surface);
         ui_panel(&ui, bounds);
 
         struct ui_layout col;
@@ -205,7 +197,7 @@ int main(void) {
         /* A well with raw lib/gfx drawing inside it. */
         struct gfx_rect well = ui_layout_row(&col, 44);
         ui_well(&ui, well);
-        draw_swatches(&surface, gfx_rect_inset(well, 2), show_grid);
+        draw_swatches(surface, gfx_rect_inset(well, 2), show_grid);
 
         /* Status line, so pointer routing is visible. */
         label_with_number(buf, sizeof(buf), "clicks: ", clicks);
@@ -221,7 +213,7 @@ int main(void) {
 
         ui_end(&ui);
 
-        wm_window_invalidate(win.handle);
+        app_present(&application);
         yield();
     }
 }

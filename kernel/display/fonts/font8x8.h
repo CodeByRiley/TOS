@@ -6,6 +6,7 @@
 #ifndef FONT8X8_H
 #define FONT8X8_H
 
+#include <utilities/types.h>
 #include <stdint.h>
 
 #define FONT_GLYPH_W 8
@@ -13,7 +14,7 @@
 #define FONT_FIRST   0x20
 #define FONT_LAST    0x7E
 
-static const uint8_t font8x8[FONT_LAST - FONT_FIRST + 1][8] = {
+static const u8 font8x8[FONT_LAST - FONT_FIRST + 1][8] = {
     [0x20 - 0x20] = {0,0,0,0,0,0,0,0},                                /*   */
     [0x21 - 0x20] = {0x18,0x3c,0x3c,0x18,0x18,0x00,0x18,0x00},        /* ! */
     [0x22 - 0x20] = {0x36,0x36,0x00,0x00,0x00,0x00,0x00,0x00},        /* " */

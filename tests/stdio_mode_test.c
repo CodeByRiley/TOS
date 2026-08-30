@@ -8,10 +8,13 @@
  *
  * Build:
  *   gcc -I kernel -o stdio_test tests/stdio_mode_test.c \
- *       kernel/fs/stdio.c kernel/fs/fat.c
+ *       kernel/fs/stdio.c kernel/fs/fat/fat.c kernel/fs/fat/fat_vfs.c \
+ *       kernel/fs/vfs/vfs.c tests/host_kernel_stubs.c
  */
 #include "fs/stdio.h"
-#include "fs/fat.h"
+#include "fs/fat/fat.h"
+#include "fs/fat/fat_vfs.h"
+#include "fs/vfs/vfs.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -61,8 +64,8 @@ static void write_file(const char *path, const char *text) {
 }
 
 static long file_size(const char *path) {
-    struct fat_stat st;
-    if (fat_stat(path, &st) != 0) return -1;
+    struct vfs_stat st;
+    if (vfs_stat(path, &st) != 0) return -1;
     return (long)st.size;
 }
 
@@ -85,7 +88,10 @@ int main(void) {
     fat[0] = 0xFFF8;
     fat[1] = 0xFFFF;
 
-    expect(fat_init(image, image_size) == 0, "initialize synthetic image");
+    vfs_init();
+    fat_vfs_register();
+    expect(vfs_mount_image("/", "fat", image, image_size) == 0,
+           "mount synthetic FAT image through VFS");
 
     /* mode strings */
     expect(fopen("/MISSING.TXT", "r") == 0, "\"r\" on a missing file fails");
@@ -177,7 +183,7 @@ int main(void) {
     fp = fopen("/KEEP.TXT", "w");
     expect(fp != 0, "\"w\" reopens an existing file");
     expect(file_size("/KEEP.TXT") == 0, "\"w\" truncated in place");
-    expect(fat_stat("/KEEP.TXT", &(struct fat_stat){0}) == 0,
+    expect(vfs_stat("/KEEP.TXT", &(struct vfs_stat){0}) == 0,
            "\"w\" kept the directory entry");
     if (fp) {
         expect(fwrite("new", 1, 3, fp) == 3, "write after truncate");

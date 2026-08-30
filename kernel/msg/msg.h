@@ -20,6 +20,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <utilities/types.h>
 
 /* --- Input event ring -------------------------------------------------- */
 
@@ -33,12 +34,12 @@
 #define MSG_QUIT        7
 
 struct msg {
-    uint16_t type;     /* MSG_*                                          */
-    uint16_t param;    /* KEY_* keycode for key events; button mask for
+    u16 type;     /* MSG_*                                          */
+    u16 param;    /* KEY_* keycode for key events; button mask for
                           mouse-button events; unused for moves          */
     int16_t  x;        /* mouse abs cursor X (or relative dx for KEY)    */
     int16_t  y;        /* mouse abs cursor Y                             */
-    uint32_t when;     /* PIT ticks at post time                         */
+    u32 when;     /* PIT ticks at post time                         */
 };
 
 _Static_assert(sizeof(struct msg) == 12,
@@ -61,12 +62,12 @@ _Static_assert(offsetof(struct msg, when) == 8,
 #define IPC_USER_FIRST         0x200   /* userspace-defined ids start here   */
 
 struct ipc_msg {
-    uint32_t type;       /* IPC_*                                      */
-    uint32_t from_pid;   /* set by kernel on send                      */
+    u32 type;       /* IPC_*                                      */
+    u32 from_pid;   /* set by kernel on send                      */
     int32_t  a, b, c, d; /* generic integer payload                    */
-    uint64_t va;         /* shared-memory va or 64-bit payload         */
-    uint32_t pitch;      /* surface pitch (bytes per row) on responses */
-    uint32_t flags;
+    u64 va;         /* shared-memory va or 64-bit payload         */
+    u32 pitch;      /* surface pitch (bytes per row) on responses */
+    u32 flags;
     char     str[48];    /* title / name / arbitrary short string      */
 };
 

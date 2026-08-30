@@ -12,9 +12,12 @@
  *
  * Build:
  *   gcc -I userspace/lib -o gfx_test tests/gfx_ui_test.c \
- *       userspace/lib/gfx.c userspace/lib/ui.c userspace/lib/bmp.c
+ *       userspace/lib/gfx.c userspace/lib/ui.c userspace/lib/bmp.c \
+ *       userspace/lib/damage.c userspace/lib/page_alloc.c
  */
+#include "damage.h"
 #include "gfx.h"
+#include "page_alloc.h"
 #include "ui.h"
 #include "syscall.h"
 #include "../userspace/include/fonts/font8x8.h"
@@ -107,6 +110,46 @@ static void test_rects(void) {
     expect(gfx_rect_contains(a, 0, 0), "contains its top-left");
     expect(!gfx_rect_contains(a, 10, 0), "excludes its right edge");
     expect(!gfx_rect_contains(a, 0, 10), "excludes its bottom edge");
+}
+
+static void test_damage(void) {
+    struct gfx_damage damage = {0};
+    struct gfx_rect bounds = gfx_rect_make(0, 0, 100, 80);
+
+    expect(!gfx_damage_pending(&damage), "new damage tracker is empty");
+    expect(gfx_damage_add(&damage, gfx_rect_make(-5, 4, 10, 8), bounds),
+           "partly visible damage is accepted");
+    expect(damage.rect.x == 0 && damage.rect.y == 4 &&
+           damage.rect.w == 5 && damage.rect.h == 8,
+           "damage is clipped to the surface");
+
+    gfx_damage_add(&damage, gfx_rect_make(20, 10, 6, 5), bounds);
+    expect(damage.rect.x == 0 && damage.rect.y == 4 &&
+           damage.rect.w == 26 && damage.rect.h == 11,
+           "separate changes accumulate as one bounding rectangle");
+
+    struct gfx_rect taken = gfx_damage_take(&damage);
+    expect(taken.w == 26 && taken.h == 11, "take returns accumulated damage");
+    expect(!gfx_damage_pending(&damage), "take resets the tracker");
+    expect(!gfx_damage_add(&damage, gfx_rect_make(200, 200, 4, 4), bounds),
+           "fully clipped damage is ignored");
+}
+
+static void test_page_alloc(void) {
+    void *allocation = 0;
+    unsigned char *pages = page_aligned_alloc(2, &allocation);
+    expect(pages != 0 && allocation != 0, "page allocation succeeds");
+    if (pages && allocation) {
+        expect(((uintptr_t)pages & (USER_PAGE_SIZE - 1u)) == 0,
+               "page allocation is aligned");
+        expect(pages[0] == 0 && pages[2 * USER_PAGE_SIZE - 1] == 0,
+               "page allocation is zero-filled");
+        free(allocation);
+    }
+
+    allocation = (void *)1;
+    expect(page_aligned_alloc(0, &allocation) == 0 && allocation == 0,
+           "zero-page allocation fails cleanly");
 }
 
 /* fills and clipping */
@@ -549,6 +592,8 @@ static void test_ui_layout(void) {
 
 int main(void) {
     test_rects();
+    test_damage();
+    test_page_alloc();
     test_fill_clip();
     test_clip_stack();
     test_blend();

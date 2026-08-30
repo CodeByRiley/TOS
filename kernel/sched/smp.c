@@ -33,10 +33,10 @@
 
 /* Emitted by objcopy from ap_trampoline.bin. The Makefile runs objcopy from
  * the blob's directory so these names stay path-independent. */
-extern uint8_t _binary_ap_trampoline_bin_start[];
-extern uint8_t _binary_ap_trampoline_bin_end[];
+extern u8 _binary_ap_trampoline_bin_start[];
+extern u8 _binary_ap_trampoline_bin_end[];
 
-extern uint8_t page_table_l4[];
+extern u8 page_table_l4[];
 extern void ap_long_mode_handoff(void);
 
 #define AP_TRAMPOLINE_PHYS  0x8000
@@ -50,11 +50,11 @@ struct smp_work_item {
 };
 
 static struct smp_work_item work_queue[SMP_WORK_CAPACITY];
-static uint32_t work_head;
-static uint32_t work_tail;
+static u32 work_head;
+static u32 work_tail;
 static struct spinlock work_lock = SPINLOCK_INIT;
 static volatile int online_workers;
-static volatile uint64_t completed_jobs;
+static volatile u64 completed_jobs;
 
 static int work_pop(struct smp_work_item *out) {
     int found = 0;
@@ -82,7 +82,7 @@ int smp_submit_work(smp_work_fn fn, void *arg) {
         return -1;
 
     spin_lock(&work_lock);
-    uint32_t next = (work_head + 1) % SMP_WORK_CAPACITY;
+    u32 next = (work_head + 1) % SMP_WORK_CAPACITY;
     if (next == work_tail) {
         spin_unlock(&work_lock);
         return -1;
@@ -100,13 +100,13 @@ int smp_worker_count(void) {
     return __atomic_load_n(&online_workers, __ATOMIC_ACQUIRE);
 }
 
-uint64_t smp_completed_work(void) {
+u64 smp_completed_work(void) {
     return __atomic_load_n(&completed_jobs, __ATOMIC_ACQUIRE);
 }
 
 struct smp_probe {
-    volatile uint32_t completed;
-    volatile uint32_t cpu_mask;
+    volatile u32 completed;
+    volatile u32 cpu_mask;
 };
 
 static void smp_probe_job(void *arg) {
@@ -119,11 +119,11 @@ static void smp_probe_job(void *arg) {
 }
 
 /* Trailer layout produced by ap_trampoline.asm (offsets from end-of-binary):
- *   -32: ap_pml4_phys   (uint32_t)
- *   -28: ap_cpu_id      (uint32_t)
- *   -24: ap_stack_top   (uint64_t)
- *   -16: ap_handoff     (uint64_t)
- *    -8: ap_target_cr3  (uint64_t)
+ *   -32: ap_pml4_phys   (u32)
+ *   -28: ap_cpu_id      (u32)
+ *   -24: ap_stack_top   (u64)
+ *   -16: ap_handoff     (u64)
+ *    -8: ap_target_cr3  (u64)
  */
 #define AP_PATCH_PML4_OFF    32
 #define AP_PATCH_CPUID_OFF   28
@@ -135,39 +135,39 @@ static void smp_probe_job(void *arg) {
  * Granularity is 10 ms , we round up to at least one tick. Good enough for
  * the Intel-spec 10 ms inter-INIT delay and the 200 µs inter-SIPI delay
  * (which we just round up to one 10 ms PIT tick , well within spec). */
-static void smp_delay_us(uint64_t us) {
-    uint64_t ticks = (us + 9999) / 10000;
+static void smp_delay_us(u64 us) {
+    u64 ticks = (us + 9999) / 10000;
     if (ticks == 0) ticks = 1;
-    uint64_t start = pit_ticks();
+    u64 start = pit_ticks();
     while (pit_ticks() - start < ticks) {
         __asm__ volatile ("pause");
     }
 }
 
-static int boot_one_ap(int cpu_id, uint8_t apic_id, uint32_t bootstrap_cr3,
-                       uint64_t target_cr3) {
+static int boot_one_ap(int cpu_id, u8 apic_id, u32 bootstrap_cr3,
+                       u64 target_cr3) {
     void *stack = kmalloc(AP_KSTACK_BYTES);
     if (!stack) {
         log_write("SMP: AP kstack alloc failed", KERNEL, LOG_ERROR);
         return -1;
     }
-    uint64_t stack_top = ((uint64_t)stack + AP_KSTACK_BYTES) & ~0xFULL;
-    uint64_t entry_stack = stack_top - 8;
+    u64 stack_top = ((u64)stack + AP_KSTACK_BYTES) & ~0xFULL;
+    u64 entry_stack = stack_top - 8;
 
     percpu_init_ap(cpu_id, apic_id);
     percpu_get(cpu_id)->kernel_rsp_top = stack_top;
     gdt_install_tss(cpu_id, stack_top);
 
-    uint8_t *t   = phys_to_virt(AP_TRAMPOLINE_PHYS);
-    size_t   len = (size_t)(_binary_ap_trampoline_bin_end -
+    u8 *t   = phys_to_virt(AP_TRAMPOLINE_PHYS);
+    usize   len = (usize)(_binary_ap_trampoline_bin_end -
                             _binary_ap_trampoline_bin_start);
     memcpy(t, _binary_ap_trampoline_bin_start, len);
-    *(uint32_t*)(t + len - AP_PATCH_PML4_OFF)  = bootstrap_cr3;
-    *(uint32_t*)(t + len - AP_PATCH_CPUID_OFF) = (uint32_t)cpu_id;
-    *(uint64_t*)(t + len - AP_PATCH_STACK_OFF) = entry_stack;
-    *(uint64_t*)(t + len - AP_PATCH_HANDOFF_OFF) =
-        (uint64_t)ap_long_mode_handoff;
-    *(uint64_t*)(t + len - AP_PATCH_TARGET_OFF) = target_cr3;
+    *(u32*)(t + len - AP_PATCH_PML4_OFF)  = bootstrap_cr3;
+    *(u32*)(t + len - AP_PATCH_CPUID_OFF) = (u32)cpu_id;
+    *(u64*)(t + len - AP_PATCH_STACK_OFF) = entry_stack;
+    *(u64*)(t + len - AP_PATCH_HANDOFF_OFF) =
+        (u64)ap_long_mode_handoff;
+    *(u64*)(t + len - AP_PATCH_TARGET_OFF) = target_cr3;
 
     /* INIT-SIPI-SIPI sequence per Intel SDM Vol 3A §8.4.4.1. */
     lapic_send_init(apic_id);
@@ -196,7 +196,7 @@ void smp_boot_aps(void) {
     }
     if (n > MAX_CPUS) n = MAX_CPUS;
 
-    uint64_t bootstrap_phys = (uint64_t)(uintptr_t)page_table_l4;
+    u64 bootstrap_phys = (u64)(uintptr_t)page_table_l4;
     if ((bootstrap_phys & 0xFFFULL) || bootstrap_phys > 0xFFFFFFFFULL) {
         log_write("SMP: bootstrap PML4 is not a low aligned frame", KERNEL,
                   LOG_ERROR);
@@ -206,8 +206,8 @@ void smp_boot_aps(void) {
     /* Give APs a distinct root while sharing all lower-level kernel tables.
      * This exercises the two-stage handoff now, and the frame is allowed to
      * land above 4 GiB because only the 64-bit handoff loads it into CR3. */
-    uint64_t source_cr3 = read_cr3() & ~0xFFFULL;
-    uint64_t target_cr3 = pmm_alloc_frame();
+    u64 source_cr3 = read_cr3() & ~0xFFFULL;
+    u64 target_cr3 = pmm_alloc_frame();
     if (!target_cr3) {
         log_write("SMP: AP PML4 allocation failed", KERNEL, LOG_ERROR);
         return;
@@ -220,7 +220,7 @@ void smp_boot_aps(void) {
 
     /* CPU 0 is the BSP , already running. Bring up 1..n-1. */
     for (int i = 1; i < n; i++) {
-        boot_one_ap(i, acpi_cpu_apic_id(i), (uint32_t)bootstrap_phys,
+        boot_one_ap(i, acpi_cpu_apic_id(i), (u32)bootstrap_phys,
                     target_cr3);
     }
 
@@ -239,18 +239,18 @@ void smp_boot_aps(void) {
         }
     }
 
-    uint64_t start = pit_ticks();
+    u64 start = pit_ticks();
     while ((int)__atomic_load_n(&probe.completed, __ATOMIC_ACQUIRE) < jobs &&
            pit_ticks() - start < 100) {
         __asm__ volatile ("pause");
     }
-    log_write_hex("SMP: AP workers       =", (uint64_t)workers, KERNEL,
+    log_write_hex("SMP: AP workers       =", (u64)workers, KERNEL,
                   LOG_INFO);
     log_write_hex("SMP: jobs completed  =", probe.completed, KERNEL, LOG_INFO);
     log_write_hex("SMP: worker cpu mask =", probe.cpu_mask, KERNEL, LOG_INFO);
 }
 
-void ap_main(uint32_t cpu_id) {
+void ap_main(u32 cpu_id) {
     /* We landed here from ap_trampoline.asm. RSP is our own kstack, CR3 is
      * the final AP kernel PML4, and GDTR still points at the trampoline's
      * temporary GDT. The stackless higher-half handoff performed the CR3/RSP

@@ -1,60 +1,102 @@
 [
-	{
+  {
     "label": "Create Disk",
-    "command": "wsl bash -lc 'cd /mnt/e/Projects/Weird/TOS && ./tools/create_disk.sh'",
+    "command": "wsl bash -lc 'cd /mnt/e/Projects/Weird/TOS && .\\tools\\create_disk.sh'",
     "use_new_terminal": false,
     "allow_concurrent_runs": false,
-    "shell": "system",
     "show_summary": true,
-    "show_command": true,
-	},
+    "show_command": true
+  },
+  {
+    "label": "Build FAT32",
+    "command": "cmd.exe /C .\\tools\\build.bat BUILD_DOOM=0 BUILD_NETSURF=0 FS=FAT32",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "show_summary": true,
+    "show_command": true
+  },
+  {
+    "label": "Build EXT2",
+    "command": "C:/Windows/System32/cmd.exe",
+    "args": [
+      "/d",
+      "/s",
+      "/c",
+      "\"cd /d E:\\Projects\\Weird\\TOS && tools\\build.bat BUILD_DOOM=0 BUILD_NETSURF=0 FS=EXT2\""
+    ],
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "show_summary": true,
+    "show_command": true
+  },
+  {
+    "label": "Build FAT32 (Clean)",
+    "command": "cmd.exe /C .\\tools\\build.bat CLEAN=1 BUILD_DOOM=0 BUILD_NETSURF=0 FS=FAT32",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "show_summary": true,
+    "show_command": true
+  },
+  {
+    "label": "Build EXT2 (Clean)",
+    "command": "C:/Windows/System32/cmd.exe",
+    "args": [
+      "/d",
+      "/s",
+      "/c",
+      "\"cd /d E:\\Projects\\Weird\\TOS && tools\\build.bat CLEAN=1 BUILD_DOOM=0 BUILD_NETSURF=0 FS=EXT2\""
+    ],
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "show_summary": true,
+    "show_command": true
+  },
+  {
+    "label": "Build FAT32 (W/ All)",
+    "command": "cmd.exe /C .\\tools\\build.bat BUILD_ALL=1 FS=FAT32",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "show_summary": true,
+    "show_command": true
+  },
+  {
+    "label": "Build EXT2 (W/ All)",
+    "command": "cmd.exe /C .\\tools\\build.bat BUILD_ALL=1 FS=EXT2",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "show_summary": true,
+    "show_command": true
+  },
+  {
+    "label": "Build FAT32 (Clean W/ All)",
+    "command": "cmd.exe /C .\\tools\\build.bat CLEAN=1 BUILD_ALL=1 FS=FAT32",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "show_summary": true,
+    "show_command": true
+  },
+  {
+    "label": "Build EXT2 (Clean W/ All)",
+    "command": "cmd.exe /C .\\tools\\build.bat CLEAN=1 BUILD_ALL=1 FS=EXT2",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "show_summary": true,
+    "show_command": true
+  },
+  {
+    "label": "Run FAT32",
+    "command": "cmd.exe /C .\\tools\\run.bat FS=FAT32",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "show_summary": true,
+    "show_command": true
+  },
 	{
-    "label": "Build",
-    "command": "C:/msys64/usr/bin/bash.exe",
-    "args": ["-lc", "cd /e/Projects/Weird/TOS && ./tools/build.bat"],
-    "use_new_terminal": false,
-    "allow_concurrent_runs": false,
-    "shell": "system",
-    "show_summary": true,
-    "show_command": true,
-	},
-  {
-    "label": "Build (Clean)",
-    "command": "C:/msys64/usr/bin/bash.exe",
-    "args": ["-lc", "cd /e/Projects/Weird/TOS && ./tools/build_clean.bat"],
-    "use_new_terminal": false,
-    "allow_concurrent_runs": false,
-    "shell": "system",
-    "show_summary": true,
-    "show_command": true,
-  },
-  {
-    "label": "Build (W/ All)",
-    "command": "C:/msys64/usr/bin/bash.exe",
-    "args": ["-lc", "cd /e/Projects/Weird/TOS && ./tools/build.bat -j 1 BUILD_DOOM=1 BUILD_NETSURF=1"],
-    "use_new_terminal": false,
-    "allow_concurrent_runs": false,
-    "shell": "system",
-    "show_summary": true,
-    "show_command": true,
-  },
-  {
-    "label": "Build (Clean W/ All)",
-    "command": "C:/msys64/usr/bin/bash.exe",
-    "args": ["-lc", "cd /e/Projects/Weird/TOS && ./tools/build_clean.bat -j 1 BUILD_DOOM=1 BUILD_NETSURF=1"],
-    "use_new_terminal": false,
-    "allow_concurrent_runs": false,
-    "shell": "system",
-    "show_summary": true,
-    "show_command": true,
-  },
-  {
-    "label": "Run",
-    "command": "./tools/run.bat",
-    "use_new_terminal": false,
-    "allow_concurrent_runs": false,
-    "shell": "system",
-    "show_summary": true,
-    "show_command": true,
-  }
+	  "label": "Run EXT2",
+	  "command": "cmd.exe /C .\\tools\\run.bat FS=EXT2",
+	  "use_new_terminal": false,
+	  "allow_concurrent_runs": false,
+	  "show_summary": true,
+	  "show_command": true
+	}
 ]

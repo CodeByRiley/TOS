@@ -7,37 +7,37 @@
 #ifndef IO_H
 #define IO_H
 
-#include "utilities/types.h"
+#include <utilities/types.h>
 #include <stdint.h>
 
-SINLINE void outb(uint16_t port, uint8_t val) {
+SINLINE void outb(u16 port, u8 val) {
     __asm__ volatile ("outb %0, %1" : : "a"(val), "Nd"(port));
 }
 
-SINLINE uint8_t inb(uint16_t port) {
-    uint8_t ret;
+SINLINE u8 inb(u16 port) {
+    u8 ret;
     __asm__ volatile ("inb %1, %0" : "=a"(ret) : "Nd"(port));
     return ret;
 }
 
 /* 16-bit variants. */
-SINLINE void outw(uint16_t port, uint16_t val) {
+SINLINE void outw(u16 port, u16 val) {
     __asm__ volatile ("outw %0, %1" : : "a"(val), "Nd"(port));
 }
 
-SINLINE uint16_t inw(uint16_t port) {
-    uint16_t ret;
+SINLINE u16 inw(u16 port) {
+    u16 ret;
     __asm__ volatile ("inw %1, %0" : "=a"(ret) : "Nd"(port));
     return ret;
 }
 
 /* 32-bit variants (used by PCI config-space access). */
-SINLINE void outl(uint16_t port, uint32_t val) {
+SINLINE void outl(u16 port, u32 val) {
     __asm__ volatile ("outl %0, %1" : : "a"(val), "Nd"(port));
 }
 
-SINLINE uint32_t inl(uint16_t port) {
-    uint32_t ret;
+SINLINE u32 inl(u16 port) {
+    u32 ret;
     __asm__ volatile ("inl %1, %0" : "=a"(ret) : "Nd"(port));
     return ret;
 }
@@ -46,7 +46,7 @@ SINLINE uint32_t inl(uint16_t port) {
  * PIT tick counter, blocks, or yields needs this to be true: with IF clear,
  * IRQ0 never fires, the tick never advances, and the wait never ends. */
 SINLINE int interrupts_enabled(void) {
-    uint64_t flags;
+    u64 flags;
     __asm__ volatile ("pushfq; popq %0" : "=r"(flags));
     return (flags & (1ULL << 9)) != 0;
 }

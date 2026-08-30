@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 static struct pci_mcfg_range ranges[PCI_MCFG_MAX_RANGES];
-static uint32_t range_count;
+static u32 range_count;
 
 static int sig_is_mcfg(const char signature[4]) {
     return signature[0] == 'M' && signature[1] == 'C'
@@ -12,7 +12,7 @@ static int sig_is_mcfg(const char signature[4]) {
 }
 
 static int overlaps_existing(const struct pci_mcfg_range *candidate) {
-    for (uint32_t i = 0; i < range_count; i++) {
+    for (u32 i = 0; i < range_count; i++) {
         const struct pci_mcfg_range *range = &ranges[i];
         if (range->segment != candidate->segment)
             continue;
@@ -31,16 +31,16 @@ int pci_mcfg_init(const struct acpi_sdt_header *table) {
         || table->length < sizeof(struct acpi_mcfg))
         return -1;
 
-    uint32_t payload = table->length - sizeof(struct acpi_mcfg);
+    u32 payload = table->length - sizeof(struct acpi_mcfg);
     if (payload % sizeof(struct acpi_mcfg_allocation) != 0)
         return -1;
 
-    uint32_t entries = payload / sizeof(struct acpi_mcfg_allocation);
+    u32 entries = payload / sizeof(struct acpi_mcfg_allocation);
     const struct acpi_mcfg_allocation *allocations =
         (const struct acpi_mcfg_allocation*)
-        ((const uint8_t*)table + sizeof(struct acpi_mcfg));
+        ((const u8*)table + sizeof(struct acpi_mcfg));
 
-    for (uint32_t i = 0; i < entries; i++) {
+    for (u32 i = 0; i < entries; i++) {
         const struct acpi_mcfg_allocation *entry = &allocations[i];
         struct pci_mcfg_range candidate = {
             .base_phys = entry->base_phys,
@@ -81,20 +81,20 @@ int pci_mcfg_init(const struct acpi_sdt_header *table) {
     return range_count ? 0 : -1;
 }
 
-uint32_t pci_mcfg_range_count(void) {
+u32 pci_mcfg_range_count(void) {
     return range_count;
 }
 
-int pci_mcfg_range_at(uint32_t index, struct pci_mcfg_range *out) {
+int pci_mcfg_range_at(u32 index, struct pci_mcfg_range *out) {
     if (!out || index >= range_count)
         return 0;
     *out = ranges[index];
     return 1;
 }
 
-int pci_mcfg_find(uint16_t segment, uint8_t bus,
+int pci_mcfg_find(u16 segment, u8 bus,
                   struct pci_mcfg_range *out) {
-    for (uint32_t i = 0; i < range_count; i++) {
+    for (u32 i = 0; i < range_count; i++) {
         const struct pci_mcfg_range *range = &ranges[i];
         if (range->segment == segment
             && bus >= range->start_bus

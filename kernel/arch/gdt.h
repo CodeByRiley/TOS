@@ -9,6 +9,7 @@
 #ifndef GDT_H
 #define GDT_H
 
+#include <utilities/types.h>
 #include <stdint.h>
 
 /* Selectors. CS = code, DS = data; user variants have RPL bits OR'd by
@@ -25,7 +26,7 @@
 void gdt_init(void);
 
 /* Install a TSS descriptor for `cpu_id` at GDT_TSS_FOR(cpu_id). */
-void gdt_install_tss(int cpu_id, uint64_t kstack_top);
+void gdt_install_tss(int cpu_id, u64 kstack_top);
 
 /* AP entry: load the BSP-built GDT and the per-CPU TSS for this CPU. */
 void gdt_load_tss_this_cpu(int cpu_id);
@@ -33,7 +34,7 @@ void gdt_load_this_cpu_full(void);  /* lgdt + segment reload */
 void gdt_load_this_cpu(void);       /* compatibility wrapper */
 
 /* Update RSP0 (kernel stack used on ring 3 → ring 0 transitions). */
-void tss_set_rsp0(uint64_t rsp0);
-void tss_set_rsp0_for(int cpu_id, uint64_t rsp0);
+void tss_set_rsp0(u64 rsp0);
+void tss_set_rsp0_for(int cpu_id, u64 rsp0);
 
 #endif

@@ -8,6 +8,7 @@
 #ifndef SERIAL_H
 #define SERIAL_H
 
+#include <utilities/types.h>
 #include <stdint.h>
 
 /* Probe + init COM1. Returns 0 if a UART responded, non-zero otherwise. */
@@ -18,6 +19,6 @@ void serial_write_char(char c);
 void serial_write_str(const char *str);
 
 /* Format `hex` as "0x%016lx" and write. */
-void serial_write_hex(uint64_t hex);
+void serial_write_hex(u64 hex);
 
 #endif

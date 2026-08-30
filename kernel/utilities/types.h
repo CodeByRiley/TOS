@@ -60,13 +60,13 @@ typedef uint64_t u64;
 
 /* --- "intN"-style aliases ------------------------------------------ */
 typedef int8_t int8;
-typedef uint8_t uint8;
+typedef u8 uint8;
 typedef int16_t int16;
-typedef uint16_t uint16;
+typedef u16 uint16;
 typedef int32_t int32;
-typedef uint32_t uint32;
+typedef u32 uint32;
 typedef int64_t int64;
-typedef uint64_t uint64;
+typedef u64 uint64;
 
 /* --- Pointer-sized + size types ------------------------------------ */
 typedef intptr_t iptr;
@@ -88,9 +88,9 @@ typedef uintptr_t vaddr_t;
 typedef uintptr_t pfn_t;
 
 /* I/O port address (x86 specific, but useful to define globally) */
-typedef uint16_t ioport_t;
+typedef u16 ioport_t;
 
-typedef uint8_t byte;
+typedef u8 byte;
 
 /* --- Lowercase bool alias used by some legacy code paths ----------- */
 typedef enum boolean {
@@ -105,7 +105,7 @@ typedef int pid_t;       /* Process ID */
 typedef int dev_t;       /* Device ID */
 typedef int fd_t;        /* File Descriptor */
 typedef int64_t off_t;   /* File offset */
-typedef uint64_t tick_t; /* System timer ticks */
+typedef u64 tick_t; /* System timer ticks */
 
 /* --- Helper structs ------------------------------------------------ */
 typedef struct M4_i {

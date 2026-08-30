@@ -6,15 +6,15 @@
 #include <memory/vma.h>
 
 static vma_node_t *vma_head = NULL;
-static uint64_t next_vma_addr = VMA_KERNEL_START;
-extern uint64_t *kernel_pml4;
+static u64 next_vma_addr = VMA_KERNEL_START;
+extern u64 *kernel_pml4;
 
 void vma_init(void) {
     next_vma_addr = VMA_KERNEL_START;
     vma_head = NULL;
 }
 
-vma_node_t *vma_find(uint64_t virt) {
+vma_node_t *vma_find(u64 virt) {
     vma_node_t *curr = vma_head;
     while (curr) {
         if (curr->virt_addr == virt) {
@@ -25,7 +25,7 @@ vma_node_t *vma_find(uint64_t virt) {
     return NULL;
 }
 
-uint64_t vma_alloc(size_t size) {
+u64 vma_alloc(usize size) {
     if (size == 0) return 0;
 
     size = (size + 0xFFF) & ~0xFFF;
@@ -44,15 +44,15 @@ uint64_t vma_alloc(size_t size) {
     return node->virt_addr;
 }
 
-uint64_t vmalloc(size_t size) {
-    uint64_t virt = vma_alloc(size);
+u64 vmalloc(usize size) {
+    u64 virt = vma_alloc(size);
     if (!virt) return 0;
 
-    uint64_t num_pages = (size + 0xFFF) / 0x1000;
-    uint64_t flags = VMM_PRESENT | VMM_WRITE | VMM_NX;
+    u64 num_pages = (size + 0xFFF) / 0x1000;
+    u64 flags = VMM_PRESENT | VMM_WRITE | VMM_NX;
 
-    for (uint64_t i = 0; i < num_pages; i++) {
-        uint64_t phys = pmm_alloc_frame();
+    for (u64 i = 0; i < num_pages; i++) {
+        u64 phys = pmm_alloc_frame();
         if (!phys) {
             log_write("VMALLOC: Out of physical memory!", KERNEL, LOG_ERROR);
 
@@ -66,7 +66,7 @@ uint64_t vmalloc(size_t size) {
     return virt;
 }
 
-void vma_retain(uint64_t virt) {
+void vma_retain(u64 virt) {
     vma_node_t *node = vma_find(virt);
     if (node) {
         node->ref_count++;
@@ -74,14 +74,14 @@ void vma_retain(uint64_t virt) {
     }
 }
 
-void vma_touch(uint64_t virt) {
+void vma_touch(u64 virt) {
     vma_node_t *node = vma_find(virt);
     if (node) {
         node->last_used = pit_ticks();
     }
 }
 
-void vfree(uint64_t virt) {
+void vfree(u64 virt) {
     vma_node_t **curr = &vma_head;
 
     while (*curr) {
@@ -94,10 +94,10 @@ void vfree(uint64_t virt) {
                 return;
             }
 
-            uint64_t num_pages = (node->size + 0xFFF) / 0x1000;
-            for (uint64_t i = 0; i < num_pages; i++) {
-                uint64_t vaddr = virt + i * 0x1000;
-                uint64_t phys = vmm_translate_in(kernel_pml4, vaddr);
+            u64 num_pages = (node->size + 0xFFF) / 0x1000;
+            for (u64 i = 0; i < num_pages; i++) {
+                u64 vaddr = virt + i * 0x1000;
+                u64 phys = vmm_translate_in(kernel_pml4, vaddr);
                 if (phys) {
                     pmm_free_frame(phys);
                     vmm_unmap_in(kernel_pml4, vaddr);

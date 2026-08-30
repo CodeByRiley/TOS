@@ -19,33 +19,33 @@
 #include <utilities/string.h>
 #include <stdint.h>
 
-static uint64_t lapic_phys = 0;
-static uint8_t  cpu_ids[ACPI_MAX_CPUS];
+static u64 lapic_phys = 0;
+static u8  cpu_ids[ACPI_MAX_CPUS];
 static int      cpu_count = 0;
 static const struct acpi_sdt_header *root_sdt;
-static uint8_t root_entry_size;
+static u8 root_entry_size;
 
 #define ACPI_MAX_TABLE_LENGTH (16u * 1024u * 1024u)
 
 /* Return an HHDM pointer for an ACPI physical range. */
-static void *acpi_map(uint64_t phys, size_t len) {
+static void *acpi_map(u64 phys, usize len) {
     (void)len;
     return phys_to_virt(phys);
 }
 
-static uint8_t checksum(const void *p, size_t n) {
-    const uint8_t *b = (const uint8_t*)p;
-    uint8_t s = 0;
-    for (size_t i = 0; i < n; i++) s += b[i];
+static u8 checksum(const void *p, usize n) {
+    const u8 *b = (const u8*)p;
+    u8 s = 0;
+    for (usize i = 0; i < n; i++) s += b[i];
     return s;
 }
 
-static int sig_eq(const char *a, const char *b, size_t n) {
-    for (size_t i = 0; i < n; i++) if (a[i] != b[i]) return 0;
+static int sig_eq(const char *a, const char *b, usize n) {
+    for (usize i = 0; i < n; i++) if (a[i] != b[i]) return 0;
     return 1;
 }
 
-static const struct acpi_rsdp_v1 *validate_rsdp(const uint8_t *p) {
+static const struct acpi_rsdp_v1 *validate_rsdp(const u8 *p) {
     const struct acpi_rsdp_v1 *r = (const struct acpi_rsdp_v1*)p;
     if (!sig_eq(r->signature, ACPI_SIG_RSDP, 8)) return 0;
     if (checksum(r, sizeof(*r)) != 0)            return 0;
@@ -58,8 +58,8 @@ static const struct acpi_rsdp_v1 *validate_rsdp(const uint8_t *p) {
 }
 
 /* Scan a 64K-aligned 16-byte-stepped region for the RSDP signature. */
-static const struct acpi_rsdp_v1 *scan_for_rsdp(uint64_t start, uint64_t end) {
-    for (uint64_t addr = start; addr < end; addr += 16) {
+static const struct acpi_rsdp_v1 *scan_for_rsdp(u64 start, u64 end) {
+    for (u64 addr = start; addr < end; addr += 16) {
         const struct acpi_rsdp_v1 *r =
             validate_rsdp(phys_to_virt(addr));
         if (r) return r;
@@ -67,7 +67,7 @@ static const struct acpi_rsdp_v1 *scan_for_rsdp(uint64_t start, uint64_t end) {
     return 0;
 }
 
-static const struct acpi_rsdp_v1 *find_rsdp(uint64_t mb2_addr) {
+static const struct acpi_rsdp_v1 *find_rsdp(u64 mb2_addr) {
     /* 1. Multiboot tag (preferred , explicit, validated). */
     struct MB2_TAG_ACPI *t = (struct MB2_TAG_ACPI*)
         mb2_find_tag(mb2_addr, MULTIBOOT_TAG_ACPI_NEW);
@@ -79,9 +79,9 @@ static const struct acpi_rsdp_v1 *find_rsdp(uint64_t mb2_addr) {
     }
 
     /* 2. EBDA pointer at 0x40E (segment) -> first 1 KiB of EBDA. */
-    uint16_t ebda_seg = *(uint16_t*)phys_to_virt(0x40E);
+    u16 ebda_seg = *(u16*)phys_to_virt(0x40E);
     if (ebda_seg) {
-        uint64_t ebda = (uint64_t)ebda_seg << 4;
+        u64 ebda = (u64)ebda_seg << 4;
         const struct acpi_rsdp_v1 *r = scan_for_rsdp(ebda, ebda + 0x400);
         if (r) return r;
     }
@@ -97,11 +97,11 @@ static int parse_madt(const struct acpi_madt *madt) {
     lapic_phys = madt->lapic_phys;
     cpu_count  = 0;
 
-    const uint8_t *p   = (const uint8_t*)madt + sizeof(*madt);
-    const uint8_t *end = (const uint8_t*)madt + madt->h.length;
+    const u8 *p   = (const u8*)madt + sizeof(*madt);
+    const u8 *end = (const u8*)madt + madt->h.length;
     while (p + 2 <= end) {
-        uint8_t type = p[0];
-        uint8_t len  = p[1];
+        u8 type = p[0];
+        u8 len  = p[1];
         if (len < 2 || p + len > end) break;
         if (type == MADT_TYPE_LOCAL_APIC && len >= sizeof(struct madt_entry_local_apic)) {
             const struct madt_entry_local_apic *e = (const struct madt_entry_local_apic*)p;
@@ -112,14 +112,14 @@ static int parse_madt(const struct acpi_madt *madt) {
             }
         } else if (type == MADT_TYPE_LOCAL_APIC_OVR && len >= 12) {
             /* 64-bit LAPIC base override , wins over the 32-bit MADT field. */
-            lapic_phys = *(const uint64_t*)(p + 4);
+            lapic_phys = *(const u64*)(p + 4);
         }
         p += len;
     }
     return 0;
 }
 
-static const struct acpi_sdt_header *map_sdt(uint64_t phys) {
+static const struct acpi_sdt_header *map_sdt(u64 phys) {
     if (!phys) return 0;
 
     /* Map header first to learn the table's length, then re-map the full
@@ -131,8 +131,8 @@ static const struct acpi_sdt_header *map_sdt(uint64_t phys) {
     return acpi_map(phys, h->length);
 }
 
-static int set_root_sdt(uint64_t phys, const char signature[4],
-                        uint8_t entry_size) {
+static int set_root_sdt(u64 phys, const char signature[4],
+                        u8 entry_size) {
     const struct acpi_sdt_header *root = map_sdt(phys);
     if (!root || !sig_eq(root->signature, signature, 4))
         return -1;
@@ -147,20 +147,20 @@ static int set_root_sdt(uint64_t phys, const char signature[4],
 }
 
 const struct acpi_sdt_header *acpi_find_table(const char signature[4],
-                                              uint32_t index) {
+                                              u32 index) {
     if (!root_sdt || !root_entry_size)
         return 0;
 
-    uint32_t count =
+    u32 count =
         (root_sdt->length - sizeof(*root_sdt)) / root_entry_size;
-    const uint8_t *entries = (const uint8_t*)root_sdt + sizeof(*root_sdt);
+    const u8 *entries = (const u8*)root_sdt + sizeof(*root_sdt);
 
-    for (uint32_t i = 0; i < count; i++) {
-        uint64_t phys;
+    for (u32 i = 0; i < count; i++) {
+        u64 phys;
         if (root_entry_size == 8)
-            phys = ((const uint64_t*)entries)[i];
+            phys = ((const u64*)entries)[i];
         else
-            phys = ((const uint32_t*)entries)[i];
+            phys = ((const u32*)entries)[i];
 
         const struct acpi_sdt_header *table = map_sdt(phys);
         if (!table || checksum(table, table->length) != 0)
@@ -174,7 +174,7 @@ const struct acpi_sdt_header *acpi_find_table(const char signature[4],
     return 0;
 }
 
-int acpi_init(uint64_t mb2_addr) {
+int acpi_init(u64 mb2_addr) {
     root_sdt = 0;
     root_entry_size = 0;
     lapic_phys = 0;
@@ -196,7 +196,7 @@ int acpi_init(uint64_t mb2_addr) {
             root_ok = set_root_sdt(r2->xsdt_phys, ACPI_SIG_XSDT, 8);
     }
     if (root_ok != 0)
-        root_ok = set_root_sdt((uint64_t)rsdp->rsdt_phys,
+        root_ok = set_root_sdt((u64)rsdp->rsdt_phys,
                                ACPI_SIG_RSDT, 4);
     if (root_ok != 0) {
         log_write("ACPI: invalid RSDT/XSDT", KERNEL, LOG_ERROR);
@@ -223,13 +223,13 @@ int acpi_init(uint64_t mb2_addr) {
         return -1;
     }
     log_write_hex("ACPI: LAPIC base phys =", lapic_phys, KERNEL, LOG_INFO);
-    log_write_hex("ACPI: cpu count       =", (uint64_t)cpu_count, KERNEL, LOG_INFO);
+    log_write_hex("ACPI: cpu count       =", (u64)cpu_count, KERNEL, LOG_INFO);
     return 0;
 }
 
-uint64_t acpi_lapic_phys(void)        { return lapic_phys; }
+u64 acpi_lapic_phys(void)        { return lapic_phys; }
 int      acpi_cpu_count(void)         { return cpu_count;  }
-uint8_t  acpi_cpu_apic_id(int idx)    {
+u8  acpi_cpu_apic_id(int idx)    {
     if (idx < 0 || idx >= cpu_count) return 0xFF;
     return cpu_ids[idx];
 }

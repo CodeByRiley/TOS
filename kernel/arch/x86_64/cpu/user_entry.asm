@@ -6,7 +6,7 @@
 ; counter and no way back except a fault, an interrupt or a syscall, each of
 ; which has its own entry path.
 ;
-; void arch_enter_user(uint64_t entry, uint64_t user_rsp, uint64_t arg);
+; void arch_enter_user(u64 entry, u64 user_rsp, u64 arg);
 ;   rdi = entry, rsi = user_rsp, rdx = arg (delivered to userspace in RDI)
 ;
 ; FS and GS *selectors* are deliberately left alone. Their bases are kernel

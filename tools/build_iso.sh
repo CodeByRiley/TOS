@@ -8,7 +8,7 @@ cd "$(dirname "$0")/.."
 
 iso_dir=boot/x86_64/iso
 kernel=dist/x86_64/kernel.bin
-disk=build/disk.img
+disk="${DISK_IMAGE:-build/disk.img}"
 out_iso=dist/x86_64/kernel.iso
 
 # Kept next to the other build output rather than in /tmp: a GRUB built for

@@ -10,6 +10,7 @@
 #ifndef SYSCALL_H
 #define SYSCALL_H
 
+#include <utilities/types.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -89,10 +90,10 @@
 #define STAT_TYPE_DIR  1
 
 struct stat_user {
-  uint64_t size;
-  uint64_t first_cluster;   /* FAT-specific; 0 for the root directory */
-  uint32_t type;            /* STAT_TYPE_*                            */
-  uint32_t attr;            /* raw FAT attribute byte                 */
+  u64 size;
+  u64 first_cluster;   /* FAT-specific; 0 for the root directory */
+  u32 type;            /* STAT_TYPE_*                            */
+  u32 attr;            /* raw FAT attribute byte                 */
 };
 
 _Static_assert(sizeof(struct stat_user) == 24,
@@ -173,17 +174,17 @@ _Static_assert(sizeof(struct stat_user) == 24,
 #define AUDIO_FORMAT_S16_LE 1
 
 struct audio_status_user {
-  uint32_t available;
-  uint32_t playing;
-  uint32_t paused;
-  uint32_t sample_rate;
-  uint32_t channels;
-  uint32_t format;
-  uint32_t ring_capacity;
-  uint32_t ring_queued;
-  uint32_t device_queued;
-  uint32_t underruns;
-  uint32_t volume;
+  u32 available;
+  u32 playing;
+  u32 paused;
+  u32 sample_rate;
+  u32 channels;
+  u32 format;
+  u32 ring_capacity;
+  u32 ring_queued;
+  u32 device_queued;
+  u32 underruns;
+  u32 volume;
   int32_t  owner_pid;
 };
 
@@ -212,29 +213,29 @@ _Static_assert(sizeof(struct audio_status_user) == 48,
  * The C dispatcher reads syscall number from rax and args from rdi/rsi/
  * rdx/r10/r8/r9 (SysV minus rcx, which holds the saved RIP). */
 struct syscall_frame {
-    uint64_t r15, r14, r13, r12;
-    uint64_t r11, rbx, rbp, r10;
-    uint64_t r9,  r8,  rcx, rdx;
-    uint64_t rsi, rdi, rax;
-    uint64_t rip, cs, rflags, rsp, ss;
+    u64 r15, r14, r13, r12;
+    u64 r11, rbx, rbp, r10;
+    u64 r9,  r8,  rcx, rdx;
+    u64 rsi, rdi, rax;
+    u64 rip, cs, rflags, rsp, ss;
 };
 
-_Static_assert(sizeof(struct syscall_frame) == 20 * sizeof(uint64_t),
+_Static_assert(sizeof(struct syscall_frame) == 20 * sizeof(u64),
                "syscall_frame must match syscall.asm pushes");
-_Static_assert(offsetof(struct syscall_frame, r10) == 7 * sizeof(uint64_t),
+_Static_assert(offsetof(struct syscall_frame, r10) == 7 * sizeof(u64),
                "syscall_frame.r10 must match syscall arg4 slot");
-_Static_assert(offsetof(struct syscall_frame, rax) == 14 * sizeof(uint64_t),
+_Static_assert(offsetof(struct syscall_frame, rax) == 14 * sizeof(u64),
                "syscall_frame.rax must be the saved return-value slot");
-_Static_assert(offsetof(struct syscall_frame, rip) == 15 * sizeof(uint64_t),
+_Static_assert(offsetof(struct syscall_frame, rip) == 15 * sizeof(u64),
                "syscall_frame.rip must begin the iretq frame");
-_Static_assert(offsetof(struct syscall_frame, rsp) == 18 * sizeof(uint64_t),
+_Static_assert(offsetof(struct syscall_frame, rsp) == 18 * sizeof(u64),
                "syscall_frame.rsp must match the iretq user-rsp slot");
-_Static_assert(offsetof(struct syscall_frame, ss) == 19 * sizeof(uint64_t),
+_Static_assert(offsetof(struct syscall_frame, ss) == 19 * sizeof(u64),
                "syscall_frame.ss must end the iretq frame");
 
 /* Program this CPU's LSTAR / STAR / SFMASK, enable SCE, and stage its initial
  * ring-3 entry stack. Invoke once on the BSP and once from every AP. */
-void syscall_init_this_cpu(uint64_t kernel_stack_top);
+void syscall_init_this_cpu(u64 kernel_stack_top);
 
 /* Validate and sanitize the ring-3 return portion of a completed frame.
  * Returns zero when iretq may consume it. */

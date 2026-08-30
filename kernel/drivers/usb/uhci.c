@@ -84,15 +84,15 @@ struct uhci_int_ep {
   int toggle;
 
   struct uhci_qh *qh;
-  uint64_t qh_phys;
+  u64 qh_phys;
   struct uhci_td *td;
-  uint64_t td_phys;
+  u64 td_phys;
   u8 *buf;
-  uint64_t buf_phys;
+  u64 buf_phys;
 
   /* Volatile: written from IRQ context. */
-  volatile uint32_t reports;
-  volatile uint32_t errors;
+  volatile u32 reports;
+  volatile u32 errors;
   volatile u16 last_len;
 };
 
@@ -100,10 +100,10 @@ struct uhci_hc {
   u16 io_base;
   u8  irq;
 
-  uint64_t frame_list_phys;
+  u64 frame_list_phys;
   struct uhci_frame *frame_list;
 
-  uint64_t arena_phys;
+  u64 arena_phys;
   u8 *arena;
 
   u8 next_addr; /* 0 is reserved for un-enumerated devices */
@@ -141,8 +141,8 @@ SINLINE void qh_element_write(struct uhci_qh *qh, u32 val) {
  * PIT-timed rather than counting io_wait()s: an io_wait's real cost varies by
  * host, so a loop count is not a time bound. QEMU clears these instantly, real
  * controllers take a documented number of milliseconds. */
-static int uhci_wait_clear(u16 io_base, u16 reg, u16 mask, uint32_t budget_ms) {
-  for (uint32_t elapsed = 0; elapsed < budget_ms * 10; elapsed++) {
+static int uhci_wait_clear(u16 io_base, u16 reg, u16 mask, u32 budget_ms) {
+  for (u32 elapsed = 0; elapsed < budget_ms * 10; elapsed++) {
     if (!(uhci_read16(io_base, reg) & mask))
       return 0;
     pit_delay_us(100);
@@ -154,19 +154,19 @@ static int uhci_wait_clear(u16 io_base, u16 reg, u16 mask, uint32_t budget_ms) {
 
 static struct uhci_td *uhci_td_at(struct uhci_hc *hc, int index) {
   return (struct uhci_td *)(hc->arena + UHCI_ARENA_TD +
-                            (size_t)index * sizeof(struct uhci_td));
+                            (usize)index * sizeof(struct uhci_td));
 }
 
-static uint64_t uhci_td_phys(struct uhci_hc *hc, int index) {
+static u64 uhci_td_phys(struct uhci_hc *hc, int index) {
   return hc->arena_phys + UHCI_ARENA_TD +
-         (uint64_t)index * sizeof(struct uhci_td);
+         (u64)index * sizeof(struct uhci_td);
 }
 
 /* Fill one TD. `len` is a real byte count; 0 is legal and UHCI_TD_MAXLEN
  * encodes it as the spec's 0x7FF null packet. */
-static void uhci_td_init(struct uhci_td *td, uint64_t next_phys, int last,
+static void uhci_td_init(struct uhci_td *td, u64 next_phys, int last,
                          int low_speed, u8 pid, u8 addr, u8 ep, int toggle,
-                         int len, uint64_t buf_phys) {
+                         int len, u64 buf_phys) {
   /* DEPTH runs the whole chain within one frame; without it the controller
    * takes one TD per frame and a control transfer costs milliseconds. */
   td->link.link_ptr =
@@ -205,8 +205,8 @@ static int uhci_control(struct uhci_hc *hc, u8 addr, int low_speed,
 
   u8 *setup_buf = hc->arena + UHCI_ARENA_SETUP;
   u8 *data_buf = hc->arena + UHCI_ARENA_DATA;
-  uint64_t setup_phys = hc->arena_phys + UHCI_ARENA_SETUP;
-  uint64_t data_phys = hc->arena_phys + UHCI_ARENA_DATA;
+  u64 setup_phys = hc->arena_phys + UHCI_ARENA_SETUP;
+  u64 data_phys = hc->arena_phys + UHCI_ARENA_DATA;
 
   memcpy(setup_buf, setup, sizeof(*setup));
   if (len && !dir_in)
@@ -250,7 +250,7 @@ static int uhci_control(struct uhci_hc *hc, u8 addr, int low_speed,
 
   int failed = 0;
   int done = 0;
-  for (uint32_t elapsed = 0; elapsed < UHCI_XFER_TIMEOUT_MS * 10; elapsed++) {
+  for (u32 elapsed = 0; elapsed < UHCI_XFER_TIMEOUT_MS * 10; elapsed++) {
     /* Scan the whole chain, not just the tail: an erroring TD halts the queue
      * and leaves everything behind it Active forever, which would otherwise
      * burn the full timeout.
@@ -311,7 +311,7 @@ static int uhci_control(struct uhci_hc *hc, u8 addr, int low_speed,
   }
 
   if (len && dir_in)
-    memcpy(data, data_buf, (size_t)transferred < len ? (size_t)transferred
+    memcpy(data, data_buf, (usize)transferred < len ? (usize)transferred
                                                      : len);
 
   return transferred;
@@ -413,7 +413,7 @@ static void uhci_int_arm(struct uhci_int_ep *ep) {
  * queue otherwise. The interrupt QH links onward to the control QH, so control
  * stays reachable from every frame; the interval only sets the poll rate. */
 static void uhci_build_schedule(struct uhci_hc *hc) {
-  uint64_t ctrl_qh_phys = hc->arena_phys + UHCI_ARENA_QH;
+  u64 ctrl_qh_phys = hc->arena_phys + UHCI_ARENA_QH;
   u32 ctrl_link = (u32)ctrl_qh_phys | UHCI_PTR_QH;
 
   if (!hc->int_ep.active) {
@@ -893,7 +893,7 @@ int uhci_init(struct pci_device *dev) {
     log_write("UHCI: BAR4 is not a valid I/O BAR", KERNEL, LOG_ERROR);
     return -1;
   }
-  hc->io_base = (uint16_t)dev->bar[4].base;
+  hc->io_base = (u16)dev->bar[4].base;
   hc->irq = dev->int_line;
   log_write_hex("UHCI: I/O Base", hc->io_base, KERNEL, LOG_INFO);
   log_write_int("UHCI: IRQ line", hc->irq, KERNEL, LOG_INFO);
@@ -936,7 +936,7 @@ int uhci_init(struct pci_device *dev) {
   }
 
   /* Registers reset with the controller, so program them after HCRESET. */
-  outl(hc->io_base + UHCI_FRBASEADD, (uint32_t)hc->frame_list_phys);
+  outl(hc->io_base + UHCI_FRBASEADD, (u32)hc->frame_list_phys);
   outb(hc->io_base + UHCI_SOFMOD, 64);
   uhci_write16(hc->io_base, UHCI_FRNUM, 0);
   uhci_write16(hc->io_base, UHCI_USBSTS, 0xFFFF);

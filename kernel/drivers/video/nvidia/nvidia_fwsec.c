@@ -23,11 +23,11 @@
 #define FALCON_APPID_FWSEC_DBG  0x45u
 #define FALCON_APPID_FWSEC_PROD 0x85u
 
-static uint32_t read_le32(const uint8_t *data, uint32_t offset) {
-    return (uint32_t)data[offset]
-         | ((uint32_t)data[offset + 1] << 8)
-         | ((uint32_t)data[offset + 2] << 16)
-         | ((uint32_t)data[offset + 3] << 24);
+static u32 read_le32(const u8 *data, u32 offset) {
+    return (u32)data[offset]
+         | ((u32)data[offset + 1] << 8)
+         | ((u32)data[offset + 2] << 16)
+         | ((u32)data[offset + 3] << 24);
 }
 
 /* Locate the FWSEC entry and record where its descriptor starts.
@@ -63,10 +63,10 @@ int nvidia_fwsec_locate(struct nvidia_device *device) {
         return -1;
     }
 
-    const uint8_t *image = device->vbios;
-    uint32_t size = device->vbios_size;
+    const u8 *image = device->vbios;
+    u32 size = device->vbios_size;
 
-    uint32_t table = read_le32(image, token.data_offset);
+    u32 table = read_le32(image, token.data_offset);
     if (table == 0 || table > size
         || size - table < FALCON_UCODE_TABLE_HDR_MIN) {
         log_write("nvidia: falcon ucode table pointer is out of range",
@@ -74,12 +74,12 @@ int nvidia_fwsec_locate(struct nvidia_device *device) {
         return -1;
     }
 
-    uint8_t version     = image[table];
-    uint8_t header_size = image[table + 1];
-    uint8_t entry_size  = image[table + 2];
-    uint8_t entry_count = image[table + 3];
-    uint8_t desc_version = image[table + 4];
-    uint8_t desc_size    = image[table + 5];
+    u8 version     = image[table];
+    u8 header_size = image[table + 1];
+    u8 entry_size  = image[table + 2];
+    u8 entry_count = image[table + 3];
+    u8 desc_version = image[table + 4];
+    u8 desc_size    = image[table + 5];
 
     if (version != FALCON_UCODE_TABLE_VERSION
         || header_size < FALCON_UCODE_TABLE_HDR_MIN
@@ -89,8 +89,8 @@ int nvidia_fwsec_locate(struct nvidia_device *device) {
         return -1;
     }
 
-    uint64_t entries_end = (uint64_t)table + header_size
-                         + (uint64_t)entry_size * entry_count;
+    u64 entries_end = (u64)table + header_size
+                         + (u64)entry_size * entry_count;
     if (entries_end > size) {
         log_write("nvidia: falcon ucode table runs past the VBIOS",
                   KERNEL, LOG_ERROR);
@@ -105,10 +105,10 @@ int nvidia_fwsec_locate(struct nvidia_device *device) {
     log_write_hex("nvidia: falcon ucode desc size =", desc_size,
                   KERNEL, LOG_INFO);
 
-    for (uint32_t i = 0; i < entry_count; i++) {
-        uint32_t entry = table + header_size + i * entry_size;
-        uint8_t app_id = image[entry];
-        uint32_t desc_offset = read_le32(image, entry + 2);
+    for (u32 i = 0; i < entry_count; i++) {
+        u32 entry = table + header_size + i * entry_size;
+        u8 app_id = image[entry];
+        u32 desc_offset = read_le32(image, entry + 2);
 
         /* Log every entry: on unfamiliar silicon the id we want may not be
          * one of the two below, and the table is short enough that dumping

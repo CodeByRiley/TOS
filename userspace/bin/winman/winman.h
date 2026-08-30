@@ -1,14 +1,27 @@
-#include <lib/bmp.h>
-#include <lib/gfx.h>
-#include <lib/keymap.h>
-#include <lib/syscall.h>
-#include <lib/ttf.h>
-#include <lib/wm.h>
+#ifndef WINMAN_INTERNAL_H
+#define WINMAN_INTERNAL_H
+
 #include <display/fonts/font8x8.h>
 #include <include/sys/types.h>
 #include <include/time.h>
+#include <lib/bmp.h>
+#include <lib/damage.h>
+#include <lib/gfx.h>
+#include <lib/keymap.h>
+#include <lib/page_alloc.h>
+#include <lib/syscall.h>
+#include <lib/ttf.h>
+#include <lib/wm.h>
 #include <stddef.h>
 #include <stdint.h>
+
+#ifdef WINMAN_DECLARE_STATE
+#define WINMAN_STATE extern
+#define WINMAN_STATE_INIT(value)
+#else
+#define WINMAN_STATE
+#define WINMAN_STATE_INIT(value) = value
+#endif
 
 /* In-band TTY control codes , must match kernel/display/tty.h. Defined
  * inline rather than #include'd because that header also declares
@@ -36,13 +49,18 @@ struct start_menu_item {
   struct program *programs;
 };
 
+struct tb_entry {
+  int handle;
+  const char *title;
+};
+
 #define MAX_ICONS 32
-static struct desktop_icon desktop_icons[MAX_ICONS];
-static int desktop_icon_count = 0;
+WINMAN_STATE struct desktop_icon desktop_icons[MAX_ICONS];
+WINMAN_STATE int desktop_icon_count WINMAN_STATE_INIT(0);
 
 /* Desktop Wallpaper */
-static struct bmp_image wallpaper_img;
-static int wallpaper_loaded = 0;
+WINMAN_STATE struct bmp_image wallpaper_img;
+WINMAN_STATE int wallpaper_loaded WINMAN_STATE_INIT(0);
 
 /* Start Menu */
 
@@ -50,16 +68,24 @@ static int wallpaper_loaded = 0;
 #define START_MENU_ITEM_H 24
 #define START_MENU_PAD 4
 
+#define DOUBLE_CLICK_TICKS 370u
+#define DOUBLE_CLICK_SLOP 4
+#define CLIENT_DIM_HARD_LIMIT 2048
+
 /* Pinned entries, always first and always in this order. Their labels are
  * nicer than a filename and their presence does not depend on what happens
  * to be packaged, so a missing binary shows up as a failed spawn rather
  * than a silently absent menu item. */
-static const struct program start_menu_defaults[] = {
-  {"Shelf (Shell)", "system/bin/sh.elf"},
-  {"Desk Elf", "system/bin/deskelf.elf"},
-  {"Text Editor", "system/bin/notepad.elf"},
-  {"About", "system/bin/about.elf"}
-};
+#ifndef WINMAN_DECLARE_STATE
+const struct program start_menu_defaults[] = {
+    {"Shelf (Shell)", "system/bin/sh.elf"},
+    {"Desk Elf", "system/bin/deskelf.elf"},
+    {"Text Editor", "system/bin/notepad.elf"},
+    {"About", "system/bin/about.elf"}};
+
+#else
+extern const struct program start_menu_defaults[4];
+#endif
 
 #define START_MENU_DEFAULT_COUNT                                               \
   (int)(sizeof(start_menu_defaults) / sizeof(start_menu_defaults[0]))
@@ -69,11 +95,16 @@ static const struct program start_menu_defaults[] = {
  * a hardcoded list that goes stale the moment binaries move. Names and paths
  * are copied into the entry because the directory buffer they came from is
  * reused by the next read. */
-static const char *const start_menu_scan_dirs[] = {
-  "system/bin",
-  "usr/bin",
-  "usr/local/bin",
+#ifndef WINMAN_DECLARE_STATE
+const char *start_menu_scan_dirs[] = {
+    "system/bin",
+    "usr/bin",
+    "usr/local/bin",
 };
+
+#else
+extern const char *const start_menu_scan_dirs[3];
+#endif
 
 #define START_MENU_SCAN_DIR_COUNT                                              \
   (int)(sizeof(start_menu_scan_dirs) / sizeof(start_menu_scan_dirs[0]))
@@ -87,11 +118,10 @@ struct start_entry {
   char path[START_MENU_PATH_MAX];
 };
 
-static struct start_entry start_menu_programs[START_MENU_MAX];
-static int start_menu_count = 0;
-static int start_menu_open = 0;
-static int start_menu_hover = -1; // Index of hovered item, -1 if none
-
+WINMAN_STATE struct start_entry start_menu_programs[START_MENU_MAX];
+WINMAN_STATE int start_menu_count WINMAN_STATE_INIT(0);
+WINMAN_STATE int start_menu_open WINMAN_STATE_INIT(0);
+WINMAN_STATE int start_menu_hover WINMAN_STATE_INIT(-1);
 
 extern void *memcpy(void *, const void *, size_t);
 extern void *memset(void *, int, size_t);
@@ -106,22 +136,20 @@ extern void free(void *);
  * because GEOMETRY + DRAG sit ahead of the helper bag. */
 struct window;
 struct console;
-static void *aligned_page_alloc(size_t npages, void **out_raw);
-static int window_count(void);
-static int is_minimized(int handle);
-static struct window *find_handle(int handle);
-static struct console *con_for_handle(int handle);
-static void con_redraw(struct console *c);
-static void titlebar_btn_rect(int win_x, int win_y, int outer_w,
-                              int idx_from_right, int *bx, int *by, int *bw,
-                              int *bh);
+int window_count(void);
+int is_minimized(int handle);
+struct window *find_handle(int handle);
+struct console *con_for_handle(int handle);
+void con_redraw(struct console *c);
+void titlebar_btn_rect(int win_x, int win_y, int outer_w, int idx_from_right,
+                       int *bx, int *by, int *bw, int *bh);
 
 /* Modal prompt. Defined down with the other IPC handlers but drawn from
  * compose() and driven from pump_input(), both of which come earlier. */
-static void draw_prompt(void);
-static void prompt_abandon_for_owner(int owner_pid);
-static int prompt_handle_key(int keycode, int shift);
-static int prompt_handle_click(int mx, int my);
+void draw_prompt(void);
+void prompt_abandon_for_owner(int owner_pid);
+int prompt_handle_key(int keycode, int shift);
+int prompt_handle_click(int mx, int my);
 
 #define CURSOR_BMP_PATH "system/icons/cursor.bmp"
 
@@ -133,10 +161,11 @@ static int prompt_handle_click(int mx, int my);
 #define COLOR_BORDER 0x00000000u
 #define COLOR_FILL 0x00FFFFFFu
 
-static struct bmp_image cursor_img; /* pixels == 0 until a load succeeds */
-static uint32_t cursor_under[CURSOR_MAX_DRAW_DIM * CURSOR_MAX_DRAW_DIM];
+WINMAN_STATE struct bmp_image cursor_img;
+WINMAN_STATE uint32_t cursor_under[CURSOR_MAX_DRAW_DIM * CURSOR_MAX_DRAW_DIM];
 
-static const uint8_t fallback_cursor_mask[CURSOR_H][CURSOR_W] = {
+#ifndef WINMAN_DECLARE_STATE
+const uint8_t fallback_cursor_mask[CURSOR_H][CURSOR_W] = {
     {1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, {1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
     {1, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0}, {1, 2, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0},
     {1, 2, 2, 2, 1, 0, 0, 0, 0, 0, 0, 0}, {1, 2, 2, 2, 2, 1, 0, 0, 0, 0, 0, 0},
@@ -144,6 +173,9 @@ static const uint8_t fallback_cursor_mask[CURSOR_H][CURSOR_W] = {
     {1, 2, 2, 1, 1, 1, 1, 1, 0, 0, 0, 0}, {1, 1, 0, 0, 1, 2, 2, 1, 0, 0, 0, 0},
     {0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
 };
+#else
+extern const uint8_t fallback_cursor_mask[CURSOR_H][CURSOR_W];
+#endif
 
 #define DESKTOP_BG 0x00008080u /* teal , Win3-ish                        */
 #define CHROME_BG 0x00C0C0C0u
@@ -153,8 +185,8 @@ static const uint8_t fallback_cursor_mask[CURSOR_H][CURSOR_W] = {
 #define CONSOLE_FG 0x00FFFFFFu
 #define CONSOLE_BG 0x00000000u
 
-#define MENU_BG       TASKBAR_BTN_BG
-#define MENU_TEXT     TASKBAR_BTN_TEXT
+#define MENU_BG TASKBAR_BTN_BG
+#define MENU_TEXT TASKBAR_BTN_TEXT
 #define MENU_HOVER_BG TASKBAR_BTN_BG_FOCUS
 #define MENU_HOVER_FG TASKBAR_BTN_TEXT_FOC
 
@@ -236,7 +268,7 @@ static const uint8_t fallback_cursor_mask[CURSOR_H][CURSOR_W] = {
 #define HIT_BTN_MAX 5
 #define HIT_BTN_MIN 6
 #define HIT_START_MENU 7
-#define HIT_START_BTN  8
+#define HIT_START_BTN 8
 #define HIT_TASKBAR_BTN 9
 /* Status strip: opaque chrome, so it swallows the click rather than
  * forwarding it to the client at coordinates outside the client surface. */
@@ -260,8 +292,8 @@ static const uint8_t fallback_cursor_mask[CURSOR_H][CURSOR_W] = {
 #define TB_START_ICON_MAX_DIM 256
 #define TB_START_ICON_PAD 2
 
-
-static const uint8_t fallback_taskbar_start_mask[24][24] = {
+#ifndef WINMAN_DECLARE_STATE
+const uint8_t fallback_taskbar_start_mask[24][24] = {
     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
@@ -285,13 +317,16 @@ static const uint8_t fallback_taskbar_start_mask[24][24] = {
     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
-};
+    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}};
+#else
+extern const uint8_t fallback_taskbar_start_mask[24][24];
+#endif
 
 /* title-bar button glyphs. 0 = background (titlebar btn bg), 1 = foreground.
  * Drawn through draw_button_mask which fills the rect with `bg` first then
  * stamps `fg` only where the mask is 1. */
-static const uint8_t fallback_btn_close_mask[TB_BTN_SIZE][TB_BTN_SIZE] = {
+#ifndef WINMAN_DECLARE_STATE
+const uint8_t fallback_btn_close_mask[TB_BTN_SIZE][TB_BTN_SIZE] = {
     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
     {0, 0, 1, 1, 0, 0, 0, 0, 1, 1, 0, 0}, {0, 0, 1, 1, 1, 0, 0, 1, 1, 1, 0, 0},
     {0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0}, {0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0},
@@ -299,8 +334,12 @@ static const uint8_t fallback_btn_close_mask[TB_BTN_SIZE][TB_BTN_SIZE] = {
     {0, 0, 1, 1, 1, 0, 0, 1, 1, 1, 0, 0}, {0, 0, 1, 1, 0, 0, 0, 0, 1, 1, 0, 0},
     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
 };
+#else
+extern const uint8_t fallback_btn_close_mask[TB_BTN_SIZE][TB_BTN_SIZE];
+#endif
 
-static const uint8_t fallback_btn_maximise_mask[TB_BTN_SIZE][TB_BTN_SIZE] = {
+#ifndef WINMAN_DECLARE_STATE
+const uint8_t fallback_btn_maximise_mask[TB_BTN_SIZE][TB_BTN_SIZE] = {
     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
     {0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0}, {0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0},
     {0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0}, {0, 0, 1, 1, 0, 0, 0, 0, 1, 1, 0, 0},
@@ -308,8 +347,12 @@ static const uint8_t fallback_btn_maximise_mask[TB_BTN_SIZE][TB_BTN_SIZE] = {
     {0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0}, {0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0},
     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
 };
+#else
+extern const uint8_t fallback_btn_maximise_mask[TB_BTN_SIZE][TB_BTN_SIZE];
+#endif
 
-static const uint8_t fallback_btn_hide_mask[TB_BTN_SIZE][TB_BTN_SIZE] = {
+#ifndef WINMAN_DECLARE_STATE
+const uint8_t fallback_btn_hide_mask[TB_BTN_SIZE][TB_BTN_SIZE] = {
     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, {0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0},
@@ -317,6 +360,9 @@ static const uint8_t fallback_btn_hide_mask[TB_BTN_SIZE][TB_BTN_SIZE] = {
     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
 };
+#else
+extern const uint8_t fallback_btn_hide_mask[TB_BTN_SIZE][TB_BTN_SIZE];
+#endif
 
 /* Handles reserved for the built-in consoles. Real client window handles are
  * derived from their slot index: handle = (slot_index + 1), so they always
@@ -334,15 +380,14 @@ static const uint8_t fallback_btn_hide_mask[TB_BTN_SIZE][TB_BTN_SIZE] = {
 #define HANDLE_CONSOLE_BASE 128
 #define HANDLE_CONSOLE HANDLE_CONSOLE_BASE /* the boot console, on TTY 0 */
 
-static uint32_t *fb_hw;
-static uint32_t *fb;           /* page-aligned compositor backbuffer */
-static size_t fb_bytes;        /* bytes in the current visible row span */
-static size_t fb_capacity;     /* allocated compositor-buffer bytes */
-static size_t fb_mapped_bytes; /* framebuffer prefix mapped in this task */
-static int fb_registered;      /* kernel has cached the current backbuffer */
-static int fb_w, fb_h, fb_stride;
-static int desktop_dirty = 0;
-static int dirty_x = 0, dirty_y = 0, dirty_w = 0, dirty_h = 0;
+WINMAN_STATE uint32_t *fb_hw;
+WINMAN_STATE uint32_t *fb;
+WINMAN_STATE size_t fb_bytes;
+WINMAN_STATE size_t fb_capacity;
+WINMAN_STATE size_t fb_mapped_bytes;
+WINMAN_STATE int fb_registered;
+WINMAN_STATE int fb_w, fb_h, fb_stride;
+WINMAN_STATE struct gfx_damage desktop_damage;
 
 struct window {
   uint32_t *surface;  /* page-aligned, owned by winman          */
@@ -409,18 +454,18 @@ struct drag_state {
   int have_ghost;
   int last_gx, last_gy, last_gw, last_gh;
 };
-static struct drag_state drag;
+WINMAN_STATE struct drag_state drag;
 
-static struct window windows[MAX_WINDOWS];
-static int focused_handle = 0;
+WINMAN_STATE struct window windows[MAX_WINDOWS];
+WINMAN_STATE int focused_handle WINMAN_STATE_INIT(0);
 
 /* Z-order: handles ordered front-to-back. z_order[0] is topmost (drawn
  * last, hit-tested first). Consoles take slots too , they can be raised
  * over client windows just like any other surface. Re-bound on every
  * create / focus / destroy so the array always reflects current stacking. */
 #define MAX_Z (CON_MAX + MAX_WINDOWS)
-static int z_order[MAX_Z];
-static int z_count = 0;
+WINMAN_STATE int z_order[MAX_Z];
+WINMAN_STATE int z_count WINMAN_STATE_INIT(0);
 
 /* One console window mirroring one kernel TTY channel. The shell bound to
  * `tty` writes there and reads its keystrokes from there, so two consoles
@@ -430,27 +475,43 @@ static int z_count = 0;
  * button kills, and what the reaper watches: when it dies (the user typed
  * `exit`), the console goes with it. */
 struct console {
-    struct window win;
+  struct window win;
 
-    int tty;
-    int pid;
+  int tty;
+  int pid;
 
-    char *cells;
-    int cols, rows;
-    int cx, cy;
-    int scale;
+  char *cells;
+  int cols, rows;
+  int cx, cy;
+  int scale;
 
-    /* Alt-screen buffers for push/pop, allocated with the surface and the
-     * same size as it. saved_valid gates pop so a spurious pop without a
-     * prior push is a no-op. */
-    uint32_t *backing;
-    void *backing_raw;
-    char *saved_cells;
-    int saved_cx, saved_cy;
-    int saved_valid;
+  /* Alt-screen buffers for push/pop, allocated with the surface and the
+   * same size as it. saved_valid gates pop so a spurious pop without a
+   * prior push is a no-op. */
+  uint32_t *backing;
+  void *backing_raw;
+  char *saved_cells;
+  int saved_cx, saved_cy;
+  int saved_valid;
 };
 
 /* cons[0] mirrors TTY_KERNEL and is the boot console: it is always present,
  * its shell was started by the kernel rather than by winman, and closing it
  * is allowed , the kernel no longer depends on that shell being alive. */
-static struct console cons[CON_MAX];
+WINMAN_STATE struct console cons[CON_MAX];
+
+/* A handful of event-loop values are shared with lifecycle and prompt
+ * modules. They remain private to the Winman binary despite external C
+ * linkage because this header is not installed as a userspace API. */
+extern int close_pending_handle;
+extern u32 close_pending_tick;
+extern struct prompt_state prompt;
+extern int shift_held;
+extern int ctrl_held;
+
+#include "winman_prototypes.h"
+
+#undef WINMAN_STATE
+#undef WINMAN_STATE_INIT
+
+#endif

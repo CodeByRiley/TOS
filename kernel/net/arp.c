@@ -16,22 +16,22 @@
 enum arp_state { ARP_FREE = 0, ARP_PENDING, ARP_VALID };
 
 struct arp_entry {
-  uint8_t ip[IPV4_ALEN];
-  uint8_t mac[ETH_ALEN];
-  uint8_t state;
-  uint8_t retries;
+  u8 ip[IPV4_ALEN];
+  u8 mac[ETH_ALEN];
+  u8 state;
+  u8 retries;
   /* Expiry while VALID, next retransmit while PENDING. One field because
    * an entry is never both, and two would invite updating the wrong one. */
-  uint64_t deadline;
+  u64 deadline;
 };
 
 struct arp_pending {
   int in_use;
   int entry; /* index into cache[] */
-  uint16_t type;
-  uint16_t payload_len;
-  uint64_t queued_at;
-  uint8_t frame[ETH_FRAME_MAX];
+  u16 type;
+  u16 payload_len;
+  u64 queued_at;
+  u8 frame[ETH_FRAME_MAX];
 };
 
 static struct {
@@ -40,11 +40,11 @@ static struct {
   struct arp_pending pending[ARP_PENDING_SLOTS];
 } arp = {.lock = SPINLOCK_INIT};
 
-static uint64_t arp_deadline(uint32_t ms) {
-  uint32_t hz = pit_get_freq();
+static u64 arp_deadline(u32 ms) {
+  u32 hz = pit_get_freq();
   if (hz == 0)
     hz = 1000;
-  uint64_t ticks = ((uint64_t)ms * hz) / 1000u;
+  u64 ticks = ((u64)ms * hz) / 1000u;
   if (ticks == 0)
     ticks = 1;
   return pit_ticks() + ticks;
@@ -52,7 +52,7 @@ static uint64_t arp_deadline(uint32_t ms) {
 
 /* ---------------- cache, lock held ------------------------------------- */
 
-static struct arp_entry *arp_find_locked(const uint8_t *ip) {
+static struct arp_entry *arp_find_locked(const u8 *ip) {
   for (int i = 0; i < ARP_CACHE_ENTRIES; i++) {
     if (arp.cache[i].state != ARP_FREE && ipv4_addr_equal(arp.cache[i].ip, ip))
       return &arp.cache[i];
@@ -102,7 +102,7 @@ static struct arp_pending *arp_pending_alloc_locked(void) {
 /* ---------------- transmit --------------------------------------------- */
 
 static void arp_fill(struct arp_ipv4 *pkt, const struct netif *nif,
-                     uint16_t oper, const uint8_t *tha, const uint8_t *tpa) {
+                     u16 oper, const u8 *tha, const u8 *tpa) {
   memset(pkt, 0, sizeof(*pkt));
   pkt->htype = to_be16(ARP_HTYPE_ETHERNET);
   pkt->ptype = to_be16(ETH_TYPE_IPV4);
@@ -116,7 +116,7 @@ static void arp_fill(struct arp_ipv4 *pkt, const struct netif *nif,
   memcpy(pkt->tpa, tpa, IPV4_ALEN);
 }
 
-void arp_request(const uint8_t ip[IPV4_ALEN]) {
+void arp_request(const u8 ip[IPV4_ALEN]) {
   struct netif *nif = netif_get();
   if (!nif || !ip)
     return;
@@ -153,19 +153,19 @@ void arp_prime_gateway(void) {
  * transmitting under it would put a driver MMIO write inside a spinlock the
  * e1000 IRQ path will also take. One frame is copied out per pass so the
  * stack cost stays at a single 1514-byte buffer however deep the pool is. */
-static void arp_flush_pending(int entry_index, const uint8_t mac[ETH_ALEN]) {
+static void arp_flush_pending(int entry_index, const u8 mac[ETH_ALEN]) {
   for (;;) {
-    uint8_t frame[ETH_FRAME_MAX];
-    uint16_t payload_len = 0;
-    uint16_t type = 0;
+    u8 frame[ETH_FRAME_MAX];
+    u16 payload_len = 0;
+    u16 type = 0;
     int found = 0;
 
-    uint64_t flags = spin_lock_irqsave(&arp.lock);
+    u64 flags = spin_lock_irqsave(&arp.lock);
     for (int i = 0; i < ARP_PENDING_SLOTS; i++) {
       struct arp_pending *p = &arp.pending[i];
       if (!p->in_use || p->entry != entry_index)
         continue;
-      memcpy(frame, p->frame, (size_t)ETH_HDR_LEN + p->payload_len);
+      memcpy(frame, p->frame, (usize)ETH_HDR_LEN + p->payload_len);
       payload_len = p->payload_len;
       type = p->type;
       p->in_use = 0;
@@ -180,11 +180,11 @@ static void arp_flush_pending(int entry_index, const uint8_t mac[ETH_ALEN]) {
   }
 }
 
-int arp_lookup(const uint8_t ip[IPV4_ALEN], uint8_t mac_out[ETH_ALEN]) {
+int arp_lookup(const u8 ip[IPV4_ALEN], u8 mac_out[ETH_ALEN]) {
   if (!ip || !mac_out)
     return -1;
 
-  uint64_t flags = spin_lock_irqsave(&arp.lock);
+  u64 flags = spin_lock_irqsave(&arp.lock);
   struct arp_entry *e = arp_find_locked(ip);
   int hit = e && e->state == ARP_VALID;
   if (hit)
@@ -194,19 +194,19 @@ int arp_lookup(const uint8_t ip[IPV4_ALEN], uint8_t mac_out[ETH_ALEN]) {
   return hit ? 0 : -1;
 }
 
-int arp_send_or_queue(const uint8_t ip[IPV4_ALEN], uint8_t *frame,
-                      uint16_t payload_len, uint16_t type) {
+int arp_send_or_queue(const u8 ip[IPV4_ALEN], u8 *frame,
+                      u16 payload_len, u16 type) {
   struct netif *nif = netif_get();
   if (!nif || !ip || !frame)
     return -1;
-  if ((size_t)ETH_HDR_LEN + payload_len > ETH_FRAME_MAX)
+  if ((usize)ETH_HDR_LEN + payload_len > ETH_FRAME_MAX)
     return -1;
 
-  uint8_t mac[ETH_ALEN];
+  u8 mac[ETH_ALEN];
   int resolved = 0;
   int ask = 0;
 
-  uint64_t flags = spin_lock_irqsave(&arp.lock);
+  u64 flags = spin_lock_irqsave(&arp.lock);
   struct arp_entry *e = arp_find_locked(ip);
 
   if (e && e->state == ARP_VALID) {
@@ -229,7 +229,7 @@ int arp_send_or_queue(const uint8_t ip[IPV4_ALEN], uint8_t *frame,
     p->type = type;
     p->payload_len = payload_len;
     p->queued_at = pit_ticks();
-    memcpy(p->frame, frame, (size_t)ETH_HDR_LEN + payload_len);
+    memcpy(p->frame, frame, (usize)ETH_HDR_LEN + payload_len);
   }
   spin_unlock_irqrestore(&arp.lock, flags);
 
@@ -247,10 +247,10 @@ int arp_send_or_queue(const uint8_t ip[IPV4_ALEN], uint8_t *frame,
  * and create one only when the packet was addressed to us. The refresh is
  * what saves a round trip on the common sequence where a host ARPs us and
  * then immediately sends the traffic it was resolving for. */
-static void arp_learn(const uint8_t *ip, const uint8_t *mac, int may_create) {
+static void arp_learn(const u8 *ip, const u8 *mac, int may_create) {
   int entry_index = -1;
 
-  uint64_t flags = spin_lock_irqsave(&arp.lock);
+  u64 flags = spin_lock_irqsave(&arp.lock);
   struct arp_entry *e = arp_find_locked(ip);
   if (!e && may_create)
     e = arp_alloc_locked();
@@ -268,8 +268,8 @@ static void arp_learn(const uint8_t *ip, const uint8_t *mac, int may_create) {
     arp_flush_pending(entry_index, mac);
 }
 
-void arp_input(const struct eth_hdr *eth, const uint8_t *payload,
-               uint16_t len) {
+void arp_input(const struct eth_hdr *eth, const u8 *payload,
+               u16 len) {
   log_write_fmt(KERNEL, LOG_INFO, "ARP: input eth=%p payload=%p len=%u",
                 (const void *)eth, (const void *)payload, len);
 
@@ -298,8 +298,8 @@ void arp_input(const struct eth_hdr *eth, const uint8_t *payload,
 
   const struct arp_ipv4 *pkt = (const struct arp_ipv4 *)payload;
 
-  uint16_t htype = from_be16(pkt->htype);
-  uint16_t ptype = from_be16(pkt->ptype);
+  u16 htype = from_be16(pkt->htype);
+  u16 ptype = from_be16(pkt->ptype);
 
   log_write_fmt(KERNEL, LOG_INFO,
                 "ARP: header htype=0x%04x ptype=0x%04x hlen=%u plen=%u", htype,
@@ -331,7 +331,7 @@ void arp_input(const struct eth_hdr *eth, const uint8_t *payload,
     return;
   }
 
-  uint16_t oper = from_be16(pkt->oper);
+  u16 oper = from_be16(pkt->oper);
 
   log_write_fmt(KERNEL, LOG_INFO, "ARP: operation=0x%04x%s", oper,
                 oper == ARP_OP_REQUEST ? " request"
@@ -399,11 +399,11 @@ void arp_tick(void) {
   if (!netif_get())
     return;
 
-  uint8_t retry_ips[ARP_CACHE_ENTRIES][IPV4_ALEN];
+  u8 retry_ips[ARP_CACHE_ENTRIES][IPV4_ALEN];
   int retry_count = 0;
-  uint64_t now = pit_ticks();
+  u64 now = pit_ticks();
 
-  uint64_t flags = spin_lock_irqsave(&arp.lock);
+  u64 flags = spin_lock_irqsave(&arp.lock);
   for (int i = 0; i < ARP_CACHE_ENTRIES; i++) {
     struct arp_entry *e = &arp.cache[i];
     if (e->state == ARP_FREE || now < e->deadline)
@@ -433,7 +433,7 @@ void arp_tick(void) {
 }
 
 void arp_flush(void) {
-  uint64_t flags = spin_lock_irqsave(&arp.lock);
+  u64 flags = spin_lock_irqsave(&arp.lock);
   memset(arp.cache, 0, sizeof(arp.cache));
   for (int i = 0; i < ARP_PENDING_SLOTS; i++)
     arp.pending[i].in_use = 0;

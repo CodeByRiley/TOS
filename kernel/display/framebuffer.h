@@ -15,41 +15,42 @@
 #ifndef FRAMEBUFFER_H
 #define FRAMEBUFFER_H
 
+#include <utilities/types.h>
 #include <stdint.h>
 
 #define FB_PRESENT_MAX_RECTS 16
 
 /* Shared with userspace's syscall ABI. Coordinates and extents are pixels. */
 struct fb_rect {
-    uint32_t x, y, w, h;
+    u32 x, y, w, h;
 };
 
 _Static_assert(sizeof(struct fb_rect) == 16,
                "fb_rect must match the userspace ABI");
 
 /* Probe MB2 tag 8 and prep the contiguous-page backend. */
-int       framebuffer_init(uint64_t mb2_addr);
+int       framebuffer_init(u64 mb2_addr);
 
 struct gfx_surface framebuffer_get_gfx_surface(void);
 
 /* Both mark their own damage; callers do not need a separate mark call. */
-void      framebuffer_clear(uint32_t color);
-void      framebuffer_putpixel(uint32_t x, uint32_t y, uint32_t color);
+void      framebuffer_clear(u32 color);
+void      framebuffer_putpixel(u32 x, u32 y, u32 color);
 
-uint32_t  framebuffer_width(void);
-uint32_t  framebuffer_height(void);
+u32  framebuffer_width(void);
+u32  framebuffer_height(void);
 
 /* Direct buffer pointer (used by DOOM and gfx). Writes here still need a
  * framebuffer_mark_damage() to actually present in virtio mode. */
-uint32_t *framebuffer_buffer(void);
-uint64_t  framebuffer_phys(void);
-uint32_t  framebuffer_pitch(void);
+u32 *framebuffer_buffer(void);
+u64  framebuffer_phys(void);
+u32  framebuffer_pitch(void);
 
 /* Scatter-gather page accessors used by sys_fb_map. In MB2 mode the pages
  * form a contiguous run from the GRUB base; in virtio-gpu mode they may
  * be arbitrarily scattered. Iterate [0, num_pages) and map each. */
-uint32_t  framebuffer_num_pages(void);
-uint64_t  framebuffer_phys_for_page(uint32_t idx);
+u32  framebuffer_num_pages(void);
+u64  framebuffer_phys_for_page(u32 idx);
 
 /* One-shot switch to the virtio-gpu backend. Allocates a reusable 64 MiB
  * backing pool and an oversized host resource so ordinary resizes only change
@@ -62,7 +63,7 @@ int       framebuffer_check_resize(void);
 
 /* Increments after a successful virtio framebuffer resize. Consumers that
  * cache screen dimensions can poll this without submitting GPU commands. */
-uint32_t  framebuffer_resize_generation(void);
+u32  framebuffer_resize_generation(void);
 
 /* Push accumulated damage to the host scanout. No-op in MB2 mode (the
  * framebuffer IS the scanout). Called by the tty render loop every
@@ -72,8 +73,8 @@ void      framebuffer_present(void);
 /* Add (x,y,w,h) to the pending damage rect. Anything that writes pixels
  * should call this so the next present transfers the touched region.
  * Clipped to framebuffer bounds. */
-void      framebuffer_mark_damage(uint32_t x, uint32_t y,
-                                   uint32_t w, uint32_t h);
+void      framebuffer_mark_damage(u32 x, u32 y,
+                                   u32 w, u32 h);
 
 /* Force the damage and scanout locks unlocked so the panic renderer can
  * draw. A fault can land anywhere , including inside framebuffer_present
@@ -88,24 +89,24 @@ void      framebuffer_panic_takeover(void);
  * are split into scanline lanes and dispatched to the AP work queue; CPU 0
  * processes one lane and supplies the single-core fallback. This call is
  * synchronous, so the caller may modify or release the source after return. */
-int       framebuffer_present_user(uint64_t *user_pml4, int owner_pid,
-                                   uint64_t source, uint32_t source_pitch,
+int       framebuffer_present_user(u64 *user_pml4, int owner_pid,
+                                   u64 source, u32 source_pitch,
                                    const struct fb_rect *rects,
-                                   uint32_t rect_count);
+                                   u32 rect_count);
 
 /* Pin a compositor backbuffer logically by snapshotting its physical pages.
  * The VM layer rejects munmap over this range until unregister or owner exit. */
-int       framebuffer_register_user(uint64_t *user_pml4, int owner_pid,
-                                    uint64_t source, uint32_t source_pitch,
-                                    uint64_t source_bytes);
-int       framebuffer_unregister_user(uint64_t *user_pml4, int owner_pid);
-int       framebuffer_user_buffer_registered(uint64_t *user_pml4,
-                                              int owner_pid, uint64_t source,
-                                              uint32_t source_pitch,
-                                              uint64_t source_bytes);
-int       framebuffer_registered_range_overlaps(uint64_t *user_pml4,
-                                                 uint64_t base,
-                                                 uint64_t bytes);
+int       framebuffer_register_user(u64 *user_pml4, int owner_pid,
+                                    u64 source, u32 source_pitch,
+                                    u64 source_bytes);
+int       framebuffer_unregister_user(u64 *user_pml4, int owner_pid);
+int       framebuffer_user_buffer_registered(u64 *user_pml4,
+                                              int owner_pid, u64 source,
+                                              u32 source_pitch,
+                                              u64 source_bytes);
+int       framebuffer_registered_range_overlaps(u64 *user_pml4,
+                                                 u64 base,
+                                                 u64 bytes);
 
 /* Kthread entry that polls + presents at PIT tick rate. Spawn once after
  * virtio attach; runs forever. Decouples the synchronous virtio ACK

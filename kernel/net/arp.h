@@ -31,23 +31,23 @@
 #define ARP_OP_REPLY 2U
 
 struct arp_ipv4 {
-  uint16_t htype;
-  uint16_t ptype;
-  uint8_t hlen;
-  uint8_t plen;
-  uint16_t oper;
-  uint8_t sha[ETH_ALEN];
-  uint8_t spa[IPV4_ALEN];
-  uint8_t tha[ETH_ALEN];
-  uint8_t tpa[IPV4_ALEN];
+  u16 htype;
+  u16 ptype;
+  u8 hlen;
+  u8 plen;
+  u16 oper;
+  u8 sha[ETH_ALEN];
+  u8 spa[IPV4_ALEN];
+  u8 tha[ETH_ALEN];
+  u8 tpa[IPV4_ALEN];
 } PACKED;
 
 /* Called by eth_input for ETH_TYPE_ARP frames. */
-void arp_input(const struct eth_hdr *eth, const uint8_t *payload, uint16_t len);
+void arp_input(const struct eth_hdr *eth, const u8 *payload, u16 len);
 
 /* Cache lookup only. 0 and mac_out filled on a hit, -1 on a miss. Sends
  * nothing , use arp_send_or_queue() when there is a frame to deliver. */
-int arp_lookup(const uint8_t ip[IPV4_ALEN], uint8_t mac_out[ETH_ALEN]);
+int arp_lookup(const u8 ip[IPV4_ALEN], u8 mac_out[ETH_ALEN]);
 
 /* Deliver `frame` (ETH_HDR_LEN of headroom + payload_len of payload) to
  * `ip`, resolving the MAC first.
@@ -56,11 +56,11 @@ int arp_lookup(const uint8_t ip[IPV4_ALEN], uint8_t mac_out[ETH_ALEN]);
  *  -1  no interface, bad argument, or the frame could not be queued
  * A return of 1 is success from the caller's point of view: the frame goes
  * out when the reply arrives, or is dropped after ARP_MAX_RETRIES. */
-int arp_send_or_queue(const uint8_t ip[IPV4_ALEN], uint8_t *frame,
-                      uint16_t payload_len, uint16_t type);
+int arp_send_or_queue(const u8 ip[IPV4_ALEN], u8 *frame,
+                      u16 payload_len, u16 type);
 
 /* Broadcast a request for `ip` without queueing anything. */
-void arp_request(const uint8_t ip[IPV4_ALEN]);
+void arp_request(const u8 ip[IPV4_ALEN]);
 
 /* Gratuitous ARP: a broadcast request for our own address. Every host on
  * the segment caches the binding without having to ask, and anything

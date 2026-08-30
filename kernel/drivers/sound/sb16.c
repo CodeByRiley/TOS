@@ -11,13 +11,13 @@
 
 /* Port base and IRQ of the card we actually bound to. isa.c offers both
  * 0x220 and 0x240, so nothing here may assume the standard base. */
-static uint16_t sb16_base = SB16_DEFAULT_IO;
-static uint8_t  sb16_irq  = SB16_DEFAULT_IRQ;
+static u16 sb16_base = SB16_DEFAULT_IO;
+static u8  sb16_irq  = SB16_DEFAULT_IRQ;
 
 static int sb16_is_playing = 0;
 static int sb16_irq_hooked = 0;
-static uint8_t *sb16_dma_buffer_virt;
-static uint64_t sb16_dma_buffer_phys;
+static u8 *sb16_dma_buffer_virt;
+static u64 sb16_dma_buffer_phys;
 
 enum playback_kind {
     PLAYBACK_NONE,
@@ -29,22 +29,22 @@ enum playback_kind {
 static enum playback_kind playback_kind = PLAYBACK_NONE;
 
 /* Legacy kernel-only looping source used by sb16_play_wav(). */
-static uint8_t *current_audio_data = 0;  // Pointer to the raw WAV PCM data
-static uint32_t current_audio_size = 0;  // Total size of the WAV data
-static uint32_t audio_position = 0;      // How many bytes we've copied so far
+static u8 *current_audio_data = 0;  // Pointer to the raw WAV PCM data
+static u32 current_audio_size = 0;  // Total size of the WAV data
+static u32 audio_position = 0;      // How many bytes we've copied so far
 static int      sb16_use_first_half = 1; // Half completed by the next IRQ
 
 /* Kernel-owned queue for userspace PCM. Keeping user pointers out of the IRQ
  * path is essential: the interrupted task may have a different CR3 from the
  * process that supplied the samples. */
-static uint8_t stream_ring[SB16_STREAM_BUFFER_SIZE];
-static uint32_t stream_read_pos;
-static uint32_t stream_write_pos;
-static uint32_t stream_used;
-static uint32_t stream_dma_valid[2];
-static uint32_t stream_dma_pending;
-static uint32_t stream_rate = 44100;
-static uint32_t stream_underruns;
+static u8 stream_ring[SB16_STREAM_BUFFER_SIZE];
+static u32 stream_read_pos;
+static u32 stream_write_pos;
+static u32 stream_used;
+static u32 stream_dma_valid[2];
+static u32 stream_dma_pending;
+static u32 stream_rate = 44100;
+static u32 stream_underruns;
 static int stream_owner_pid;
 static int stream_paused;
 static int stream_draining;
@@ -53,18 +53,18 @@ static int stream_volume = 100;
 _Static_assert((SB16_STREAM_BUFFER_SIZE & (SB16_STREAM_BUFFER_SIZE - 1)) == 0,
                "SB16 stream ring size must be a power of two");
 
-static uint64_t irq_save(void) {
-    uint64_t rflags;
+static u64 irq_save(void) {
+    u64 rflags;
     __asm__ volatile ("pushfq; popq %0; cli" : "=r"(rflags) :: "memory");
     return rflags;
 }
 
-static void irq_restore(uint64_t rflags) {
+static void irq_restore(u64 rflags) {
     if (rflags & (1ULL << 9))
         __asm__ volatile ("sti" ::: "memory");
 }
 
-void sb16_dsp_write(uint8_t command) {
+void sb16_dsp_write(u8 command) {
     // Add a timeout to prevent infinite hangs if the DSP is stuck
     for (int i = 0; i < 1000000; i++) {
         if (!(inb(sb16_base + SB16_REG_DSP_WSTAT) & 0x80)) {
@@ -75,7 +75,7 @@ void sb16_dsp_write(uint8_t command) {
     log_write("SB16: DSP write timeout!", KERNEL, LOG_WARN);
 }
 
-void sb16_mixer_write(uint8_t index, uint8_t value) {
+void sb16_mixer_write(u8 index, u8 value) {
     outb(sb16_base + SB16_REG_MIXER_ADDR, index);
     outb(sb16_base + SB16_REG_MIXER_DATA, value);
 }
@@ -93,8 +93,8 @@ void sb16_set_volume(int percent) {
     if (percent > 100)
         percent = 100;
 
-    uint8_t step = (uint8_t)((percent * 15) / 100);
-    uint8_t level = (uint8_t)((step << 4) | step);
+    u8 step = (u8)((percent * 15) / 100);
+    u8 level = (u8)((step << 4) | step);
 
     sb16_mixer_write(SB16_MIXER_MASTER_VOL, level);
     sb16_mixer_write(SB16_MIXER_VOICE_VOL, level);
@@ -112,15 +112,15 @@ void sb16_ack_irq(void) {
     (void)inb(sb16_base + SB16_REG_DSP_RSTAT);
 }
 
-static uint32_t stream_take(void *destination, uint32_t bytes) {
-    uint32_t take = stream_used < bytes ? stream_used : bytes;
-    uint32_t first = SB16_STREAM_BUFFER_SIZE - stream_read_pos;
+static u32 stream_take(void *destination, u32 bytes) {
+    u32 take = stream_used < bytes ? stream_used : bytes;
+    u32 first = SB16_STREAM_BUFFER_SIZE - stream_read_pos;
     if (first > take)
         first = take;
 
     memcpy(destination, stream_ring + stream_read_pos, first);
     if (take > first)
-        memcpy((uint8_t *)destination + first, stream_ring, take - first);
+        memcpy((u8 *)destination + first, stream_ring, take - first);
 
     stream_read_pos = (stream_read_pos + take) &
                       (SB16_STREAM_BUFFER_SIZE - 1);
@@ -128,10 +128,10 @@ static uint32_t stream_take(void *destination, uint32_t bytes) {
     return take;
 }
 
-static uint32_t stream_fill_dma_half(int half_index) {
-    uint32_t half_bytes = SB16_DMA_BUFFER_SIZE / 2;
-    uint8_t *target = sb16_dma_buffer_virt + half_index * half_bytes;
-    uint32_t copied = stream_take(target, half_bytes);
+static u32 stream_fill_dma_half(int half_index) {
+    u32 half_bytes = SB16_DMA_BUFFER_SIZE / 2;
+    u8 *target = sb16_dma_buffer_virt + half_index * half_bytes;
+    u32 copied = stream_take(target, half_bytes);
 
     if (copied < half_bytes) {
         memset(target + copied, 0, half_bytes - copied);
@@ -152,9 +152,9 @@ void sb16_irq_handler(void) {
     if (!sb16_is_playing)
         return;
 
-    uint32_t half = SB16_DMA_BUFFER_SIZE / 2;
+    u32 half = SB16_DMA_BUFFER_SIZE / 2;
     int half_index = sb16_use_first_half ? 0 : 1;
-    uint8_t *target = sb16_dma_buffer_virt + half_index * half;
+    u8 *target = sb16_dma_buffer_virt + half_index * half;
 
     if (playback_kind == PLAYBACK_STREAM) {
         if (stream_dma_pending >= stream_dma_valid[half_index])
@@ -171,10 +171,10 @@ void sb16_irq_handler(void) {
         current_audio_size == 0)
         return;
 
-    uint32_t filled = 0;
+    u32 filled = 0;
     while (filled < half) {
-        uint32_t chunk = half - filled;
-        uint32_t remaining = current_audio_size - audio_position;
+        u32 chunk = half - filled;
+        u32 remaining = current_audio_size - audio_position;
         if (chunk > remaining)
             chunk = remaining;
 
@@ -189,9 +189,9 @@ void sb16_irq_handler(void) {
 }
 
 void sb16_program_dma(void) {
-		uint16_t count = (SB16_DMA_BUFFER_SIZE / 2) - 1;
-    uint16_t addr_low = (sb16_dma_buffer_phys >> 1) & 0xFFFF;
-    uint8_t  addr_page = (sb16_dma_buffer_phys >> 16) & 0xFE;
+		u16 count = (SB16_DMA_BUFFER_SIZE / 2) - 1;
+    u16 addr_low = (sb16_dma_buffer_phys >> 1) & 0xFFFF;
+    u8  addr_page = (sb16_dma_buffer_phys >> 16) & 0xFE;
 
     outb(DMA_SLAVE_MASK, DMA_MASK_CHAN5);
     outb(DMA_SLAVE_CLEAR_FF, 0xFF);
@@ -221,7 +221,7 @@ int sb16_allocate_dma_buffer(void) {
     /* The 8237 cannot carry into the page register mid-transfer, so a
      * buffer straddling a 128 KiB boundary would silently wrap back to
      * the start of its own 128 KiB block. */
-    uint64_t last = sb16_dma_buffer_phys + SB16_DMA_BUFFER_SIZE - 1;
+    u64 last = sb16_dma_buffer_phys + SB16_DMA_BUFFER_SIZE - 1;
     if ((sb16_dma_buffer_phys / ISA_DMA16_BOUNDARY) != (last / ISA_DMA16_BOUNDARY)) {
         log_write_hex("SB16: DMA buffer crosses 128K boundary @",
                       sb16_dma_buffer_phys, KERNEL, LOG_ERROR);
@@ -231,18 +231,18 @@ int sb16_allocate_dma_buffer(void) {
         return -1;
     }
 
-    sb16_dma_buffer_virt = (uint8_t *)phys_to_virt(sb16_dma_buffer_phys);
+    sb16_dma_buffer_virt = (u8 *)phys_to_virt(sb16_dma_buffer_phys);
     memset(sb16_dma_buffer_virt, 0, SB16_DMA_BUFFER_SIZE);
     return 0;
 }
 
-void *sb16_dma_buffer(uint32_t *size_out) {
+void *sb16_dma_buffer(u32 *size_out) {
     if (size_out)
         *size_out = sb16_dma_buffer_phys ? SB16_DMA_BUFFER_SIZE : 0;
     return sb16_dma_buffer_phys ? sb16_dma_buffer_virt : 0;
 }
 
-void sb16_set_sample_rate(uint16_t rate) {
+void sb16_set_sample_rate(u16 rate) {
     /* Rate is big-endian here, unlike the block length below. */
     sb16_dsp_write(SB16_DSP_SET_RATE);
     sb16_dsp_write(rate >> 8);
@@ -261,7 +261,7 @@ void sb16_speaker_off(void) {
  *
  * Ordering matters: hook the IRQ and unmask the PIC before arming the DSP,
  * or the first block boundary can arrive with no handler to refill it. */
-static void sb16_arm(uint32_t sample_rate) {
+static void sb16_arm(u32 sample_rate) {
     if (!sb16_irq_hooked) {
         irq_install(sb16_irq, sb16_irq_handler);
         sb16_irq_hooked = 1;
@@ -272,14 +272,14 @@ static void sb16_arm(uint32_t sample_rate) {
     sb16_program_dma();
     outb(DMA_SLAVE_MASK, DMA_UNMASK_CHAN5);
 
-    sb16_set_sample_rate((uint16_t)sample_rate);
+    sb16_set_sample_rate((u16)sample_rate);
 
     sb16_dsp_write(SB16_DSP_PLAY_16BIT);
     sb16_dsp_write(SB16_MODE_SIGNED_STEREO);
 
     /* Half the buffer in 16-bit samples: bytes / 2 (width) / 2 (halves),
      * minus one. Sets IRQ cadence, not total length , see sb16.h. */
-    uint16_t count = (uint16_t)((SB16_DMA_BUFFER_SIZE / 4) - 1);
+    u16 count = (u16)((SB16_DMA_BUFFER_SIZE / 4) - 1);
     sb16_dsp_write(count & 0xFF);
     sb16_dsp_write((count >> 8) & 0xFF);
 
@@ -313,7 +313,7 @@ void sb16_play(void) {
  * must still be mapped there (or must be safe to access everywhere
  * the IRQ handler can execute).
  */
-void sb16_play_wav(uint8_t *wav_data, uint32_t wav_size) {
+void sb16_play_wav(u8 *wav_data, u32 wav_size) {
     if (!sb16_dma_buffer_phys || !wav_data || wav_size == 0) {
         log_write("SB16: play_wav with no buffer or no data", KERNEL, LOG_ERROR);
         return;
@@ -331,10 +331,10 @@ void sb16_play_wav(uint8_t *wav_data, uint32_t wav_size) {
 
     /* Pre-fill the entire DMA buffer. The device will output the
      * second half before the first interrupt occurs. */
-    uint32_t filled = 0;
+    u32 filled = 0;
     while (filled < SB16_DMA_BUFFER_SIZE) {
-        uint32_t chunk = SB16_DMA_BUFFER_SIZE - filled;
-        uint32_t remaining = wav_size - audio_position;
+        u32 chunk = SB16_DMA_BUFFER_SIZE - filled;
+        u32 remaining = wav_size - audio_position;
 
         if (chunk > remaining)
             chunk = remaining;
@@ -371,7 +371,7 @@ static void sb16_stop_locked(void) {
 }
 
 void sb16_stop(void) {
-    uint64_t rflags = irq_save();
+    u64 rflags = irq_save();
     sb16_stop_locked();
     current_audio_data = 0;
     current_audio_size = 0;
@@ -410,15 +410,15 @@ static void stream_start_locked(int force) {
     sb16_arm(stream_rate);
 }
 
-int sb16_stream_open(int owner_pid, uint32_t sample_rate,
-                     uint32_t channels, uint32_t format) {
+int sb16_stream_open(int owner_pid, u32 sample_rate,
+                     u32 channels, u32 format) {
     if (owner_pid <= 0 || channels != SB16_STREAM_CHANNELS ||
         format != SB16_STREAM_FORMAT_S16_LE ||
         sample_rate < SB16_STREAM_RATE_MIN ||
         sample_rate > SB16_STREAM_RATE_MAX)
         return SB16_STREAM_ERR_INVALID;
 
-    uint64_t rflags = irq_save();
+    u64 rflags = irq_save();
     if (!sb16_dma_buffer_phys) {
         irq_restore(rflags);
         return SB16_STREAM_ERR_NO_DEVICE;
@@ -439,26 +439,26 @@ int sb16_stream_open(int owner_pid, uint32_t sample_rate,
     return 0;
 }
 
-long sb16_stream_write(int owner_pid, const void *data, uint32_t bytes) {
+long sb16_stream_write(int owner_pid, const void *data, u32 bytes) {
     if (!data || bytes == 0 || (bytes & 3) != 0)
         return bytes == 0 ? 0 : SB16_STREAM_ERR_INVALID;
 
-    uint64_t rflags = irq_save();
+    u64 rflags = irq_save();
     if (stream_owner_pid != owner_pid) {
         irq_restore(rflags);
         return SB16_STREAM_ERR_NOT_OWNER;
     }
 
-    uint32_t free_bytes = SB16_STREAM_BUFFER_SIZE - stream_used;
-    uint32_t write_bytes = bytes < free_bytes ? bytes : free_bytes;
+    u32 free_bytes = SB16_STREAM_BUFFER_SIZE - stream_used;
+    u32 write_bytes = bytes < free_bytes ? bytes : free_bytes;
     write_bytes &= ~3U;
 
-    uint32_t first = SB16_STREAM_BUFFER_SIZE - stream_write_pos;
+    u32 first = SB16_STREAM_BUFFER_SIZE - stream_write_pos;
     if (first > write_bytes)
         first = write_bytes;
     memcpy(stream_ring + stream_write_pos, data, first);
     if (write_bytes > first)
-        memcpy(stream_ring, (const uint8_t *)data + first,
+        memcpy(stream_ring, (const u8 *)data + first,
                write_bytes - first);
 
     stream_write_pos = (stream_write_pos + write_bytes) &
@@ -474,7 +474,7 @@ int sb16_stream_status(struct sb16_stream_status *out) {
     if (!out)
         return SB16_STREAM_ERR_INVALID;
 
-    uint64_t rflags = irq_save();
+    u64 rflags = irq_save();
     *out = (struct sb16_stream_status){
         .available = sb16_dma_buffer_phys != 0,
         .playing = playback_kind == PLAYBACK_STREAM && sb16_is_playing &&
@@ -487,7 +487,7 @@ int sb16_stream_status(struct sb16_stream_status *out) {
         .ring_queued = stream_used,
         .device_queued = stream_dma_pending,
         .underruns = stream_underruns,
-        .volume = (uint32_t)stream_volume,
+        .volume = (u32)stream_volume,
         .owner_pid = stream_owner_pid,
     };
     irq_restore(rflags);
@@ -495,7 +495,7 @@ int sb16_stream_status(struct sb16_stream_status *out) {
 }
 
 int sb16_stream_begin_drain(int owner_pid) {
-    uint64_t rflags = irq_save();
+    u64 rflags = irq_save();
     if (stream_owner_pid != owner_pid) {
         irq_restore(rflags);
         return SB16_STREAM_ERR_NOT_OWNER;
@@ -510,16 +510,16 @@ int sb16_stream_begin_drain(int owner_pid) {
     return 0;
 }
 
-uint32_t sb16_stream_pending(int owner_pid) {
-    uint64_t rflags = irq_save();
-    uint32_t pending = stream_owner_pid == owner_pid
+u32 sb16_stream_pending(int owner_pid) {
+    u64 rflags = irq_save();
+    u32 pending = stream_owner_pid == owner_pid
                      ? stream_used + stream_dma_pending : 0;
     irq_restore(rflags);
     return pending;
 }
 
 int sb16_stream_finish_drain(int owner_pid) {
-    uint64_t rflags = irq_save();
+    u64 rflags = irq_save();
     if (stream_owner_pid != owner_pid) {
         irq_restore(rflags);
         return SB16_STREAM_ERR_NOT_OWNER;
@@ -536,7 +536,7 @@ int sb16_stream_finish_drain(int owner_pid) {
 }
 
 int sb16_stream_pause(int owner_pid) {
-    uint64_t rflags = irq_save();
+    u64 rflags = irq_save();
     if (stream_owner_pid != owner_pid) {
         irq_restore(rflags);
         return SB16_STREAM_ERR_NOT_OWNER;
@@ -549,7 +549,7 @@ int sb16_stream_pause(int owner_pid) {
 }
 
 int sb16_stream_resume(int owner_pid) {
-    uint64_t rflags = irq_save();
+    u64 rflags = irq_save();
     if (stream_owner_pid != owner_pid) {
         irq_restore(rflags);
         return SB16_STREAM_ERR_NOT_OWNER;
@@ -566,7 +566,7 @@ int sb16_stream_set_volume(int owner_pid, int percent) {
     if (percent < 0 || percent > 100)
         return SB16_STREAM_ERR_INVALID;
 
-    uint64_t rflags = irq_save();
+    u64 rflags = irq_save();
     if (stream_owner_pid != owner_pid) {
         irq_restore(rflags);
         return SB16_STREAM_ERR_NOT_OWNER;
@@ -578,7 +578,7 @@ int sb16_stream_set_volume(int owner_pid, int percent) {
 }
 
 int sb16_stream_close(int owner_pid) {
-    uint64_t rflags = irq_save();
+    u64 rflags = irq_save();
     if (stream_owner_pid != owner_pid) {
         irq_restore(rflags);
         return SB16_STREAM_ERR_NOT_OWNER;
@@ -592,7 +592,7 @@ int sb16_stream_close(int owner_pid) {
 }
 
 void sb16_stream_release(int owner_pid) {
-    uint64_t rflags = irq_save();
+    u64 rflags = irq_save();
     if (stream_owner_pid == owner_pid) {
         sb16_stop_locked();
         stream_reset_locked();
@@ -610,7 +610,7 @@ static int sb16_match(const struct device *device) {
 
 static int sb16_probe(struct device *device) {
     struct isa_device *isa = &device->bus_info.isa;
-    uint16_t io_base = isa->io_base;
+    u16 io_base = isa->io_base;
 
     outb(io_base + SB16_REG_DSP_RESET, 0x01);
     for (volatile int i = 0; i < 10000; i++);
@@ -625,7 +625,7 @@ static int sb16_probe(struct device *device) {
                  * All subsequent callers assume this card’s state, which may not
                  * correspond to the device at I/O 0x220. */
                 sb16_base = io_base;
-                sb16_irq = (uint8_t)(isa->irq ? isa->irq : SB16_DEFAULT_IRQ);
+                sb16_irq = (u8)(isa->irq ? isa->irq : SB16_DEFAULT_IRQ);
 
                 irq_install(sb16_irq, sb16_irq_handler);
                 sb16_irq_hooked = 1;

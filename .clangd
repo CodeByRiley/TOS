@@ -13,6 +13,7 @@ Diagnostics:
     - Wunused-variable
     - Wpointer-to-int-cast
     - Wint-to-void-pointer-cast
+    - Wunknown-pragmas
     - Wdiscarded-qualifiers
   ClangTidy:
     Add:

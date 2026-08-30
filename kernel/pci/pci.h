@@ -13,6 +13,7 @@
 #ifndef PCI_H
 #define PCI_H
 
+#include <utilities/types.h>
 #include <stdint.h>
 
 /* PCI Configuration Space header offsets (header type 0). */
@@ -91,73 +92,73 @@
 #define PCI_ROM_ADDR_MASK       0xFFFFF800u
 
 struct pci_addr {
-    uint8_t bus;
-    uint8_t dev;
-    uint8_t fn;
-    uint16_t segment;
+    u8 bus;
+    u8 dev;
+    u8 fn;
+    u16 segment;
 };
 
 /* Decoded BAR. `base` and `size` are post-decode (mask bits stripped). */
 struct pci_bar {
-    uint64_t base;
-    uint64_t size;
-    uint8_t  is_io;     /* 1 = I/O port BAR, 0 = MMIO */
-    uint8_t  is_64;     /* 1 = 64-bit MMIO BAR (consumes two slots) */
-    uint8_t  prefetch;
-    uint8_t  valid;     /* 1 if populated */
+    u64 base;
+    u64 size;
+    u8  is_io;     /* 1 = I/O port BAR, 0 = MMIO */
+    u8  is_64;     /* 1 = 64-bit MMIO BAR (consumes two slots) */
+    u8  prefetch;
+    u8  valid;     /* 1 if populated */
 };
 
 struct pci_rom {
-    uint64_t base;
-    uint64_t size;
-    uint8_t  enabled;
-    uint8_t  valid;
+    u64 base;
+    u64 size;
+    u8  enabled;
+    u8  valid;
 };
 
 struct pci_device {
     struct pci_addr addr;
-    uint16_t        vendor;
-    uint16_t        device;
-    uint16_t        subsys_vendor;
-    uint16_t        subsys_id;
-    uint8_t         class_code;
-    uint8_t         subclass;
-    uint8_t         prog_if;
-    uint8_t         revision;
-    uint8_t         header_type;
-    uint8_t         int_line;
-    uint8_t         int_pin;
-    uint8_t         cap_ptr;       /* offset of first capability, 0 if none */
+    u16        vendor;
+    u16        device;
+    u16        subsys_vendor;
+    u16        subsys_id;
+    u8         class_code;
+    u8         subclass;
+    u8         prog_if;
+    u8         revision;
+    u8         header_type;
+    u8         int_line;
+    u8         int_pin;
+    u8         cap_ptr;       /* offset of first capability, 0 if none */
     struct pci_bar  bar[6];
     struct pci_rom  rom;
 };
 
 /* Raw config-space accessors. */
-uint32_t pci_read32(struct pci_addr a, uint16_t off);
-uint16_t pci_read16(struct pci_addr a, uint16_t off);
-uint8_t  pci_read8 (struct pci_addr a, uint16_t off);
-void     pci_write32(struct pci_addr a, uint16_t off, uint32_t val);
-void     pci_write16(struct pci_addr a, uint16_t off, uint16_t val);
-void     pci_write8 (struct pci_addr a, uint16_t off, uint8_t  val);
+u32 pci_read32(struct pci_addr a, u16 off);
+u16 pci_read16(struct pci_addr a, u16 off);
+u8  pci_read8 (struct pci_addr a, u16 off);
+void     pci_write32(struct pci_addr a, u16 off, u32 val);
+void     pci_write16(struct pci_addr a, u16 off, u16 val);
+void     pci_write8 (struct pci_addr a, u16 off, u8  val);
 
 /* Brute-force scan all 256 busses * 32 devs * 8 fns. Populates the
  * internal device table. Idempotent: re-entry is a no-op. */
 void     pci_init(void);
 
 /* Lookup helpers. Return non-zero on success and fill *out. */
-int      pci_find_by_id   (uint16_t vendor, uint16_t device, struct pci_device *out);
-int      pci_find_by_class(uint8_t class_code, uint8_t subclass, struct pci_device *out);
+int      pci_find_by_id   (u16 vendor, u16 device, struct pci_device *out);
+int      pci_find_by_class(u8 class_code, u8 subclass, struct pci_device *out);
 
 /* Indexed accessor over the scan results. */
-uint32_t pci_device_count(void);
-int      pci_device_at(uint32_t idx, struct pci_device *out);
+u32 pci_device_count(void);
+int      pci_device_at(u32 idx, struct pci_device *out);
 
 /* Walk the device's capability list looking for `cap_id`. Returns offset
  * or 0 if absent. */
-uint8_t  pci_find_capability(struct pci_addr a, uint8_t cap_id);
+u8  pci_find_capability(struct pci_addr a, u8 cap_id);
 
 /* Walk PCIe's extended capability chain at offsets 0x100..0xFFF. */
-uint16_t pci_find_ext_capability(struct pci_addr a, uint16_t cap_id);
+u16 pci_find_ext_capability(struct pci_addr a, u16 cap_id);
 
 /* Enable MMIO decoding without enabling DMA or changing interrupt state. */
 int      pci_enable_memory(struct pci_device *d);

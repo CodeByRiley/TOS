@@ -7,8 +7,8 @@
  * In real life, ISA cards were configured via jumpers,
  * so we just check the most common defaults. */
 struct isa_legacy_entry {
-    uint16_t io_base;
-    uint8_t  irq;
+    u16 io_base;
+    u8  irq;
     const char *name;
 };
 
@@ -24,11 +24,11 @@ static const struct isa_legacy_entry legacy_devices[] = {
 
 void isa_probe_devices(void) {
 		log_write("ISA: probing legacy devices...", KERNEL, LOG_INFO);
-    uint32_t count = sizeof(legacy_devices) / sizeof(legacy_devices[0]);
+    u32 count = sizeof(legacy_devices) / sizeof(legacy_devices[0]);
     log_write_hex("ISA: found ", count, KERNEL, LOG_INFO);
-    uint32_t imported = 0;
+    u32 imported = 0;
 
-    for (uint32_t i = 0; i < count; i++) {
+    for (u32 i = 0; i < count; i++) {
         // register the device at its standard I/O port
         if (driver_register_isa_device(legacy_devices[i].io_base,
                                        legacy_devices[i].irq) == 0) {

@@ -20,6 +20,7 @@
 #ifndef PERCPU_H
 #define PERCPU_H
 
+#include <utilities/types.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -31,10 +32,10 @@ struct tss;
 struct cpu_local {
     struct cpu_local  *self;            /* gs:0 , for C-level read of base   */
     int               cpu_id;           /* logical id, 0..MAX_CPUS-1         */
-    uint8_t           lapic_id;         /* hardware APIC id                  */
-    uint8_t           _pad[3];
-    uint64_t          kernel_rsp_top;   /* SYSCALL entry: pop here           */
-    uint64_t          user_rsp_save;    /* entry-only user-rsp scratch       */
+    u8           lapic_id;         /* hardware APIC id                  */
+    u8           _pad[3];
+    u64          kernel_rsp_top;   /* SYSCALL entry: pop here           */
+    u64          user_rsp_save;    /* entry-only user-rsp scratch       */
     struct task       *current;         /* running task on this CPU          */
     struct task       *idle_task;       /* per-CPU idle thread               */
     struct tss        *tss;             /* points into per-CPU TSS array     */
@@ -60,10 +61,10 @@ _Static_assert(sizeof(struct cpu_local) == 64,
                "cpu_local should fit in one cache line");
 
 /* BSP entry: set up the cpu0 slot and wire GS_BASE. */
-void              percpu_init_bsp(uint8_t bsp_lapic_id);
+void              percpu_init_bsp(u8 bsp_lapic_id);
 
 /* AP entry: same for an AP slot. */
-void              percpu_init_ap(int cpu_id, uint8_t lapic_id);
+void              percpu_init_ap(int cpu_id, u8 lapic_id);
 
 /* Enter the kernel GS state on the calling CPU: GS_BASE points at the selected
  * cpu_local and KERNEL_GS_BASE contains the initial user value (zero). */

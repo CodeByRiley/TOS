@@ -18,7 +18,7 @@
 #ifndef SCHED_H
 #define SCHED_H
 
-#include "utilities/types.h"
+#include <utilities/types.h>
 #include <msg/msg.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -51,7 +51,7 @@
 #define IPC_RING_SIZE_LOCAL 16
 
 struct socket;
-struct fat_file;
+struct vfs_file;
 
 
 /* Scheduler and VM types */
@@ -66,15 +66,15 @@ enum task_state {
 };
 
 struct vm_hole {
-  uint64_t base;
-  uint64_t len; /* zero means unused */
+  u64 base;
+  u64 len; /* zero means unused */
 };
 
 struct user_vma {
-  uint64_t start;
-  uint64_t end;
-  uint64_t pte_flags;
-  uint32_t used;
+  u64 start;
+  u64 end;
+  u64 pte_flags;
+  u32 used;
 };
 
 /*
@@ -84,11 +84,11 @@ struct user_vma {
  * is added later.
  */
 struct task_vm {
-  uint64_t *user_pml4;
+  u64 *user_pml4;
   int *pml4_ref_count;
 
-  uint64_t shmem_next_va;
-  uint64_t mmap_next_va;
+  u64 shmem_next_va;
+  u64 mmap_next_va;
 
   struct vm_hole mmap_holes[TASK_MMAP_HOLES];
   struct user_vma vmas[MAX_USER_VMAS];
@@ -107,16 +107,16 @@ enum task_fd_type {
 
 struct task_fd {
   enum task_fd_type type;
-  uint8_t flags;
-  uint16_t reserved;
+  u8 flags;
+  u16 reserved;
 
   union {
-    struct fat_file *file;
+    struct vfs_file *file;
     struct socket *socket;
     void *object;
   };
 
-  uint32_t dir_index;
+  u32 dir_index;
   char *dir_path; /* allocated only for directory FDs */
 };
 
@@ -129,14 +129,14 @@ struct task_files {
 /* IPC and input state */
 struct task_ipc {
   struct ipc_msg *ring;
-  volatile uint32_t head;
-  volatile uint32_t tail;
+  volatile u32 head;
+  volatile u32 tail;
 };
 
 struct task_input {
   struct msg *ring;
-  volatile uint32_t head;
-  volatile uint32_t tail;
+  volatile u32 head;
+  volatile u32 tail;
 };
 
 /* Architecture-specific execution state */
@@ -144,33 +144,33 @@ struct task_context {
   /*
    * Used by the user-task first-run trampoline.
    */
-  uint64_t user_entry;
-  uint64_t user_rsp_initial;
-  uint64_t user_arg;
+  u64 user_entry;
+  u64 user_rsp_initial;
+  u64 user_arg;
 
   /*
    * IA32_FS_BASE for userspace TLS.
    */
-  uint64_t fs_base;
+  u64 fs_base;
 
   /*
    * x87/SSE state. Must remain 16-byte aligned for fxsave/fxrstor.
    */
-  uint8_t fxstate[512] ALIGNED(16);
+  u8 fxstate[512] ALIGNED(16);
 };
 
 /// Task control block
 struct task {
   // Scheduler/context-switch hot state.
-  uint64_t saved_rsp;          /* RSP at time of last context switch. */
-  uint64_t cr3;                /* Page table base. */
-  uint64_t syscall_kstack_top; /* Kernel stack top for syscalls. */
+  u64 saved_rsp;          /* RSP at time of last context switch. */
+  u64 cr3;                /* Page table base. */
+  u64 syscall_kstack_top; /* Kernel stack top for syscalls. */
 
   enum task_state state;
   int prio;
   int pid;
-  uint64_t wake_tick;
-  uint64_t ticks_run;
+  u64 wake_tick;
+  u64 ticks_run;
 
   struct task *next;
 
@@ -214,7 +214,7 @@ struct task {
 
 
   // Futex state.
-  uint64_t futex_addr;
+  u64 futex_addr;
 };
 
 
@@ -235,8 +235,8 @@ static inline struct task_fd *task_fd_slot(struct task *t, int fd) {
   return &t->files->fd[fd];
 }
 
-/* The fat_file behind a file or directory fd, NULL for anything else. */
-static inline struct fat_file *task_fd_file(struct task *t, int fd) {
+/* The VFS file behind a file or directory fd, NULL for anything else. */
+static inline struct vfs_file *task_fd_file(struct task *t, int fd) {
   struct task_fd *s = task_fd_slot(t, fd);
   if (s == NULL)
     return NULL;
@@ -264,7 +264,7 @@ static inline int task_fd_is_dir(struct task *t, int fd) {
  * a kernel thread, or a reservation whose image has not been activated yet.
  * Folds in the vm NULL check that every caller would otherwise repeat.
  */
-static inline uint64_t *task_pml4(struct task *t) {
+static inline u64 *task_pml4(struct task *t) {
   if (t == NULL || t->vm == NULL)
     return NULL;
   return t->vm->user_pml4;
@@ -282,7 +282,7 @@ int task_fd_set_dir_path(struct task_fd *slot, const char *path);
 
 /* Userspace snapshot ABI                                                    */
 struct task_snap {
-  uint64_t ticks_run;
+  u64 ticks_run;
   int pid;
   int parent_pid;
   int state;
@@ -308,29 +308,29 @@ void task_set_name(struct task *t, const char *name);
 
 void sched_init(void);
 
-void sleep_ms(uint32_t ms);
-void sleep_ms_busy(uint32_t ms);
+void sleep_ms(u32 ms);
+void sleep_ms_busy(u32 ms);
 
 struct task *task_spawn(void (*entry)(void));
 
-struct task *task_spawn_user(uint64_t *user_pml4, uint64_t entry,
-                             uint64_t user_rsp, int parent_pid);
+struct task *task_spawn_user(u64 *user_pml4, u64 entry,
+                             u64 user_rsp, int parent_pid);
 
 struct task *task_reserve_user(int parent_pid);
 
-int task_activate_reserved_user(struct task *t, uint64_t *user_pml4,
-                                uint64_t entry, uint64_t user_rsp);
+int task_activate_reserved_user(struct task *t, u64 *user_pml4,
+                                u64 entry, u64 user_rsp);
 
 void task_fail_reserved_user(struct task *t, long code);
 
-struct task *task_spawn_thread(uint64_t entry, uint64_t user_stack);
+struct task *task_spawn_thread(u64 entry, u64 user_stack);
 
 void task_yield(void);
 void sched_preempt_tick(void);
 
 void task_block(int waiting_for_pid);
 void task_wakeup(struct task *t);
-int task_wake_futex(uint64_t phys);
+int task_wake_futex(u64 phys);
 
 void task_exit(long code) NORETURN;
 void task_exit_thread(void) NORETURN;
@@ -340,8 +340,8 @@ int task_kill(int pid, long code);
 struct task *task_current(void);
 struct task *task_find(int pid);
 
-int task_set_fs_base(uint64_t base);
-uint64_t task_get_fs_base(void);
+int task_set_fs_base(u64 base);
+u64 task_get_fs_base(void);
 
 int sched_set_priority(struct task *t, int prio);
 
@@ -353,7 +353,7 @@ void task_inherit_cwd(struct task *child, struct task *parent);
  * no parent, which is what a kthread wants. */
 void task_inherit_tty(struct task *child, struct task *parent);
 
-void task_sleep_ticks(uint64_t ticks);
+void task_sleep_ticks(u64 ticks);
 void sched_wake_sleepers(void);
 
 void task_reap(struct task *t);

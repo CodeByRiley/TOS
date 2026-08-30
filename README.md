@@ -11,12 +11,12 @@ TOS is mainly intended for QEMU and OS-development experiments. It is not a gene
 - **Kernel and processes:** x86_64 long mode, ACPI discovery, LAPIC-based SMP startup, an AP work queue, priority-aware preemptive scheduling, ring-3 processes, asynchronous process creation, native user threads, futexes, IPC, and shared memory.
 - **Memory:** physical and virtual memory managers, a kernel heap, per-process page tables, demand-paged virtual memory regions, and the `mmap`, `mprotect`, and `munmap` paths required by static musl programs. `brk` is intentionally rejected so musl uses `mmap` instead.
 - **Executables:** static ELF64 and PE32+ loaders. Builds produce ELF programs by default, along with PE versions of `hello` and `ls` to test both loaders.
-- **Storage:** a writable, case-insensitive FAT16/FAT32 filesystem with VFAT long filenames. The kernel can mount an AHCI volume or use the FAT32 ramdisk loaded by GRUB.
+- **Storage:** a VFS with writable FAT16/FAT32 and ext2 backends. FAT supports VFAT long names and AHCI write-through; either FAT or ext2 can be used for the GRUB-loaded root image.
 - **Graphics and input:** Multiboot framebuffer fallback, virtio-gpu scanout and resize support, TTF text rendering, keyboard and mouse input, and the Winman desktop. Winman supports movable and resizable windows, launchers, and a taskbar clock. NVIDIA GSP display support is also included but still under development and has not yet been tested on physical hardware.
 - **Drivers:** PCI discovery and driver registration, AHCI storage, Intel e1000 networking, Sound Blaster 16 audio, UHCI USB, virtio-gpu, and the developing NVIDIA driver.
 - **Networking:** Ethernet, ARP, IPv4, ICMP echo, UDP, packet capture and statistics, plus the Linux x86_64 syscall numbers for `socket`, `bind`, `sendto`, and `recvfrom`.
 - **Userspace:** a shell with `PATH` lookup, tab completion, working directories, built-ins, and background jobs; command-line utilities; graphical demos and tools; Netmon; ping; a UDP echo program; a DOOM port; and the HolyD bytecode language and runtime.
-- **Tests:** fast host-side tests and QEMU tests covering SMP, virtual memory, process lifetime, FAT, ELF/PE loading, musl, Winman, framebuffer ownership, networking, `PATH` lookup, and kernel panics.
+- **Tests:** fast host-side tests and QEMU tests covering SMP, virtual memory, process lifetime, VFS/FAT/ext2, ELF/PE loading, musl, Winman, framebuffer ownership, networking, `PATH` lookup, and kernel panics.
 
 ## Quick start
 
@@ -98,11 +98,20 @@ It supports these options:
 
 ### Disk image and ISO
 
-`tools/create_disk.sh` runs inside WSL and creates the minimum 64 MiB FAT32 disk image:
+`tools/create_disk.sh` runs inside WSL and creates a minimum 64 MiB root image. FAT32 is the default:
 
 ```text
-build/disk.img
+build/disk-fat.img
 ```
+
+Build and boot the same payload as ext2 with:
+
+```powershell
+mingw32-make ROOTFS_TYPE=ext2 build-x86_64
+```
+
+That produces `build/disk-ext2.img`. The selected image is always packaged
+inside the ISO as `/boot/disk.img`, so the GRUB configuration is unchanged.
 
 `tools/build_iso.sh` then populates the ISO staging directory under `boot/x86_64/iso/`, uses `grub-mkimage` to create the El Torito boot image, and uses `xorriso` to package:
 
@@ -131,7 +140,8 @@ The main generated files are:
 ```text
 dist/x86_64/kernel.bin   linked kernel
 dist/x86_64/kernel.iso   bootable GRUB ISO
-build/disk.img           FAT32 root filesystem
+build/disk-fat.img       default FAT32 root filesystem
+build/disk-ext2.img      optional ext2 root filesystem
 ```
 
 `build-x86_64` also copies the kernel, disk image, and El Torito image into `boot/x86_64/iso/`. The `clean` target removes those copies as well.
@@ -299,11 +309,12 @@ mingw32-make test-host
 
 `mingw32-make test` is an alias for the same target.
 
-The suite builds nine binaries in `build/tests/` and runs them with `set -e`, stopping at the first failure. It covers:
+The suite builds its host regressions in `build/tests/` and runs them with
+`set -e`, stopping at the first failure. It covers:
 
 - physical and virtual memory managers
 - per-process page tables
-- FAT directories
+- VFS mount routing, FAT directories, and ext2 mutation checked by `e2fsck`
 - stdio modes
 - BMP decoding
 - graphics and UI helpers
@@ -367,7 +378,7 @@ kernel/
   devices/          LAPIC, PIT, serial, and USB orchestration
   display/          framebuffer, graphics, TTY, and fonts
   drivers/          driver core, storage, networking, sound, USB, and video
-  fs/               FAT16/FAT32 and kernel stdio
+  fs/               VFS, FAT16/FAT32, ext2, and kernel stdio
   input/            keyboard and mouse handling
   interrupts/       IDT and PIC
   loader/           ELF, PE, and process creation
@@ -394,7 +405,7 @@ build/ dist/        generated output; removed by mingw32-make clean
 Kernel headers are included relative to `kernel/`, for example:
 
 ```c
-#include <fs/fat.h>
+#include <fs/fat/fat.h>
 ```
 
 Userspace also includes the repository root when it needs to share an ABI definition. New musl programs should use standard headers whenever possible and include TOS syscall headers only for services without a POSIX equivalent.

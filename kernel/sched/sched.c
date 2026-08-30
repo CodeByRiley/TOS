@@ -25,6 +25,7 @@
 #include <devices/pit.h>
 #include <display/framebuffer.h>
 #include <drivers/sound/sb16.h>
+#include <fs/vfs/vfs.h>
 #include <loader/process.h>
 #include <memory/heap.h>
 #include <memory/hhdm.h>
@@ -37,7 +38,7 @@
 
 static int task_set_cwd(struct task *t, const char *path)
 {
-    size_t i;
+    usize i;
 
     if (t == NULL || t->files == NULL || path == NULL)
         return -1;
@@ -58,7 +59,7 @@ static int task_set_cwd(struct task *t, const char *path)
 
 static void task_set_cwd_truncated(struct task *t, const char *path)
 {
-    size_t i;
+    usize i;
 
     if (t == NULL || t->files == NULL || path == NULL)
         return;
@@ -76,7 +77,7 @@ static int task_set_cwd_root(struct task *t)
 
 void task_inherit_cwd(struct task *child, struct task *parent)
 {
-    size_t i;
+    usize i;
 
     if (child == NULL || child->files == NULL)
         return;
@@ -105,8 +106,8 @@ void task_inherit_tty(struct task *child, struct task *parent) {
   child->tty = parent ? parent->tty : 0;
 }
 
-extern void context_switch(uint64_t *old_rsp_ptr, uint64_t new_rsp,
-                           uint64_t new_cr3, void *old_fxstate,
+extern void context_switch(u64 *old_rsp_ptr, u64 new_rsp,
+                           u64 new_cr3, void *old_fxstate,
                            void *new_fxstate);
 
 /* Capture the CPU's current x87/SSE state into `buf`. Used at task creation
@@ -116,23 +117,23 @@ extern void context_switch(uint64_t *old_rsp_ptr, uint64_t new_rsp,
 static void fxstate_init(void *buf) {
   __asm__ volatile("fxsave (%0)" ::"r"(buf) : "memory");
 }
-extern uint64_t *kernel_pml4;
+extern u64 *kernel_pml4;
 
 /* Free a process PML4 , defined in loader/process.c. */
-extern void free_user_pml4(uint64_t *pml4);
+extern void free_user_pml4(u64 *pml4);
 
 #define MSR_FS_BASE 0xC0000100u
 
-static void sched_wrmsr(uint32_t msr, uint64_t value) {
-  uint32_t lo = (uint32_t)value;
-  uint32_t hi = (uint32_t)(value >> 32);
+static void sched_wrmsr(u32 msr, u64 value) {
+  u32 lo = (u32)value;
+  u32 hi = (u32)(value >> 32);
   __asm__ volatile("wrmsr" ::"c"(msr), "a"(lo), "d"(hi) : "memory");
 }
 
-static uint64_t sched_rdmsr(uint32_t msr) {
-  uint32_t lo, hi;
+static u64 sched_rdmsr(u32 msr) {
+  u32 lo, hi;
   __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(msr));
-  return ((uint64_t)hi << 32) | lo;
+  return ((u64)hi << 32) | lo;
 }
 
 static struct task tasks[MAX_TASKS];
@@ -142,7 +143,7 @@ static struct task *current = 0;
 static struct task *ready_head[SCHED_PRIO_LEVELS] = {0};
 static struct task *ready_tail[SCHED_PRIO_LEVELS] = {0};
 #define SCHED_QUANTUM_MS 10U
-static uint32_t slice_ticks = 0;
+static u32 slice_ticks = 0;
 /* Count of tasks in TASK_SLEEPING. Maintained by task_sleep_ticks /
  * sched_wake_sleepers so the PIT IRQ can skip a full task-table walk on
  * every tick when nothing is asleep , which is the common case. */
@@ -275,7 +276,7 @@ int task_fd_set_dir_path(struct task_fd *slot, const char *path) {
     if (!slot->dir_path)
       return -1;
   }
-  size_t i = 0;
+  usize i = 0;
   if (path) {
     while (i + 1 < TASK_CWD_MAX && path[i]) {
       slot->dir_path[i] = path[i];
@@ -294,16 +295,16 @@ static struct task *idle_task = 0;
 static void user_task_trampoline(void);
 static void idle_thread(void);
 static void mark_task_exited(struct task *task, long code);
-extern void arch_enter_user(uint64_t entry, uint64_t user_rsp,
-                            uint64_t arg) NORETURN;
+extern void arch_enter_user(u64 entry, u64 user_rsp,
+                            u64 arg) NORETURN;
 
-static uint64_t irq_save(void) {
-  uint64_t rflags;
+static u64 irq_save(void) {
+  u64 rflags;
   __asm__ volatile("pushfq; popq %0; cli" : "=r"(rflags)::"memory");
   return rflags;
 }
 
-static void irq_restore(uint64_t rflags) {
+static void irq_restore(u64 rflags) {
   if (rflags & (1ULL << 9))
     __asm__ volatile("sti" ::: "memory");
 }
@@ -398,7 +399,7 @@ int sched_set_priority(struct task *t, int prio) {
   if (!t || (prio != SCHED_PRIO_NORMAL && prio != SCHED_PRIO_HIGH))
     return -1;
 
-  uint64_t rflags = irq_save();
+  u64 rflags = irq_save();
   if (t->prio != prio) {
     /* Only re-queue if it is actually on a ready list; a running, blocked
      * or sleeping task just picks the new level up next time it is pushed. */
@@ -439,27 +440,27 @@ static void kthread_trampoline(void) {
   task_exit(0);
 }
 
-static uint64_t kstack_aligned_top(void *kstack_base) {
-  return ((uint64_t)kstack_base + KSTACK_BYTES) & ~0xFULL;
+static u64 kstack_aligned_top(void *kstack_base) {
+  return ((u64)kstack_base + KSTACK_BYTES) & ~0xFULL;
 }
 
 /* Build a kernel-stack frame matching context_switch's epilogue, which
  * pops r15, r14, r13, r12, rbp, rbx, ret. So we lay out (low → high):
  * [r15][r14][r13][r12][rbp][rbx][ret]. saved_rsp points at r15. */
-static uint64_t build_initial_frame(void *kstack_base,
+static u64 build_initial_frame(void *kstack_base,
                                     void (*trampoline)(void)) {
   /* context_switch enters a fresh task with ret, not call. After that ret,
    * the trampoline still has to look like a normal SysV C callee: rsp % 16
    * must be 8 on function entry. */
-  uint64_t *sp = (uint64_t *)(kstack_aligned_top(kstack_base) - 8);
-  *--sp = (uint64_t)trampoline; /* ret addr */
+  u64 *sp = (u64 *)(kstack_aligned_top(kstack_base) - 8);
+  *--sp = (u64)trampoline; /* ret addr */
   *--sp = 0;                    /* rbx */
   *--sp = 0;                    /* rbp */
   *--sp = 0;                    /* r12 */
   *--sp = 0;                    /* r13 */
   *--sp = 0;                    /* r14 */
   *--sp = 0;                    /* r15 */
-  return (uint64_t)sp;
+  return (u64)sp;
 }
 
 void sched_init(void) {
@@ -502,7 +503,7 @@ void sched_init(void) {
 
 struct task *task_current(void) { return current; }
 
-int task_set_fs_base(uint64_t base) {
+int task_set_fs_base(u64 base) {
   struct task *t = task_current();
   if (!t || !t->context)
     return -1;
@@ -511,7 +512,7 @@ int task_set_fs_base(uint64_t base) {
   return 0;
 }
 
-uint64_t task_get_fs_base(void) {
+u64 task_get_fs_base(void) {
   struct task *t = task_current();
   return (t && t->context) ? t->context->fs_base : 0;
 }
@@ -519,7 +520,7 @@ uint64_t task_get_fs_base(void) {
 void task_set_name(struct task *t, const char *name) {
   if (!t)
     return;
-  size_t i = 0;
+  usize i = 0;
   if (name) {
     while (i < sizeof(t->name) - 1 && name[i]) {
       t->name[i] = name[i];
@@ -541,7 +542,7 @@ int sched_snapshot(struct task_snap *out, int max) {
     out[n].parent_pid = t->parent_pid;
     out[n].state = (int)t->state;
     out[n].ticks_run = t->ticks_run;
-    for (size_t k = 0; k < sizeof(out[n].name); k++) {
+    for (usize k = 0; k < sizeof(out[n].name); k++) {
       out[n].name[k] = t->name[k];
     }
     n++;
@@ -572,7 +573,7 @@ struct task *task_spawn(void (*entry)(void)) {
     return 0;
   }
 
-  uint64_t stack_top = kstack_aligned_top(stack_base);
+  u64 stack_top = kstack_aligned_top(stack_base);
   t->saved_rsp = build_initial_frame(stack_base, kthread_trampoline);
   t->cr3 = virt_to_phys(kernel_pml4);
   t->syscall_kstack_top = stack_top;
@@ -601,8 +602,8 @@ struct task *task_spawn(void (*entry)(void)) {
   return t;
 }
 
-struct task *task_spawn_user(uint64_t *user_pml4, uint64_t entry,
-                             uint64_t user_rsp, int parent_pid) {
+struct task *task_spawn_user(u64 *user_pml4, u64 entry,
+                             u64 user_rsp, int parent_pid) {
   struct task *t = alloc_slot();
   if (!t) {
     log_write("sched: task table full", KERNEL, LOG_ERROR);
@@ -615,7 +616,7 @@ struct task *task_spawn_user(uint64_t *user_pml4, uint64_t entry,
     return 0;
   }
 
-  uint64_t stack_top = kstack_aligned_top(stack_base);
+  u64 stack_top = kstack_aligned_top(stack_base);
   t->saved_rsp = build_initial_frame(stack_base, user_task_trampoline);
   t->cr3 = virt_to_phys(user_pml4);
   t->syscall_kstack_top = stack_top;
@@ -671,7 +672,7 @@ struct task *task_reserve_user(int parent_pid) {
   }
 
   memset(t, 0, sizeof(*t));
-  uint64_t stack_top = kstack_aligned_top(stack_base);
+  u64 stack_top = kstack_aligned_top(stack_base);
   t->saved_rsp = build_initial_frame(stack_base, user_task_trampoline);
   t->cr3 = virt_to_phys(kernel_pml4);
   t->syscall_kstack_top = stack_top;
@@ -696,8 +697,8 @@ struct task *task_reserve_user(int parent_pid) {
   return t;
 }
 
-int task_activate_reserved_user(struct task *t, uint64_t *user_pml4,
-                                uint64_t entry, uint64_t user_rsp) {
+int task_activate_reserved_user(struct task *t, u64 *user_pml4,
+                                u64 entry, u64 user_rsp) {
   if (!t || t->state != TASK_LOADING || !user_pml4 || !entry)
     return -1;
   if (!t->vm || !t->context)
@@ -724,7 +725,7 @@ void task_fail_reserved_user(struct task *t, long code) {
   mark_task_exited(t, code);
 }
 
-struct task *task_spawn_thread(uint64_t entry, uint64_t user_stack) {
+struct task *task_spawn_thread(u64 entry, u64 user_stack) {
   struct task *parent = task_current();
   if (!parent || !parent->vm || !parent->vm->user_pml4 ||
       !parent->vm->pml4_ref_count || !parent->context)
@@ -742,7 +743,7 @@ struct task *task_spawn_thread(uint64_t entry, uint64_t user_stack) {
     return 0;
   }
 
-  uint64_t stack_top = kstack_aligned_top(stack_base);
+  u64 stack_top = kstack_aligned_top(stack_base);
   t->saved_rsp = build_initial_frame(stack_base, user_task_trampoline);
 
   t->cr3 = parent->cr3;
@@ -812,7 +813,7 @@ static void capture_from(struct task *prev) {
 }
 
 void task_yield(void) {
-  uint64_t rflags = irq_save();
+  u64 rflags = irq_save();
   slice_ticks = 0;
   struct task *next = ready_pop();
   if (!next) {
@@ -842,8 +843,8 @@ void sched_preempt_tick(void) {
     return;
   }
 
-  uint32_t frequency = pit_get_freq();
-  uint32_t quantum = (frequency * SCHED_QUANTUM_MS + 999U) / 1000U;
+  u32 frequency = pit_get_freq();
+  u32 quantum = (frequency * SCHED_QUANTUM_MS + 999U) / 1000U;
   if (quantum == 0)
     quantum = 1;
 
@@ -859,7 +860,7 @@ void sched_preempt_tick(void) {
 }
 
 void task_block(int waiting_for_pid) {
-  uint64_t rflags = irq_save();
+  u64 rflags = irq_save();
   slice_ticks = 0;
   struct task *next = ready_pop();
   if (!next) {
@@ -899,7 +900,7 @@ void task_wakeup(struct task *t) {
   ready_push(t);
 }
 
-int task_wake_futex(uint64_t phys) {
+int task_wake_futex(u64 phys) {
   for (int i = 0; i < MAX_TASKS; i++) {
     struct task *t = &tasks[i];
     if (t->pid == 0)
@@ -913,12 +914,12 @@ int task_wake_futex(uint64_t phys) {
   return 0;
 }
 
-void task_sleep_ticks(uint64_t ticks) {
-  extern uint64_t pit_ticks(void);
+void task_sleep_ticks(u64 ticks) {
+  extern u64 pit_ticks(void);
   if (ticks == 0)
     return;
 
-  uint64_t rflags = irq_save();
+  u64 rflags = irq_save();
   slice_ticks = 0;
   current->wake_tick = pit_ticks() + ticks;
   current->state = TASK_SLEEPING;
@@ -955,8 +956,8 @@ void task_sleep_ticks(uint64_t ticks) {
 void sched_wake_sleepers(void) {
   if (n_sleeping == 0)
     return;
-  extern uint64_t pit_ticks(void);
-  uint64_t now = pit_ticks();
+  extern u64 pit_ticks(void);
+  u64 now = pit_ticks();
   for (int i = 0; i < MAX_TASKS; i++) {
     struct task *t = &tasks[i];
     if (t->pid == 0)
@@ -974,7 +975,7 @@ void sched_wake_sleepers(void) {
  * The wakeup comes from sched_wake_sleepers() off IRQ0,
  * so with IF clear this task would sleep forever and take the kernel with it.
  * Callers running before the boot-time sti want sleep_ms_busy(). */
-void sleep_ms(uint32_t ms) {
+void sleep_ms(u32 ms) {
   REQUIRE_INTERRUPTS();
 
   if (ms == 0) {
@@ -984,8 +985,8 @@ void sleep_ms(uint32_t ms) {
 
   /* Round up: a sub-tick sleep must still yield at least one tick, or
    * sleep_ms(1) at 100 Hz would return immediately. */
-  uint32_t freq = pit_get_freq();
-  uint64_t ticks_to_sleep = ((uint64_t)ms * freq + 999) / 1000;
+  u32 freq = pit_get_freq();
+  u64 ticks_to_sleep = ((u64)ms * freq + 999) / 1000;
 
   task_sleep_ticks(ticks_to_sleep);
 }
@@ -996,7 +997,7 @@ void sleep_ms(uint32_t ms) {
  * paths (USB/PCI controller resets) that run before the boot-time sti, where
  * IRQ0 never fires, the tick counter never advances, and a hlt loop hangs the
  * kernel outright. Channel 2 is polled, so it works with interrupts off. */
-void sleep_ms_busy(uint32_t ms) { pit_delay_ms(ms); }
+void sleep_ms_busy(u32 ms) { pit_delay_ms(ms); }
 
 /* Always-runnable lowest-priority task: hlts until the next IRQ, then
  * yields so any newly-ready task can run. Without this, task_yield would
@@ -1144,12 +1145,12 @@ void task_exit(long code) {
   next->state = TASK_RUNNING;
   current = next;
 
-  log_write_hex("exit prev pid =", (uint64_t)prev->pid, KERNEL, LOG_INFO);
-  log_write_hex("exit prev state =", (uint64_t)prev->state, KERNEL, LOG_INFO);
-  log_write_hex("exit next pid =", (uint64_t)next->pid,
+  log_write_hex("exit prev pid =", (u64)prev->pid, KERNEL, LOG_INFO);
+  log_write_hex("exit prev state =", (u64)prev->state, KERNEL, LOG_INFO);
+  log_write_hex("exit next pid =", (u64)next->pid,
 
                 KERNEL, LOG_INFO);
-  log_write_hex("exit next state =", (uint64_t)next->state, KERNEL, LOG_INFO);
+  log_write_hex("exit next state =", (u64)next->state, KERNEL, LOG_INFO);
 
   percpu_this()->current = next;
   stage_for(next);
@@ -1158,7 +1159,7 @@ void task_exit(long code) {
    * This function must never return to prev.
    * prev's stack and address space are reaped later.
    */
-  uint64_t throwaway;
+  u64 throwaway;
 
   context_switch(&throwaway, next->saved_rsp, next->cr3, prev->context->fxstate,
                  next->context->fxstate);
@@ -1195,7 +1196,7 @@ void task_exit_thread(void) {
   current = next;
   stage_for(next);
 
-  uint64_t throwaway;
+  u64 throwaway;
   context_switch(&throwaway, next->saved_rsp, next->cr3, prev->context->fxstate,
                  next->context->fxstate);
   __builtin_unreachable();
@@ -1211,8 +1212,10 @@ static void task_close_fds(struct task *t) {
   for (int i = 3; i < TASK_MAX_FDS; i++) {
     struct task_fd *slot = &t->files->fd[i];
     if (slot->type == TASK_FD_FILE || slot->type == TASK_FD_DIRECTORY) {
-      if (slot->file)
+      if (slot->file) {
+        vfs_close(slot->file);
         kfree(slot->file);
+      }
     }
     task_fd_clear(slot);
   }
@@ -1320,8 +1323,8 @@ int task_reap_unclaimed(void) {
 }
 
 static void user_task_trampoline(void) {
-  uint64_t entry = current->context->user_entry;
-  uint64_t rsp = current->context->user_rsp_initial;
-  uint64_t arg = current->context->user_arg;
+  u64 entry = current->context->user_entry;
+  u64 rsp = current->context->user_rsp_initial;
+  u64 arg = current->context->user_arg;
   arch_enter_user(entry, rsp, arg);
 }

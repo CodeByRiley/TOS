@@ -10,6 +10,7 @@
 
 #include "net/ipv4.h"
 #include "net/ksocket.h"
+#include <utilities/types.h>
 
 
 #endif /* _KERNEL_NET_TCP_H_ */

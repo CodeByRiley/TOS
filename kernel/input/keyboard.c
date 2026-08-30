@@ -45,7 +45,7 @@ static volatile int     kbd_head = 0;
 static volatile int     kbd_tail = 0;
 
 /* Scancode set 1, non-extended -> Linux KEY_*. */
-static const uint16_t sc_normal[128] = {
+static const u16 sc_normal[128] = {
     [0x01] = KEY_ESC,
     [0x02] = KEY_1, [0x03] = KEY_2, [0x04] = KEY_3, [0x05] = KEY_4,
     [0x06] = KEY_5, [0x07] = KEY_6, [0x08] = KEY_7, [0x09] = KEY_8,
@@ -87,7 +87,7 @@ static const uint16_t sc_normal[128] = {
 };
 
 /* Scancode set 1, extended (after 0xE0 prefix) -> Linux KEY_*. */
-static const uint16_t sc_extended[128] = {
+static const u16 sc_extended[128] = {
     [0x1C] = KEY_KPENTER,
     [0x1D] = KEY_RIGHTCTRL,
     [0x35] = KEY_KPSLASH,
@@ -111,12 +111,12 @@ static const uint16_t sc_extended[128] = {
 static int extended        = 0;
 static int pause_remaining = 0;
 
-static void push_event(uint16_t key, int pressed) {
+static void push_event(u16 key, int pressed) {
     if (!key) return;
     int next = (kbd_head + 1) & KBD_RING_MASK;
     if (next != kbd_tail) {
         kbd_ring[kbd_head].key.keycode = key;
-        kbd_ring[kbd_head].key.pressed = (uint8_t)pressed;
+        kbd_ring[kbd_head].key.pressed = (u8)pressed;
         kbd_head = next;
     }
     /* The message bus still receives events when the legacy queue is full. */
@@ -126,13 +126,13 @@ static void push_event(uint16_t key, int pressed) {
         .param = key,
         .x     = 0,
         .y     = 0,
-        .when  = (uint32_t)pit_ticks(),
+        .when  = (u32)pit_ticks(),
     };
     msg_post(&m);
 }
 
 static void kbd_handler(void) {
-    uint8_t sc = inb(0x60);
+    u8 sc = inb(0x60);
 
     if (pause_remaining > 0) {
         pause_remaining--;
@@ -150,14 +150,14 @@ static void kbd_handler(void) {
      * press code with 0x80 set, which is why both tables are only 128
      * entries , the release code indexes the same slot. */
     int      pressed = !(sc & KBD_SC_BREAK);
-    uint8_t  code    = sc & KBD_SC_CODE_MASK;
-    uint16_t key     = extended ? sc_extended[code] : sc_normal[code];
+    u8  code    = sc & KBD_SC_CODE_MASK;
+    u16 key     = extended ? sc_extended[code] : sc_normal[code];
     extended = 0;
 
     push_event(key, pressed);
 }
 
-int keyboard_poll(int *pressed, uint16_t *key) {
+int keyboard_poll(int *pressed, u16 *key) {
     if (kbd_tail == kbd_head) return 0;
     *pressed = kbd_ring[kbd_tail].key.pressed;
     *key     = kbd_ring[kbd_tail].key.keycode;

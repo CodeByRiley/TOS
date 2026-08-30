@@ -22,8 +22,8 @@ enum device_bus {
 };
 
 struct isa_device {
-	uint16_t io_base;
-	uint16_t irq;
+	u16 io_base;
+	u16 irq;
 };
 
 struct device;
@@ -66,22 +66,22 @@ struct driver_snap {
     int bus;
     int poll;
     int enabled;
-    uint32_t bound_devices;
+    u32 bound_devices;
 };
 
 void driver_core_init(void);
 
 /* Register a driver and immediately try it against existing unbound devices. */
 int driver_register(const struct driver *driver);
-int driver_register_isa_device(uint16_t io_base, uint8_t irq);
+int driver_register_isa_device(u16 io_base, u8 irq);
 
 /* Import the PCI scan results into the device model and bind matching drivers.
  * Idempotent: each PCI function is imported once. */
 int driver_probe_pci_devices(void);
 
-uint32_t driver_device_count(void);
+u32 driver_device_count(void);
 
-const struct device *driver_device_at(uint32_t index);
+const struct device *driver_device_at(u32 index);
 
 /* Copy registered driver rows for panic/debug reporting. Allocation-free and
  * safe to call from fatal paths that can tolerate a best-effort snapshot. */

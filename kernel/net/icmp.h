@@ -31,11 +31,11 @@
 #define ICMP_PING_SESSIONS 4
 
 struct icmp_hdr {
-  uint8_t type;
-  uint8_t code;
-  uint16_t checksum;
-  uint16_t ident;
-  uint16_t sequence;
+  u8 type;
+  u8 code;
+  u16 checksum;
+  u16 ident;
+  u16 sequence;
 } PACKED;
 
 /* ---------------- Userspace ABI ----------------------------------------
@@ -43,17 +43,17 @@ struct icmp_hdr {
  * is ABI. The static assertion in icmp.c pins it. Mirrored as
  * struct net_ping in userspace/lib/syscall.h. */
 struct net_ping_user {
-  uint8_t dst[IPV4_ALEN];
-  uint16_t ident;
-  uint16_t seq;
-  uint32_t timeout_ms;
-  uint32_t rtt_ms; /* out: valid only when the call returns 0 */
+  u8 dst[IPV4_ALEN];
+  u16 ident;
+  u16 seq;
+  u32 timeout_ms;
+  u32 rtt_ms; /* out: valid only when the call returns 0 */
 };
 
 /* Called by ipv4_input for IPPROTO_ICMP. `payload` is the ICMP message,
  * `len` its length; the IPv4 header is passed for the source address. */
-void icmp_input(const struct ipv4_hdr *ip, const uint8_t *payload,
-                uint16_t len);
+void icmp_input(const struct ipv4_hdr *ip, const u8 *payload,
+                u16 len);
 
 /* Send one echo request to `dst` and wait for the reply that matches
  * `ident` and `seq`.
@@ -65,7 +65,7 @@ void icmp_input(const struct ipv4_hdr *ip, const uint8_t *payload,
  * task and can only arrive once this one stops running. That makes it
  * illegal to call from an interrupt handler or with a lock held, and it
  * is why the syscall wrapper copies its arguments in before calling. */
-long icmp_ping(const uint8_t dst[IPV4_ALEN], uint16_t ident, uint16_t seq,
-               uint32_t timeout_ms, uint32_t *rtt_ms_out);
+long icmp_ping(const u8 dst[IPV4_ALEN], u16 ident, u16 seq,
+               u32 timeout_ms, u32 *rtt_ms_out);
 
 #endif /* NET_ICMP_H */

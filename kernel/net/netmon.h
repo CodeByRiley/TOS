@@ -28,6 +28,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <utilities/types.h>
 
 #define NETMON_RING_FRAMES 64
 #define NETMON_FRAME_BYTES 128
@@ -44,42 +45,42 @@
  * ABI. The static assertions in netmon.c pin it. */
 
 struct netmon_frame_user {
-  uint64_t seq;       /* capture sequence, unique and monotonic     */
-  uint64_t ticks;     /* scheduler ticks when captured              */
-  uint32_t length;    /* frame length on the wire                   */
-  uint32_t captured;  /* bytes actually in data[], <= length        */
-  uint32_t direction; /* NETMON_DIR_RX or NETMON_DIR_TX             */
-  uint32_t reserved;
-  uint8_t  data[NETMON_FRAME_BYTES];
+  u64 seq;       /* capture sequence, unique and monotonic     */
+  u64 ticks;     /* scheduler ticks when captured              */
+  u32 length;    /* frame length on the wire                   */
+  u32 captured;  /* bytes actually in data[], <= length        */
+  u32 direction; /* NETMON_DIR_RX or NETMON_DIR_TX             */
+  u32 reserved;
+  u8  data[NETMON_FRAME_BYTES];
 };
 
 struct netmon_stats_user {
-  uint64_t rx_frames;
-  uint64_t rx_bytes;
-  uint64_t tx_frames;
-  uint64_t tx_bytes;
-  uint64_t seq_next;    /* sequence the next captured frame will get */
-  uint64_t seq_oldest;  /* oldest sequence still held in the ring    */
-  uint8_t  mac[6];
-  uint8_t  ipv4[4];
-  uint32_t link_up;
-  uint32_t speed_mbps;
-  uint32_t present;     /* 0 when no driver has called netmon_bind() */
-  uint32_t ring_frames; /* NETMON_RING_FRAMES, so callers need not
+  u64 rx_frames;
+  u64 rx_bytes;
+  u64 tx_frames;
+  u64 tx_bytes;
+  u64 seq_next;    /* sequence the next captured frame will get */
+  u64 seq_oldest;  /* oldest sequence still held in the ring    */
+  u8  mac[6];
+  u8  ipv4[4];
+  u32 link_up;
+  u32 speed_mbps;
+  u32 present;     /* 0 when no driver has called netmon_bind() */
+  u32 ring_frames; /* NETMON_RING_FRAMES, so callers need not
                          * hardcode the capture depth                */
 };
 
 /* ---------------- Driver-facing ---------------------------------------- */
 
 /* Announce the interface. Safe to call again if the address changes. */
-void netmon_bind(const uint8_t mac[6], const uint8_t ipv4[4]);
+void netmon_bind(const u8 mac[6], const u8 ipv4[4]);
 
 /* Link state, polled by the driver. speed_mbps is advisory. */
-void netmon_set_link(int up, uint32_t speed_mbps);
+void netmon_set_link(int up, u32 speed_mbps);
 
 /* Capture one frame. `length` is the wire length even when it exceeds
  * NETMON_FRAME_BYTES; only the first NETMON_FRAME_BYTES are stored. */
-void netmon_record(int direction, const void *frame, uint32_t length);
+void netmon_record(int direction, const void *frame, u32 length);
 
 /* ---------------- Syscall backends ------------------------------------- */
 
@@ -90,7 +91,7 @@ long netmon_read_stats(struct netmon_stats_user *out);
 /* Copies frames from *cursor onward, advancing it past what was returned.
  * A cursor behind the ring jumps to the oldest frame still held. Compare
  * out[0].seq with the input cursor to detect the jump. */
-long netmon_read_frames(uint64_t *cursor, struct netmon_frame_user *out,
+long netmon_read_frames(u64 *cursor, struct netmon_frame_user *out,
                         long max);
 
 #endif /* NETMON_H */

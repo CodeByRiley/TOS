@@ -70,11 +70,10 @@ struct wm_window {
 };
 
 /* ---------------- Event API -------------------------------------------- */
-/* wm_poll_event() drains ipc_recv looking for WM-flavored messages
- * (IPC_WM_INPUT, IPC_WM_RESIZE_NOTIFY). Non-WM messages get dropped, so
- * clients that mix WM and custom IPC should call ipc_recv themselves and
- * dispatch on m.type. Event codes mirror MSG_* from syscall.h so apps see
- * the same input vocabulary winman receives from the kernel. */
+/* wm_poll_event() selects WM-flavored messages through lib/event. Non-WM
+ * messages remain queued in libevent's userspace inbox, so windowed clients
+ * can safely mix WM and custom IPC. Event codes mirror MSG_* from syscall.h
+ * so apps see the same input vocabulary winman receives from the kernel. */
 enum {
     WM_EV_NONE        = 0,
     WM_EV_KEY_DOWN    = 1,

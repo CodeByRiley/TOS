@@ -35,15 +35,15 @@ struct panic_record {
   const struct interrupt_frame *frame;
   int line;
   int cpu_id;
-  uint64_t caller;
-  uint64_t rbp;
-  uint64_t rsp;
-  uint64_t fault_address;
+  u64 caller;
+  u64 rbp;
+  u64 rsp;
+  u64 fault_address;
   int has_fault_address;
 };
 
 struct panic_machine_state {
-  uint64_t cr0, cr2, cr3, cr4, rflags;
+  u64 cr0, cr2, cr3, cr4, rflags;
 };
 
 static volatile int panic_owner = -1;
@@ -68,9 +68,9 @@ static void panic_serialf(const char *fmt, ...) {
   serial_write_str(serial_line);
 }
 
-static int kernel_address(uint64_t address) {
-  uint64_t start = (uint64_t)(uintptr_t)_kernel_start;
-  uint64_t end = (uint64_t)(uintptr_t)_kernel_end;
+static int kernel_address(u64 address) {
+  u64 start = (u64)(uintptr_t)_kernel_start;
+  u64 end = (u64)(uintptr_t)_kernel_end;
   return address >= start && address < end;
 }
 
@@ -79,8 +79,8 @@ static int kernel_address(uint64_t address) {
  * kernel text but unresolved), or the raw hex address.  Writes into the
  * caller-provided buffer so there are no allocations on the panic path.
  */
-static void panic_symstr(char *buf, size_t bufsz, uint64_t address) {
-  uint64_t off = 0;
+static void panic_symstr(char *buf, usize bufsz, u64 address) {
+  u64 off = 0;
   const char *sym = symtab_resolve(address, &off);
 
   if (sym)
@@ -88,12 +88,12 @@ static void panic_symstr(char *buf, size_t bufsz, uint64_t address) {
   else if (kernel_address(address))
     snprintf(
         buf, bufsz, "kernel+0x%llx",
-        (unsigned long long)(address - (uint64_t)(uintptr_t)_kernel_start));
+        (unsigned long long)(address - (u64)(uintptr_t)_kernel_start));
   else
     snprintf(buf, bufsz, "0x%llx", (unsigned long long)address);
 }
 
-static void panic_address_line(const char *label, uint64_t address) {
+static void panic_address_line(const char *label, u64 address) {
   char symbuf[128];
   panic_symstr(symbuf, sizeof(symbuf), address);
   panic_serialf("%-18s %016llx  %s\n", label, (unsigned long long)address,
@@ -116,10 +116,10 @@ static struct task *panic_task(int cpu_id) {
   return cpu_id == 0 ? task_current() : 0;
 }
 
-static int panic_stack_bounds(int cpu_id, struct task *task, uint64_t *low,
-                              uint64_t *high) {
+static int panic_stack_bounds(int cpu_id, struct task *task, u64 *low,
+                              u64 *high) {
   if (cpu_id == 0 && task && task->kstack && task->syscall_kstack_top) {
-    *low = (uint64_t)(uintptr_t)task->kstack;
+    *low = (u64)(uintptr_t)task->kstack;
     *high = task->syscall_kstack_top;
     return 1;
   }
@@ -135,22 +135,22 @@ static int panic_stack_bounds(int cpu_id, struct task *task, uint64_t *low,
 
 static void panic_backtrace(const struct panic_record *record,
                             struct task *task) {
-  uint64_t low, high;
+  u64 low, high;
   serial_write_str("Backtrace (frame : return address):\n");
   if (!record->rbp || !panic_stack_bounds(record->cpu_id, task, &low, &high)) {
     serial_write_str("  unavailable (no trusted kernel stack bounds)\n");
     return;
   }
 
-  uint64_t frame = record->rbp;
+  u64 frame = record->rbp;
   int emitted = 0;
   for (int i = 0; i < PANIC_BACKTRACE_MAX; i++) {
     if ((frame & 7) || frame < low || frame + 16 > high)
       break;
 
-    const uint64_t *words = (const uint64_t *)(uintptr_t)frame;
-    uint64_t next = words[0];
-    uint64_t ret = words[1];
+    const u64 *words = (const u64 *)(uintptr_t)frame;
+    u64 next = words[0];
+    u64 ret = words[1];
 
     char symbuf[128];
     panic_symstr(symbuf, sizeof(symbuf), ret);
@@ -166,10 +166,10 @@ static void panic_backtrace(const struct panic_record *record,
     serial_write_str("  unavailable (frame pointer outside kernel stack)\n");
 }
 
-static uint64_t frame_rsp(const struct interrupt_frame *frame) {
+static u64 frame_rsp(const struct interrupt_frame *frame) {
   if ((frame->cs & 3) == 3)
     return frame->rsp;
-  return (uint64_t)(uintptr_t)&frame->rsp;
+  return (u64)(uintptr_t)&frame->rsp;
 }
 
 static void panic_report_registers(const struct interrupt_frame *f) {
@@ -247,21 +247,21 @@ static void panic_serial_report(const struct panic_record *record,
 
   panic_backtrace(record, task);
   serial_write_str("Kernel text: ");
-  serial_write_hex((uint64_t)(uintptr_t)_kernel_start);
+  serial_write_hex((u64)(uintptr_t)_kernel_start);
   serial_write_str(" - ");
-  serial_write_hex((uint64_t)(uintptr_t)_kernel_end);
+  serial_write_hex((u64)(uintptr_t)_kernel_end);
   serial_write_str("\nPlease restart the machine.\n");
 }
 
 static void screen_centered(struct gfx_surface *surface, int y,
-                            const char *text, uint32_t color, int scale) {
+                            const char *text, u32 color, int scale) {
   int w = 0;
   gfx_text_size(text, scale, &w, 0);
   gfx_text(surface, (surface->w - w) / 2, y, text, color, scale);
 }
 
 static void screen_wrapped(struct gfx_surface *surface, int *y,
-                           const char *text, uint32_t color, int scale,
+                           const char *text, u32 color, int scale,
                            int max_width) {
   int chars = max_width / (GFX_GLYPH_W * scale);
   if (chars < 8)
@@ -348,7 +348,7 @@ static int panic_screen(const struct panic_record *record) {
                   "A detailed diagnostic report is available on serial.",
                   PANIC_MUTED, 1);
 
-  framebuffer_mark_damage(0, 0, (uint32_t)surface.w, (uint32_t)surface.h);
+  framebuffer_mark_damage(0, 0, (u32)surface.w, (u32)surface.h);
   framebuffer_present();
   return 1;
 }
@@ -385,14 +385,14 @@ static const char *device_bus_name(int bus) {
   }
 }
 
-static uint64_t panic_stop_code(const struct panic_record *record) {
+static u64 panic_stop_code(const struct panic_record *record) {
   if (record->frame)
     return record->frame->int_num & 0xFFFFFFFFu;
   return 0x000000FFu;
 }
 
 static void diag_line(struct gfx_surface *surface, int *y, int x,
-                      const char *text, uint32_t color) {
+                      const char *text, u32 color) {
   const int line_h = GFX_GLYPH_H + 2;
   if (!text || *y + line_h > surface->h)
     return;
@@ -400,7 +400,7 @@ static void diag_line(struct gfx_surface *surface, int *y, int x,
   int max_chars = (surface->w - x - 8) / GFX_GLYPH_W;
   if (max_chars <= 0)
     return;
-  gfx_text_n(surface, x, *y, text, (size_t)max_chars, color, 1);
+  gfx_text_n(surface, x, *y, text, (usize)max_chars, color, 1);
   *y += line_h;
 }
 
@@ -412,8 +412,8 @@ static void diag_rule(struct gfx_surface *surface, int *y) {
 }
 
 static void diag_hex2(struct gfx_surface *surface, int *y,
-                      const char *left_label, uint64_t left,
-                      const char *right_label, uint64_t right) {
+                      const char *left_label, u64 left,
+                      const char *right_label, u64 right) {
   snprintf(screen_line, sizeof(screen_line), "%-6s %016llx    %-6s %016llx",
            left_label, (unsigned long long)left, right_label,
            (unsigned long long)right);
@@ -484,8 +484,8 @@ static void diag_drivers(struct gfx_surface *surface, int *y) {
 static void diag_stack(struct gfx_surface *surface, int *y,
                        const struct panic_record *record) {
   struct task *task = panic_task(record->cpu_id);
-  uint64_t low, high;
-  uint64_t frame = record->rbp;
+  u64 low, high;
+  u64 frame = record->rbp;
 
   diag_line(surface, y, 8, "Stack frames", PANIC_MUTED);
   diag_line(surface, y, 8, "ADDRESS             NEXT               RETURN",
@@ -502,9 +502,9 @@ static void diag_stack(struct gfx_surface *surface, int *y,
     if ((frame & 7) || frame < low || frame + 16 > high)
       break;
 
-    const uint64_t *words = (const uint64_t *)(uintptr_t)frame;
-    uint64_t next = words[0];
-    uint64_t ret = words[1];
+    const u64 *words = (const u64 *)(uintptr_t)frame;
+    u64 next = words[0];
+    u64 ret = words[1];
     char symbuf[128];
     panic_symstr(symbuf, sizeof(symbuf), ret);
     snprintf(screen_line, sizeof(screen_line),
@@ -588,7 +588,7 @@ static void panic_diagnostic_screen(const struct panic_record *record,
               PANIC_MUTED);
   }
 
-  framebuffer_mark_damage(0, 0, (uint32_t)surface.w, (uint32_t)surface.h);
+  framebuffer_mark_damage(0, 0, (u32)surface.w, (u32)surface.h);
   framebuffer_present();
 }
 
@@ -602,7 +602,7 @@ panic_finish(struct panic_record *record) {
     panic_serialf("\nDOUBLE PANIC on cpu %d while panic owner is cpu %d\n",
                   record->cpu_id, expected);
     // serial_write_str(" while panic owner is cpu ");
-    // serial_write_hex((uint64_t)(uint32_t)expected);
+    // serial_write_hex((u64)(u32)expected);
     panic_halt();
   }
 
@@ -623,7 +623,7 @@ panic_finish(struct panic_record *record) {
 }
 
 void panic_at(const char *msg, const char *file, int line, const char *func) {
-  uint64_t rsp;
+  u64 rsp;
   __asm__ volatile("mov %%rsp, %0" : "=r"(rsp));
   int cpu_id = percpu_current_id();
   if (cpu_id < 0 || cpu_id >= MAX_CPUS)
@@ -635,15 +635,15 @@ void panic_at(const char *msg, const char *file, int line, const char *func) {
       .func = func,
       .line = line,
       .cpu_id = cpu_id,
-      .caller = (uint64_t)(uintptr_t)__builtin_return_address(0),
-      .rbp = (uint64_t)(uintptr_t)__builtin_frame_address(0),
+      .caller = (u64)(uintptr_t)__builtin_return_address(0),
+      .rbp = (u64)(uintptr_t)__builtin_frame_address(0),
       .rsp = rsp,
   };
   panic_finish(record);
 }
 
 void panic_from_exception(const char *name, const struct interrupt_frame *frame,
-                          uint64_t fault_address, int has_fault_address) {
+                          u64 fault_address, int has_fault_address) {
   int cpu_id = percpu_current_id();
   if (cpu_id < 0 || cpu_id >= MAX_CPUS)
     cpu_id = 0;
@@ -659,7 +659,7 @@ void panic_from_exception(const char *name, const struct interrupt_frame *frame,
       .cpu_id = cpu_id,
       .caller = frame ? frame->rip : 0,
       .rbp =
-          (uint64_t)(uintptr_t)__builtin_frame_address(0), // Trace kernel path
+          (u64)(uintptr_t)__builtin_frame_address(0), // Trace kernel path
       .rsp = frame ? frame_rsp(frame) : 0,
       .fault_address = fault_address,
       .has_fault_address = has_fault_address,

@@ -22,12 +22,12 @@
 #define SPLIT_THRESHOLD    16    /* payload bytes below which we won't split */
 
 #define LARGE_ALLOC_VBASE 0xFFFFA00000000000ULL
-static uint64_t large_alloc_virt_offset = LARGE_ALLOC_VBASE;
+static u64 large_alloc_virt_offset = LARGE_ALLOC_VBASE;
 
 /* In-band header on every allocation. Doubly linked so kfree can fold
  * adjacent neighbours in O(1). */
 struct block {
-    size_t        size;          /* payload size, excluding header */
+    usize        size;          /* payload size, excluding header */
     int           free;
     struct block *next;
     struct block *prev;
@@ -45,13 +45,13 @@ _Static_assert(HEAP_BASE % KMALLOC_ALIGN == 0,
 
 static struct block *head = 0;
 static struct block *tail = 0;
-static uint64_t      heap_end = 0;
+static u64      heap_end = 0;
 
 /* Map fresh frames at the top of the heap and report how many succeeded. */
-static size_t heap_grow(size_t pages) {
-    size_t mapped = 0;
+static usize heap_grow(usize pages) {
+    usize mapped = 0;
     for (; mapped < pages; mapped++) {
-        uint64_t phys = pmm_alloc_frame();
+        u64 phys = pmm_alloc_frame();
         if (!phys) {
             log_write("heap: OOM", KERNEL, LOG_ERROR);
             break;
@@ -68,7 +68,7 @@ static size_t heap_grow(size_t pages) {
 
 void heap_init(void) {
     heap_end = HEAP_BASE;
-    size_t initial_pages = heap_grow(HEAP_INITIAL_PAGES);
+    usize initial_pages = heap_grow(HEAP_INITIAL_PAGES);
     if (initial_pages == 0) {
         log_write("heap: initial allocation failed", KERNEL, LOG_ERROR);
         for (;;)
@@ -85,7 +85,7 @@ void heap_init(void) {
 /* Append a freshly-grown region. If the existing tail is free, absorb
  * the new bytes into it instead of creating a new node , keeps the
  * no-adjacent-free-blocks invariant across heap_grow. */
-static void list_append(uint64_t region_start, size_t region_bytes) {
+static void list_append(u64 region_start, usize region_bytes) {
     if (tail && tail->free) {
         tail->size += region_bytes;
         return;
@@ -100,13 +100,13 @@ static void list_append(uint64_t region_start, size_t region_bytes) {
     if (!head) head = nb;
 }
 
-void *kmalloc(size_t size) {
+void *kmalloc(usize size) {
     if (size == 0) return 0;                       /* zero-byte: politely decline */
     /* 16, not 8: x86-64's widest scalar alignment, and the alignment fxsave
      * and fxrstor fault without. struct task_context carries an ALIGNED(16)
      * fxstate and is allocated from here, so an 8-byte-aligned payload would
      * fault on the first context switch into that task. */
-    size = (size + (KMALLOC_ALIGN - 1)) & ~(size_t)(KMALLOC_ALIGN - 1);
+    size = (size + (KMALLOC_ALIGN - 1)) & ~(usize)(KMALLOC_ALIGN - 1);
 
     for (;;) {
         for (struct block *b = head; b; b = b->next) {
@@ -115,7 +115,7 @@ void *kmalloc(size_t size) {
             /* Split only when the leftover would hold useful data,
              * otherwise hand back the whole thing as internal slack. */
             if (b->size >= size + sizeof(struct block) + SPLIT_THRESHOLD) {
-                struct block *split = (struct block*)((uint8_t*)b + sizeof(struct block) + size);
+                struct block *split = (struct block*)((u8*)b + sizeof(struct block) + size);
                 split->size = b->size - size - sizeof(struct block);
                 split->free = 1;
                 split->next = b->next;
@@ -126,13 +126,13 @@ void *kmalloc(size_t size) {
                 b->next = split;
             }
             b->free = 0;
-            return (uint8_t*)b + sizeof(struct block);
+            return (u8*)b + sizeof(struct block);
         }
 
         /* Out of fit. Grow heap, append (or merge into free tail), retry. */
-        size_t needed = (size + sizeof(struct block) + 4095) / 4096;
-        uint64_t old_end = heap_end;
-        size_t mapped = heap_grow(needed);
+        usize needed = (size + sizeof(struct block) + 4095) / 4096;
+        u64 old_end = heap_end;
+        usize mapped = heap_grow(needed);
         if (mapped == 0) return 0;
         list_append(old_end, mapped * 4096);
     }
@@ -142,14 +142,14 @@ void *kmalloc(size_t size) {
  * its own VA range. The offset only ever moves forward and there is no
  * large_free, so every allocation is effectively permanent , fine for the
  * boot-time buffers using it, wrong for anything with a lifecycle. */
-void* large_alloc(size_t size) {
+void* large_alloc(usize size) {
     if (size == 0) return 0;
 
-    size_t pages = (size + 4095) / 4096;
-    uint64_t virt_start = large_alloc_virt_offset;
+    usize pages = (size + 4095) / 4096;
+    u64 virt_start = large_alloc_virt_offset;
 
-    for (size_t i = 0; i < pages; i++) {
-        uint64_t phys = pmm_alloc_frame();
+    for (usize i = 0; i < pages; i++) {
+        u64 phys = pmm_alloc_frame();
         if (!phys) {
             log_write("LARGE_ALLOC: PMM Out of Memory!", KERNEL, LOG_ERROR);
             return 0;
@@ -170,7 +170,7 @@ void* large_alloc(size_t size) {
 
 void kfree(void *ptr) {
     if (!ptr) return;
-    struct block *b = (struct block*)((uint8_t*)ptr - sizeof(struct block));
+    struct block *b = (struct block*)((u8*)ptr - sizeof(struct block));
     b->free = 1;
 
     /* Forward-coalesce: absorb the next block if free. */

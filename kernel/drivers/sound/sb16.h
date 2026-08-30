@@ -10,6 +10,7 @@
 #ifndef SB16_H
 #define SB16_H
 
+#include <utilities/types.h>
 #include <stdint.h>
 
 #define SB16_DEFAULT_IO  0x220
@@ -123,17 +124,17 @@
 #define SB16_STREAM_ERR_NOT_OWNER (-4)
 
 struct sb16_stream_status {
-    uint32_t available;
-    uint32_t playing;
-    uint32_t paused;
-    uint32_t sample_rate;
-    uint32_t channels;
-    uint32_t format;
-    uint32_t ring_capacity;
-    uint32_t ring_queued;
-    uint32_t device_queued;
-    uint32_t underruns;
-    uint32_t volume;
+    u32 available;
+    u32 playing;
+    u32 paused;
+    u32 sample_rate;
+    u32 channels;
+    u32 format;
+    u32 ring_capacity;
+    u32 ring_queued;
+    u32 device_queued;
+    u32 underruns;
+    u32 volume;
     int32_t  owner_pid;
 };
 
@@ -144,11 +145,11 @@ struct sb16_stream_status {
 
 void sb16_driver_init(void);
 
-void sb16_dsp_write(uint8_t command);
-void sb16_mixer_write(uint8_t index, uint8_t value);
+void sb16_dsp_write(u8 command);
+void sb16_mixer_write(u8 index, u8 value);
 void sb16_program_dma(void);
 int  sb16_allocate_dma_buffer(void);
-void sb16_set_sample_rate(uint16_t rate);
+void sb16_set_sample_rate(u16 rate);
 void sb16_speaker_on(void);
 void sb16_speaker_off(void);
 void sb16_reset_mixer(void);
@@ -163,20 +164,20 @@ void sb16_ack_irq(void);
  * samples into that buffer is the caller's job; sb16_dma_buffer() hands
  * back its virtual address and size. Playback is not started by probe. */
 void  sb16_play(void);
-void  sb16_play_wav(uint8_t *data, uint32_t size);
+void  sb16_play_wav(u8 *data, u32 size);
 void  sb16_stop(void);
-void *sb16_dma_buffer(uint32_t *size_out);
+void *sb16_dma_buffer(u32 *size_out);
 
 /* Single-owner PCM stream used by the audio syscalls. Writes are
  * non-blocking and may accept fewer bytes than requested; producers retry
  * after a zero or short write. Drain starts short final buffers, waits in the
  * syscall layer, and leaves the configured stream open for reuse. */
-int  sb16_stream_open(int owner_pid, uint32_t sample_rate,
-                      uint32_t channels, uint32_t format);
-long sb16_stream_write(int owner_pid, const void *data, uint32_t bytes);
+int  sb16_stream_open(int owner_pid, u32 sample_rate,
+                      u32 channels, u32 format);
+long sb16_stream_write(int owner_pid, const void *data, u32 bytes);
 int  sb16_stream_status(struct sb16_stream_status *out);
 int  sb16_stream_begin_drain(int owner_pid);
-uint32_t sb16_stream_pending(int owner_pid);
+u32 sb16_stream_pending(int owner_pid);
 int  sb16_stream_finish_drain(int owner_pid);
 int  sb16_stream_pause(int owner_pid);
 int  sb16_stream_resume(int owner_pid);

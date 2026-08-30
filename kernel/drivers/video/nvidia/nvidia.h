@@ -9,6 +9,7 @@
 #ifndef NVIDIA_H
 #define NVIDIA_H
 
+#include <utilities/types.h>
 #define NVIDIA_PCI_VENDOR_ID 0x10DE
 
 int nvidia_driver_register(void);
