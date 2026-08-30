@@ -287,9 +287,11 @@ static int load_request_image(struct spawn_request *req,
 
     if (read == sizeof(magic) && magic[0] == 'M' && magic[1] == 'Z') {
         image->entry = pe_load(req->path, image->pml4);
+        log_write_hex("process_spawn: using pe entry =", image->entry, KERNEL, LOG_INFO);
     } else if (read == sizeof(magic) && magic[0] == 0x7f &&
                magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F') {
         image->entry = elf_load(req->path, image->pml4);
+        log_write_hex("process_spawn: using elf entry =", image->entry, KERNEL, LOG_INFO);
     } else {
         log_write("process_spawn: unknown or truncated executable", KERNEL,
                   LOG_ERROR);
@@ -405,7 +407,7 @@ long process_exec(const char *path, char *const argv[]) {
     struct spawn_request *req = snapshot_request(path, argv);
     if (!req)
         return -1;
-    log_write_hex("process_exec: created process id = %d", req->reserved->pid, USER, LOG_INFO);
+    log_write_hex("process_exec: created process id", req->reserved->pid, USER, LOG_INFO);
     int child_pid = spawn_request_now(req);
     kfree(req);
     if (child_pid < 0) return -1;

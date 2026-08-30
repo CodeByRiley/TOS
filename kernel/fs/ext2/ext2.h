@@ -1,3 +1,10 @@
+/* kernel/fs/ext2/ext2.h , ext2 VFS backend registration.
+ *
+ * Exposes the ext2 filesystem type to kernel startup code. On-disk layouts
+ * and backend helpers remain private to ext2_internal.h.
+ *
+ * Implementation: kernel/fs/ext2/ext2_vfs.c.
+ */
 #ifndef TOS_EXT2_H
 #define TOS_EXT2_H
 

@@ -1,5 +1,6 @@
 /* userspace/bin/muse/muse.c - streaming PCM WAV media player. */
 #include <include/key_codes.h>
+#include <lib/app_info.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -8,6 +9,8 @@
 #include <lib/ui.h>
 #include <lib/wm.h>
 #include <stdint.h>
+
+APP_INFO(APP_TYPE_GUI, "Muse");
 
 #define WINDOW_W 500
 #define WINDOW_H 190

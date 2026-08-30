@@ -8,8 +8,8 @@
  * Also hosts a few generic helper structs (M4_i, M4_f, Process,
  * MemoryBlock, StatusCode) used by ad-hoc code paths.
  */
-#ifndef TYPES_H
-#define TYPES_H
+#ifndef KERNEL_TYPES_H
+#define KERNEL_TYPES_H
 
 /* --- Compiler Attributes & Macros --------------------------------- */
 #define PACKED __attribute__((packed))
@@ -100,11 +100,9 @@ typedef enum boolean {
 
 typedef void (*func_ptr)(void);
 
-/* --- OS-Specific Subsystem Handles --------------------------------- */
-typedef int pid_t;       /* Process ID */
-typedef int dev_t;       /* Device ID */
-typedef int fd_t;        /* File Descriptor */
-typedef int64_t off_t;   /* File offset */
+/* POSIX names such as off_t and pid_t do not belong in this global kernel
+ * alias header: hosted tests already receive them from the C runtime, while
+ * kernel subsystems should define domain-specific handles where needed. */
 typedef u64 tick_t; /* System timer ticks */
 
 /* --- Helper structs ------------------------------------------------ */

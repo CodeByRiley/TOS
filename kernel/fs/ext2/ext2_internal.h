@@ -1,3 +1,15 @@
+/* kernel/fs/ext2/ext2_internal.h , private ext2 layouts and helpers.
+ *
+ * Defines the supported ext2 on-disk structures, mount state, open-file
+ * state, and helpers shared by the split ext2 implementation. Files outside
+ * kernel/fs/ext2 include ext2.h or vfs.h instead.
+ *
+ * Implementation: kernel/fs/ext2/ext2_mount.c,
+ *                 kernel/fs/ext2/ext2_inode.c,
+ *                 kernel/fs/ext2/ext2_dir.c,
+ *                 kernel/fs/ext2/ext2_file.c,
+ *                 kernel/fs/ext2/ext2_vfs.c.
+ */
 #ifndef TOS_EXT2_INTERNAL_H
 #define TOS_EXT2_INTERNAL_H
 

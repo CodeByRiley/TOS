@@ -9,6 +9,26 @@
 #ifndef SYS_TYPES_H
 #define SYS_TYPES_H
 
+/* --- Compiler Attributes & Macros --------------------------------- */
+#define PACKED __attribute__((packed))
+#define ALIGNED(x) __attribute__((aligned(x)))
+#define NORETURN __attribute__((noreturn))
+#define UNUSED __attribute__((unused))
+#define WEAK __attribute__((weak))
+
+#define SINLINE static inline
+
+/* Branch prediction hints for performance-critical paths */
+#define LIKELY(x) __builtin_expect(!!(x), 1)
+#define UNLIKELY(x) __builtin_expect(!!(x), 0)
+
+/* Section placement (useful for linking init code, per-CPU data, etc.) */
+#define SECTION(name) __attribute__((section(name)))
+
+/* For declaring aliases or preventing strict aliasing optimisations */
+#define MAY_ALIAS __attribute__((may_alias))
+
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -64,5 +84,38 @@ typedef unsigned int  mode_t;
 typedef unsigned int  uid_t;
 typedef unsigned int  gid_t;
 typedef long          time_t;
+
+typedef void (*func_ptr)(void);
+
+/* --- OS-Specific Subsystem Handles --------------------------------- */
+typedef int pid_t;       /* Process ID */
+typedef int dev_t;       /* Device ID */
+typedef int fd_t;        /* File Descriptor */
+typedef int64_t off_t;   /* File offset */
+typedef u64 tick_t; /* System timer ticks */
+
+
+/* --- Common Helper Macros ------------------------------------------ */
+#ifndef NULL
+#define NULL ((void *)0)
+#endif
+
+/* Array element count */
+#define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
+
+/* Bitmask creation */
+#define BIT(n) (1ULL << (n))
+
+/* Alignment math */
+#define ALIGN_UP(x, a) (((x) + ((a) - 1)) & ~((a) - 1))
+#define ALIGN_DOWN(x, a) ((x) & ~((a) - 1))
+
+/* Offset of a member within a struct */
+#define OFFSET_OF(type, member) __builtin_offsetof(type, member)
+
+/* Container_of macro (crucial for intrusive linked lists in kernels) */
+#define CONTAINER_OF(ptr, type, member)                                        \
+  ((type *)((char *)(ptr) - OFFSET_OF(type, member)))
+
 
 #endif

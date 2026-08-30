@@ -1,3 +1,7 @@
+/* kernel/fs/fat/fat_vfs.c , FAT-to-VFS adapter.
+ *
+ * Translates generic VFS handles and operations to the singleton FAT image.
+ */
 #include <fs/fat/fat.h>
 #include <fs/fat/fat_vfs.h>
 #include <fs/vfs/vfs.h>

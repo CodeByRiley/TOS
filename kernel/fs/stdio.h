@@ -22,15 +22,15 @@
 typedef struct {
     struct vfs_file f;
     int             valid;
-    int             can_read;  // 1 if opened with 'r' or '+'
-    int             can_write; // 1 if opened with 'w', 'a', or '+'
-    int             append;    // 1 if opened with 'a': writes force to EOF
+    int             can_read;  /* Opened with 'r' or '+'. */
+    int             can_write; /* Opened with 'w', 'a', or '+'. */
+    int             append;    /* Writes always seek to EOF. */
 } FILE;
 
 FILE  *fopen(const char *name, const char *mode);
 int    fclose(FILE *fp);
-usize fread(void *buf, usize sz, usize nmemb, FILE *fp);
-usize fwrite(const void *buf, usize size, usize count, FILE *fp);
+size_t fread(void *buf, size_t sz, size_t nmemb, FILE *fp);
+size_t fwrite(const void *buf, size_t size, size_t count, FILE *fp);
 int    fseek(FILE *fp, long off, int whence);
 long   ftell(FILE *fp);
 int    fgetc(FILE *fp);

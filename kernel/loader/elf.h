@@ -9,7 +9,6 @@
 #ifndef ELF_H
 #define ELF_H
 
-
 /* PACKED and friends. */
 #include <utilities/types.h>
 #include <stdint.h>

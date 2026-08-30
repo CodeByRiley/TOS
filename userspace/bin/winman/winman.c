@@ -364,8 +364,8 @@ void pump_input(void) {
         /* Rescan on open rather than per-frame: the directories can gain a
          * binary while winman runs, but a scan per repaint would hit the
          * filesystem on every hover change. */
-        if (start_menu_open)
-          build_start_menu_entries();
+        // if (start_menu_open)
+        //   build_start_menu_entries();
 
         int menu_h = start_menu_count * START_MENU_ITEM_H + START_MENU_PAD * 2;
 

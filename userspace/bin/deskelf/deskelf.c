@@ -10,6 +10,7 @@
 #include <lib/gfx.h>
 #include <lib/keymap.h>
 #include <lib/syscall.h>
+#include <lib/app_info.h>
 #include <lib/ui.h>
 #include <lib/wm.h>
 #include <include/key_codes.h>
@@ -44,6 +45,8 @@ struct file_entry {
     char name[MAX_NAME];
     int is_dir;
 };
+
+APP_INFO(APP_TYPE_GUI, "Desk Elf");
 
 static char cwd[MAX_PATH];
 static struct file_entry entries[MAX_ENTRIES];

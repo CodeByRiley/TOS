@@ -1,4 +1,5 @@
 #include <include/key_codes.h>
+#include <lib/app_info.h>
 #include <lib/gfx.h>
 #include <lib/keymap.h>
 #include <lib/syscall.h>
@@ -6,6 +7,8 @@
 #include <lib/wm.h>
 #include <stdio.h>
 #include <string.h>
+
+APP_INFO(APP_TYPE_GUI, "Text Editor");
 
 #define WIN_W 480
 #define WIN_H 320
@@ -34,7 +37,6 @@ static int descent = -3;
 
 static char text_buf[MAX_CHARS];
 static int text_len = 0;
-
 /* The path is kept rather than an open FILE*: saving reopens with "w" every
  * time, which is what truncates. Holding one handle open across saves would
  * either append a second copy of the text or leave the tail of a longer

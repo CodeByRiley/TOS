@@ -7,7 +7,7 @@
  * Keeping it in its own translation unit is what keeps fat.c free of AHCI
  * and kernel-heap symbols, so the host tests can link the filesystem logic
  * on its own. Anything that needs a disk behind the image includes this;
- * everything else includes fs/fat.h and stays portable.
+ * everything else includes fs/fat/fat.h and stays portable.
  *
  * Implementation: kernel/fs/fat/ahci/fat_ahci.c.
  */

@@ -4,7 +4,8 @@
 *.o
 *.d
 *.elf
-
+diff.txt
+diff.diff
 
 # Generated boot media and ISO staging files
 /boot/**/iso/boot/disk.img
@@ -34,6 +35,7 @@ __pycache__/
 
 # Temporary and backup files
 *.bak
+*.old
 *.tmp
 *.temp
 *.log

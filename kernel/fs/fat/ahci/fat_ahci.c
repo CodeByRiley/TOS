@@ -1,4 +1,7 @@
-/* AHCI backend. Mounts the FAT image in RAM and writes changes through. */
+/* kernel/fs/fat/ahci/fat_ahci.c , AHCI persistence for FAT images.
+ *
+ * Loads a FAT volume into RAM and writes changed sectors back through AHCI.
+ */
 #include "drivers/storage/ahci.h"
 #include "memory/heap.h"
 #include "memory/hhdm.h"
@@ -47,7 +50,7 @@ static u32 dma_run_sectors(const u8 *base, u32 max_sectors,
 static int ahci_backed;
 
 /* Write-through callback used by fat.c. */
-static void ahci_sector_writer(u32 lba, void *data) {
+static void ahci_sector_writer(u32 lba, const void *data) {
     if (!g_ahci_dev)
         return;
 
@@ -134,7 +137,7 @@ void fat_flush(void) {
         u32 left = total_sectors - sectors_written;
         u32 want = left < FAT_AHCI_CHUNK ? left : FAT_AHCI_CHUNK;
 
-        /* BUG: Crossing a physical gap would write unrelated memory. */
+        /* Restrict the request to the current physically contiguous run. */
         u32 chunk = dma_run_sectors(src, want, bytes_per_sector);
         u64 buf_phys = dma_phys(src);
 

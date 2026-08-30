@@ -37,7 +37,7 @@ FILE *fopen(const char *name, const char *mode) {
     for (int i = 1; mode[i] != '\0'; i++) {
         switch (mode[i]) {
             case '+': read = 1; write = 1; break;
-            case 'b': break;                  /* no text mode to differ from */
+            case 'b': break;                  /* Text and binary are equal. */
             default: return 0;
         }
     }
@@ -96,7 +96,7 @@ usize fread(void *buf, usize size, usize count, FILE *fp) {
     }
     if (!span_ok(size, count)) return 0;
 
-    /* return number of complete items read */
+    /* Return the number of complete items read. */
     return vfs_read(&fp->f, buf, size * count) / size;
 }
 
@@ -111,7 +111,7 @@ usize fwrite(const void *buf, usize size, usize count, FILE *fp) {
     if (fp->append)
         vfs_seek(&fp->f, fp->f.size);
 
-    /* return number of complete items written */
+    /* Return the number of complete items written. */
     return vfs_write(&fp->f, buf, size * count) / size;
 }
 

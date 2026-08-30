@@ -56,6 +56,7 @@ TOS_NATIVE_TOOLS ?= 0
 # mingw32-make sees OS=Windows_NT; MSYS2's own make does not, but it does set
 # MSYSTEM. Either one means we are on Windows and the tools live in WSL.
 windows_host := $(if $(filter Windows_NT,$(OS))$(MSYSTEM),1,)
+NASM ?= nasm
 
 ifeq ($(windows_host),1)
   ifeq ($(TOS_NATIVE_TOOLS),1)
@@ -69,6 +70,9 @@ ifeq ($(windows_host),1)
         mingw32-make (MinGW), not MSYS2's own make)
     endif
     run_linux = wsl bash -lc "cd \"\$$(wslpath -a '$(CURDIR)')\" && $(1)"
+    # Keep the cross compiler on Windows, but use WSL's assembler when NASM
+    # is not part of the native toolchain.
+    NASM := wsl nasm
   endif
 else
   # Linux: native.
@@ -110,13 +114,13 @@ $(kernel_asm_object_files) $(ap_trampoline_bin): $(asm_offsets_inc)
 
 $(kernel_asm_object_files): build/kernel/%.o : kernel/%.asm
 	mkdir -p $(dir $@) && \
-	nasm -f elf64 -i $(dir $(asm_offsets_inc)) \
+	$(NASM) -f elf64 -i $(dir $(asm_offsets_inc)) \
 		$(patsubst build/kernel/%.o, kernel/%.asm, $@) -o $@
 
 # AP trampoline: flat 16/32/64-bit blob, wrapped as an ELF .rodata symbol so
 # the kernel can `memcpy` it to physical 0x8000 before INIT-SIPI-SIPI.
 $(ap_trampoline_bin): $(ap_trampoline_src)
-	mkdir -p $(dir $@) && nasm -f bin -i $(dir $(asm_offsets_inc)) $< -o $@
+	mkdir -p $(dir $@) && $(NASM) -f bin -i $(dir $(asm_offsets_inc)) $< -o $@
 
 # objcopy derives the _binary_* symbol names from the input path, so run it
 # from the blob's own directory: the symbols stay _binary_ap_trampoline_bin_*
@@ -223,10 +227,14 @@ $(HOST_TEST_DIR)/process_pml4_test.exe: tests/process_pml4_test.c \
 		tests/process_pml4_test.c kernel/loader/process.c -o $@
 
 $(HOST_TEST_DIR)/fat_directory_test.exe: tests/fat_directory_test.c \
-		$(HOST_KERNEL_STUBS) kernel/fs/fat/fat.c kernel/fs/fat/fat.h \
+		$(HOST_KERNEL_STUBS) kernel/fs/fat/fat.c kernel/fs/fat/fat16.c \
+		kernel/fs/fat/fat32.c kernel/fs/fat/fat_directory.c \
+		kernel/fs/fat/fat.h kernel/fs/fat/fat_internal.h \
 		| $(HOST_TEST_DIR)
 	$(HOST_CC) $(HOST_TEST_CFLAGS) -I kernel \
-		tests/fat_directory_test.c kernel/fs/fat/fat.c $(HOST_KERNEL_STUBS) -o $@
+		tests/fat_directory_test.c kernel/fs/fat/fat.c kernel/fs/fat/fat16.c \
+		kernel/fs/fat/fat32.c kernel/fs/fat/fat_directory.c \
+		$(HOST_KERNEL_STUBS) -o $@
 
 $(HOST_TEST_DIR)/ext2-base.img: tools/create_ext2_test_image.sh \
 		tests/fixtures/ext2_root/seed/hello.txt | $(HOST_TEST_DIR)
@@ -243,11 +251,15 @@ $(HOST_TEST_DIR)/ext2_vfs_test.exe: tests/ext2_vfs_test.c $(EXT2_HOST_SRCS) \
 
 $(HOST_TEST_DIR)/stdio_mode_test.exe: tests/stdio_mode_test.c \
 		$(HOST_KERNEL_STUBS) kernel/fs/stdio.c kernel/fs/fat/fat.c \
-		kernel/fs/fat/fat_vfs.c kernel/fs/vfs/vfs.c \
+		kernel/fs/fat/fat16.c kernel/fs/fat/fat32.c \
+		kernel/fs/fat/fat_directory.c kernel/fs/fat/fat_vfs.c \
+		kernel/fs/vfs/vfs.c \
 		kernel/fs/stdio.h kernel/fs/fat/fat.h kernel/fs/vfs/vfs.h \
 		| $(HOST_TEST_DIR)
 	$(HOST_CC) $(HOST_TEST_CFLAGS) -fno-builtin -I kernel tests/stdio_mode_test.c \
-		kernel/fs/stdio.c kernel/fs/fat/fat.c kernel/fs/fat/fat_vfs.c \
+		kernel/fs/stdio.c kernel/fs/fat/fat.c kernel/fs/fat/fat16.c \
+		kernel/fs/fat/fat32.c kernel/fs/fat/fat_directory.c \
+		kernel/fs/fat/fat_vfs.c \
 		kernel/fs/vfs/vfs.c $(HOST_KERNEL_STUBS) -o $@
 
 $(HOST_TEST_DIR)/bmp_decode_test.exe: tests/bmp_decode_test.c \

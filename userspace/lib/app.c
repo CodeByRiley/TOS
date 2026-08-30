@@ -1,6 +1,14 @@
 #include "app.h"
 
+#include <lib/app_info.h>
 #include <string.h>
+
+const struct app_info *app_self_info(void) {
+    for (const struct app_info *p = __appinfo_start; p < __appinfo_end; p++)
+        if (p->magic == APP_INFO_MAGIC)
+            return p;
+    return 0;   /* binary carries no APP_INFO */
+}
 
 static void bind_surface(struct app *app) {
     gfx_surface_init(&app->surface,
@@ -100,8 +108,8 @@ int app_run(struct app *app, const struct app_callbacks *callbacks,
             int action = APP_ACTION_NONE;
             if (callbacks && callbacks->event)
                 action = callbacks->event(app, &event, context);
-            else if (event.type == WM_EV_QUIT)
-                action = APP_ACTION_EXIT;
+            if (event.type == WM_EV_QUIT && action == APP_ACTION_NONE)
+                action = APP_ACTION_EXIT;   /* NONE on QUIT = no objection */
             exit_requested = apply_action(app, action);
             draw_if_needed(app, callbacks, context);
             continue;
@@ -112,6 +120,8 @@ int app_run(struct app *app, const struct app_callbacks *callbacks,
             int action = callbacks->idle(app, context);
             exit_requested = apply_action(app, action);
             worked = draw_if_needed(app, callbacks, context);
+            if (worked)
+                sleep_ticks(1);   /* idle frames are tick-paced */
         }
         if (!worked && !exit_requested)
             sleep_ticks(1);

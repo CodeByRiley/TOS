@@ -21,7 +21,7 @@ static int ext2_probe_image(const void *image, usize size) {
     const u8 *bytes = image;
     const struct ext2_superblock *superblock =
         (const struct ext2_superblock *)(bytes + 1024);
-    return superblock->magic == EXT2_MAGIC;
+    return superblock->magic == EXT_MAGIC;
 }
 
 static int ext2_mount_image(void *image, usize size, void **fs_out) {

@@ -1,3 +1,10 @@
+/* kernel/fs/fat/fat_vfs.h , FAT-to-VFS adapter registration.
+ *
+ * Registers the FAT filesystem type and attaches an already initialized FAT
+ * image to a VFS mountpoint.
+ *
+ * Implementation: kernel/fs/fat/fat_vfs.c.
+ */
 #ifndef TOS_FAT_VFS_H
 #define TOS_FAT_VFS_H
 

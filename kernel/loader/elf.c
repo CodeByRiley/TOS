@@ -21,6 +21,7 @@
 #include <fs/stdio.h>
 #include <sched/sched.h>
 
+
 /* USER_IMAGE_MAX (loader/process.h) bounds the image region: it sits below
  * the mmap arena so a segment can never land on mmap or shmem, and it
  * doubles as the bound that keeps p_vaddr + p_memsz from wrapping. */
@@ -50,6 +51,7 @@ u64 elf_load(const char *path, u64 *pml4) {
         return 0;
     }
 
+    log_write_hex("elf_load: e_entry =", eh.e_entry, KERNEL, LOG_ERROR);
     for (int i = 0; i < eh.e_phnum; i++) {
         struct Elf64_Phdr ph;
         fseek(fp, eh.e_phoff + i * eh.e_phentsize, SEEK_SET);
@@ -59,6 +61,11 @@ u64 elf_load(const char *path, u64 *pml4) {
             return 0;
         }
         if (ph.p_type != PT_LOAD) continue;
+
+        log_write_hex("elf: segment vaddr =", ph.p_vaddr, KERNEL, LOG_ERROR);
+        log_write_hex("elf: segment filesz =", ph.p_filesz, KERNEL, LOG_ERROR);
+        log_write_hex("elf: segment memsz =", ph.p_memsz, KERNEL, LOG_ERROR);
+        log_write_hex("elf: segment flags =", ph.p_flags, KERNEL, LOG_ERROR);
 
         /* Pages are mapped for p_memsz but bytes are read for p_filesz.
          * A filesz larger than memsz writes past the end of the mapping. */
@@ -164,7 +171,7 @@ u64 elf_load(const char *path, u64 *pml4) {
         }
 
     }
-
+    log_write_hex("elf_load: entry point =", eh.e_entry, KERNEL, LOG_INFO);
     fclose(fp);
     return eh.e_entry;
 }

@@ -8,10 +8,20 @@ root mount.
 
 ## Backends
 
-`fat/` retains the existing FAT16/FAT32 implementation. `fat_vfs.c` is its
-translation layer, and `fat/ahci/` is the optional persistent storage backend.
-Keeping AHCI outside the format driver lets FAT host tests use a plain memory
-image.
+`fat/` is split along format and responsibility boundaries:
+
+- `fat.c` is the format-neutral public facade, path walker, and cluster-chain
+  helper layer.
+- `fat16.c` and `fat32.c` select and describe their respective layouts.
+- `fat_directory.c` contains the shared VFAT directory-entry and long-name
+  engine, avoiding two copies of identical and delicate on-disk logic.
+- `fat_vfs.c` translates the FAT API into VFS operations.
+- `fat/ahci/` supplies optional persistence without coupling disk I/O to the
+  format parser, so host tests can use a plain memory image.
+
+exFAT is intentionally not advertised as supported: it has substantially
+different boot and directory layouts and should become its own backend when
+implemented.
 
 `ext2/` is split by on-disk responsibility:
 
