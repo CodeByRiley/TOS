@@ -1,9 +1,10 @@
 CompileFlags:
+  # The generated database is the source of truth for target, language, and
+  # include flags.  Keeping those flags out of this file prevents project-wide
+  # settings from leaking into host-side tests and tools.
+  CompilationDatabase: build
   Add:
-    - "-I./kernel"
-    - "-I./userspace"
-    - "-I./userspace/libc/musl-1.2.6/include/"
-    - "-I./userspace/libc/musl-1.2.6/arch/x86_64"
+    - -ferror-limit=0
 
 Diagnostics:
   UnusedIncludes: None
@@ -22,11 +23,3 @@ Diagnostics:
       - bugprone-easily-swappable-parameters
       - bugprone-reserved-identifier
       - performance-no-int-to-ptr
-
----
-If:
-  PathMatch: .*/kernel/.*
-CompileFlags:
-  Add:
-    - "-mno-red-zone"
-    - "-mcmodel=kernel"

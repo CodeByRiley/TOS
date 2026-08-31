@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# tools/build_iso.sh — assemble the bootable ISO from kernel.bin + disk.img.
-# Invoked by the Makefile (through WSL on Windows), but self-locating: safe to
-# run directly from the project root when iterating on just this step.
+# tools/build_iso.sh — assemble a hybrid UEFI + Legacy BIOS bootable ISO.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -11,29 +9,24 @@ kernel=dist/x86_64/kernel.bin
 disk="${DISK_IMAGE:-build/disk.img}"
 out_iso=dist/x86_64/kernel.iso
 
-# Kept next to the other build output rather than in /tmp: a GRUB built for
-# Windows cannot open a POSIX path like /tmp/core.img, and a repo-relative
-# path works for every grub-mkimage regardless of which world it came from.
 core_img=build/core.img
+efi_img=build/efi.img
 
 die() { printf 'build_iso: %s\n' "$@" >&2; exit 1; }
 
-# --- fail fast, with messages that name the fix --------------------------
-for tool in grub-mkimage xorriso; do
+# fail fast, with messages that name required dependencies
+for tool in grub-mkimage grub-mkstandalone xorriso mformat mmd mcopy; do
     command -v "$tool" >/dev/null || die \
         "$tool not found on PATH" \
-        "  Debian/Ubuntu: sudo apt install grub-pc-bin grub-common xorriso" \
-        "  Fedora:        sudo dnf install grub2-pc-modules grub2-tools xorriso" \
-        "  Arch:          sudo pacman -S grub libisoburn" \
-        "  On Windows, run the build so this step lands in WSL (see README);" \
-        "  MSYS2 packages neither xorriso nor a usable i386-pc GRUB."
+        "  Debian/Ubuntu: sudo apt install grub-pc-bin grub-efi-amd64-bin grub-common xorriso mtools" \
+        "  Fedora:        sudo dnf install grub2-pc-modules grub2-efi-x64-modules grub2-tools xorriso mtools" \
+        "  Arch:          sudo pacman -S grub libisoburn mtools"
 done
 
-# --- locate the i386-pc GRUB modules -------------------------------------
-# There is no portable answer here: Debian and Arch use /usr/lib/grub/i386-pc,
-# a from-source install uses /usr/local/lib, and the prebuilt Windows bundle
-# keeps i386-pc next to the executables. Try them all, and let GRUB_DIR win.
+# locate GRUB modules
 grub_candidates=()
+[ -n "${GRUB_BIOS_DIR:-}" ] && grub_candidates+=("$GRUB_BIOS_DIR")
+# Keep the old override working for existing developer setups.
 [ -n "${GRUB_DIR:-}" ] && grub_candidates+=("$GRUB_DIR")
 grub_candidates+=(
     /usr/lib/grub/i386-pc
@@ -41,73 +34,98 @@ grub_candidates+=(
     /usr/local/lib/grub/i386-pc
     /usr/share/grub/i386-pc
 )
-grub_bindir="$(dirname "$(command -v grub-mkimage)")"
-grub_candidates+=(
-    "$grub_bindir/../lib/grub/i386-pc"
-    "$grub_bindir/i386-pc"
-)
 
-grub_dir=""
+grub_bios_dir=""
 for candidate in "${grub_candidates[@]}"; do
-    # moddep.lst is what -d reads; cdboot.img is what the El Torito image
-    # starts with. A directory holding one but not the other is the wrong one.
     if [ -f "$candidate/moddep.lst" ] && [ -f "$candidate/cdboot.img" ]; then
-        grub_dir="$candidate"
+        grub_bios_dir="$candidate"
         break
     fi
 done
 
-if [ -z "$grub_dir" ]; then
-    die "no i386-pc GRUB module directory found. Looked in:" \
-        "$(printf '  %s\n' "${grub_candidates[@]}")" \
-        "  A directory qualifies only if it has both moddep.lst and cdboot.img." \
-        "  Install the BIOS (not EFI) GRUB modules, or point GRUB_DIR at them:" \
-        "    GRUB_DIR=/path/to/grub/i386-pc bash tools/build_iso.sh"
-fi
+[ -n "$grub_bios_dir" ] || die \
+    "no i386-pc GRUB module directory found" \
+    "  Install grub-pc-bin or set GRUB_BIOS_DIR=/path/to/grub/i386-pc."
+
+grub_efi_candidates=()
+[ -n "${GRUB_EFI_DIR:-}" ] && grub_efi_candidates+=("$GRUB_EFI_DIR")
+grub_efi_candidates+=(
+    /usr/lib/grub/x86_64-efi
+    /usr/lib/grub2/x86_64-efi
+    /usr/local/lib/grub/x86_64-efi
+    /usr/share/grub/x86_64-efi
+)
+grub_efi_dir=""
+for candidate in "${grub_efi_candidates[@]}"; do
+    if [ -f "$candidate/moddep.lst" ]; then
+        grub_efi_dir="$candidate"
+        break
+    fi
+done
+
+[ -n "$grub_efi_dir" ] || die \
+    "no x86_64-efi GRUB module directory found" \
+    "  Install grub-efi-amd64-bin or set GRUB_EFI_DIR=/path/to/grub/x86_64-efi."
 
 [ -f "$iso_dir/boot/grub/grub.cfg" ] || die "$iso_dir/boot/grub/grub.cfg is missing"
 
 for input in "$kernel" "$disk"; do
-    [ -f "$input" ] || die "$input does not exist yet , run the build first"
+    [ -f "$input" ] || die "$input does not exist yet, run the build first"
 done
 
-# --- stage the ISO tree --------------------------------------------------
-mkdir -p "$iso_dir/boot/grub" dist/x86_64 "$(dirname "$core_img")"
+# stage the ISO tree
+mkdir -p "$iso_dir/boot/grub" "$iso_dir/EFI/BOOT" dist/x86_64 "$(dirname "$core_img")"
 cp "$kernel" "$iso_dir/boot/kernel.bin"
 cp "$disk"   "$iso_dir/boot/disk.img"
 
 echo "Project directory: $(pwd)"
-echo "GRUB directory:    $grub_dir"
-echo "grub-mkimage:      $(command -v grub-mkimage) ($(grub-mkimage --version))"
+echo "GRUB BIOS dir:     $grub_bios_dir"
+echo "GRUB EFI dir:      $grub_efi_dir"
 
-# --- grub eltorito boot image --------------------------------------------
+# Legacy BIOS Eltorito Boot Image
 rm -f "$core_img"
-if ! grub-mkimage \
-        -d "$grub_dir" \
-        -O i386-pc \
-        -o "$core_img" \
-        -p /boot/grub \
-        biosdisk iso9660 normal multiboot2 all_video
-then
-    die "grub-mkimage failed." \
-        "  grub-mkimage and the modules in $grub_dir must come from the same" \
-        "  GRUB install. A mismatch shows up as errors about moddep.lst or as" \
-        "  \"kernel.img is miscompiled: its start address is 0x0\"."
-fi
+grub-mkimage \
+    -d "$grub_bios_dir" \
+    -O i386-pc \
+    -o "$core_img" \
+    -p /boot/grub \
+    biosdisk iso9660 normal search search_fs_file multiboot2 all_video
 
-[ -s "$core_img" ] || die "grub-mkimage produced an empty $core_img"
+[ -s "$core_img" ] || die "grub-mkimage produced an empty BIOS core image"
 
-cat "$grub_dir/cdboot.img" "$core_img" > "$iso_dir/boot/grub/eltorito.img"
-[ -s "$iso_dir/boot/grub/eltorito.img" ] || die "empty eltorito.img"
+cat "$grub_bios_dir/cdboot.img" "$core_img" > "$iso_dir/boot/grub/eltorito.img"
 rm -f "$core_img"
 
-# --- the ISO ---------------------------------------------------------------
+# BOOTX64.EFI is the removable-media fallback filename mandated by UEFI.
+# Embedding grub.cfg lets GRUB start without depending on firmware-specific
+# access to the ISO filesystem.  The config then searches for the ISO itself.
+grub-mkstandalone \
+    -d "$grub_efi_dir" \
+    -O x86_64-efi \
+    -o "$iso_dir/EFI/BOOT/BOOTX64.EFI" \
+    "boot/grub/grub.cfg=$iso_dir/boot/grub/grub.cfg"
+
+# Pack the loader into an 8 MiB FAT image for the UEFI El Torito entry.  A
+# standalone GRUB can exceed the traditional 1.44 MiB floppy image size.
+rm -f "$efi_img"
+truncate -s 8M "$efi_img"
+mformat -i "$efi_img" ::
+mmd -i "$efi_img" ::/EFI ::/EFI/BOOT
+mcopy -i "$efi_img" "$iso_dir/EFI/BOOT/BOOTX64.EFI" ::/EFI/BOOT/BOOTX64.EFI
+cp "$efi_img" "$iso_dir/boot/grub/efi.img"
+
+[ -s "$iso_dir/boot/grub/efi.img" ] || die "empty EFI El Torito image"
+
+# Assemble a hybrid ISO with xorriso
 xorriso -as mkisofs \
     -b boot/grub/eltorito.img \
     -no-emul-boot \
     -boot-load-size 4 \
     -boot-info-table \
+    -eltorito-alt-boot \
+    -e boot/grub/efi.img \
+    -no-emul-boot \
     -o "$out_iso" \
     "$iso_dir"
 
-echo "==> $out_iso"
+echo "==> Successfully created dual-firmware UEFI/BIOS ISO: $out_iso"

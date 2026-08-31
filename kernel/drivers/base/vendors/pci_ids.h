@@ -13,6 +13,7 @@ enum pci_vendor_id {
     PCI_VENDOR_QUALCOMM   = 0x17CB,
     PCI_VENDOR_MARVELL    = 0x11AB,
     PCI_VENDOR_MICROSOFT  = 0x1414,
+    PCI_VENDOR_VBOX       = 0x80EE,
     PCI_VENDOR_VMWARE     = 0x15AD,
     PCI_VENDOR_VIRTIO     = 0x1AF4,
     PCI_VENDOR_QEMU       = 0x1234,
@@ -45,6 +46,9 @@ enum pci_device_id {
     PCI_DEVICE_ATHEROS_AR8162       = 0x1062,
 
     PCI_DEVICE_MARVELL_YUKON        = 0x4364,
+
+    PCI_DEVICE_VBOX_VMMDEV          = 0xCAFE,
+    PCI_DEVICE_VMWARE_SVGA2         = 0x0405,
 };
 
 enum pci_class_code {

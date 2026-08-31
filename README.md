@@ -12,7 +12,8 @@ TOS is mainly intended for QEMU and OS-development experiments. It is not a gene
 - **Memory:** physical and virtual memory managers, a kernel heap, per-process page tables, demand-paged virtual memory regions, and the `mmap`, `mprotect`, and `munmap` paths required by static musl programs. `brk` is intentionally rejected so musl uses `mmap` instead.
 - **Executables:** static ELF64 and PE32+ loaders. Builds produce ELF programs by default, along with PE versions of `hello` and `ls` to test both loaders.
 - **Storage:** a VFS with writable FAT16/FAT32 and ext2 backends. FAT supports VFAT long names and AHCI write-through; either FAT or ext2 can be used for the GRUB-loaded root image.
-- **Graphics and input:** Multiboot framebuffer fallback, virtio-gpu scanout and resize support, TTF text rendering, keyboard and mouse input, and the Winman desktop. Winman supports movable and resizable windows, launchers, and a taskbar clock. NVIDIA GSP display support is also included but still under development and has not yet been tested on physical hardware.
+- **Graphics and input:** Multiboot VBE/GOP framebuffer fallback with 24/32-bit pixel-format conversion, virtio-gpu and VirtualBox VMSVGA scanout/resize support, TTF text rendering, keyboard and mouse input, and the Winman desktop. Winman supports movable and resizable windows, launchers, and a taskbar clock. NVIDIA GSP display support is also included but still under development and has not yet been tested on physical hardware.
+- **Firmware:** dual BIOS/UEFI boot media, UEFI64 handoff detection, and capture of the EFI system-table and memory-map metadata supplied by GRUB.
 - **Drivers:** PCI discovery and driver registration, AHCI storage, Intel e1000 networking, Sound Blaster 16 audio, UHCI USB, virtio-gpu, and the developing NVIDIA driver.
 - **Networking:** Ethernet, ARP, IPv4, ICMP echo, UDP, packet capture and statistics, plus the Linux x86_64 syscall numbers for `socket`, `bind`, `sendto`, and `recvfrom`.
 - **Userspace:** a shell with `PATH` lookup, tab completion, working directories, built-ins, and background jobs; command-line utilities; graphical demos and tools; Netmon; ping; a UDP echo program; a DOOM port; and the HolyD bytecode language and runtime.
@@ -30,7 +31,7 @@ You will need:
 - An `x86_64-elf` GCC/binutils cross-toolchain containing `gcc`, `ld`, `ar`, and `objcopy`. The kernel uses `-std=gnu23`, so the cross-compiler must be GCC 14 or newer.
 - NASM.
 - Python on Windows. The kernel build always runs `tools/gen_asm_offsets.py` and `tools/gen_symtab.py`; the `clangd` target also needs Python.
-- WSL with `grub-mkimage` (BIOS/i386-pc modules, not EFI), `xorriso`, `mcopy`/`mmd`, and `mkfs.fat`. On Ubuntu that is `sudo apt install grub-pc-bin grub-common xorriso mtools dosfstools`. Disk-image creation, ISO creation, and cleaning run through `wsl bash`.
+- WSL with GRUB's BIOS/i386-pc and UEFI/x86_64-efi modules, `xorriso`, `mtools`, and `mkfs.fat`. On Ubuntu that is `sudo apt install grub-pc-bin grub-efi-amd64-bin grub-common xorriso mtools dosfstools`. Disk-image creation, ISO creation, and cleaning run through `wsl bash`.
 - QEMU (`qemu-system-x86_64`) to run TOS.
 - `python3` inside WSL for the QEMU test suite.
 
@@ -113,19 +114,21 @@ mingw32-make ROOTFS_TYPE=ext2 build-x86_64
 That produces `build/disk-ext2.img`. The selected image is always packaged
 inside the ISO as `/boot/disk.img`, so the GRUB configuration is unchanged.
 
-`tools/build_iso.sh` then populates the ISO staging directory under `boot/x86_64/iso/`, uses `grub-mkimage` to create the El Torito boot image, and uses `xorriso` to package:
+`tools/build_iso.sh` then populates the ISO staging directory under `boot/x86_64/iso/`. It creates both a legacy BIOS GRUB image and a removable-media `EFI/BOOT/BOOTX64.EFI`, packs the EFI loader into a FAT El Torito image, and uses `xorriso` to package one dual-firmware ISO:
 
 ```text
 dist/x86_64/kernel.iso
 ```
 
-The script looks for the i386-pc GRUB modules in the usual places (`/usr/lib/grub/i386-pc` and friends, plus the directory the `grub-mkimage` on `PATH` lives in), accepting only a directory that holds both `moddep.lst` and `cdboot.img`. If your GRUB is somewhere else, point it there:
+The script looks for both module sets in the usual locations. If GRUB is installed somewhere else, point it at the two directories explicitly:
 
 ```bash
-GRUB_DIR=/path/to/grub/i386-pc bash tools/build_iso.sh
+GRUB_BIOS_DIR=/path/to/grub/i386-pc \
+GRUB_EFI_DIR=/path/to/grub/x86_64-efi \
+bash tools/build_iso.sh
 ```
 
-`grub-mkimage` and that directory must come from the same GRUB install. A mismatch surfaces as a missing `moddep.lst` or as `kernel.img is miscompiled: its start address is 0x0`.
+The GRUB tools and module directories must come from the same GRUB install. A mismatch surfaces as a missing `moddep.lst` or as `kernel.img is miscompiled: its start address is 0x0`.
 
 Run TOS with the full QEMU setup:
 
@@ -133,7 +136,11 @@ Run TOS with the full QEMU setup:
 .\tools\run.bat
 ```
 
-This enables virtio graphics, e1000 networking, SB16 audio, and USB tablet input.
+This starts QEMU with x86_64 OVMF/UEFI firmware and enables virtio graphics, e1000 networking, SB16 audio, and USB tablet input. The OVMF variable store is copied to `build/edk2-x86_64-vars.fd` on first run, so the template installed with QEMU remains unchanged.
+
+On UEFI, GRUB obtains the GOP framebuffer and passes it to the kernel as the standard Multiboot2 framebuffer tag. TOS uses direct writes for its native 32-bit BGR layout; 24-bit or differently ordered GOP modes use a 32-bit shadow surface and convert only damaged rectangles. GRUB normally calls `ExitBootServices` before entering TOS, so the kernel records EFI metadata for diagnostics and future runtime-service work but does not call GOP or other boot-service protocols after handoff.
+
+VirtualBox window resizing uses a post-boot path because GOP cannot change modes after `ExitBootServices`. With the VM's graphics controller set to **VMSVGA**, TOS reports its graphics capability through VirtualBox VMMDev, polls host display-change hints, programs the VMware SVGA II mode registers, and publishes damaged rectangles through the SVGA FIFO. The original GOP/VBE mapping remains the fallback when either VirtualBox device is absent.
 
 The main generated files are:
 
@@ -144,7 +151,7 @@ build/disk-fat.img       default FAT32 root filesystem
 build/disk-ext2.img      optional ext2 root filesystem
 ```
 
-`build-x86_64` also copies the kernel, disk image, and El Torito image into `boot/x86_64/iso/`. The `clean` target removes those copies as well.
+`build-x86_64` also stages the kernel, disk image, BIOS El Torito image, EFI El Torito image, and `BOOTX64.EFI` under `boot/x86_64/iso/`. The `clean` target removes those generated copies as well.
 
 `tools/build.bat` wraps the normal build. `tools/run.sh` provides a smaller Bash/QEMU launcher for environments where the Windows launcher is not suitable.
 

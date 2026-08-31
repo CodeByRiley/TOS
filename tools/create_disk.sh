@@ -36,25 +36,6 @@ mkdir -p "$(dirname "$IMG")"
 payloads=(
 	"rootfs/readme.txt::readme.txt"
 
-	# The .hd scripts come from the HolyD submodule, which is their only
-	# home now , edit them in userspace/bin/holyd and commit there.
-	#
-	# The split between the two directories is load-bearing: `holyd --test`
-	# runs every .hd under holyd/tests and waits for each to finish, so a
-	# script that waits on a person or on the network would hang the run.
-	# Those are samples, and get run by path: holyd holyd/samples/gui.hd
-	"userspace/bin/holyd/tests/array.hd::holyd/tests/array.hd"
-	"userspace/bin/holyd/tests/conditionals.hd::holyd/tests/conditionals.hd"
-	"userspace/bin/holyd/tests/strings.hd::holyd/tests/strings.hd"
-	"userspace/bin/holyd/tests/hello.hd::holyd/tests/hello.hd"
-	"userspace/bin/holyd/tests/math.hd::holyd/tests/math.hd"
-	"userspace/bin/holyd/tests/functions.hd::holyd/tests/functions.hd"
-	"userspace/bin/holyd/tests/no_semis.hd::holyd/tests/no_semis.hd"
-	"userspace/bin/holyd/tests/holyc_d_style.hd::holyd/tests/holyc_d_style.hd"
-	"userspace/bin/holyd/samples/window.hd::holyd/samples/window.hd"
-	"userspace/bin/holyd/samples/gui.hd::holyd/samples/gui.hd"
-	"userspace/bin/holyd/samples/net.hd::holyd/samples/net.hd"
-
 	"rootfs/system/fonts/SansDisplayStatic.ttf::system/fonts/sansdisplaystatic.ttf"
 	"rootfs/system/fonts/SansDisplayVariable.ttf::system/fonts/sansdisplayvariable.ttf"
 	"rootfs/system/wallpaper.bmp::system/wallpaper.bmp"
@@ -62,29 +43,6 @@ payloads=(
 	"rootfs/system/icons/DOOM.bmp::system/icons/doom.bmp"
 	"rootfs/system/icons/shelf.bmp::system/icons/shelf.bmp"
 	"rootfs/system/icons/cursor.bmp::system/icons/cursor.bmp"
-
-# User Apps
-	"userspace/bin/hello/hello.elf::usr/bin/hello.elf"
-	"userspace/bin/gfx/gfx.elf::usr/bin/gfx.elf"
-	"userspace/bin/fdchild/fdchild.elf::usr/bin/fdchild.elf"
-	"userspace/bin/mtest/mtest.elf::usr/bin/mtest.elf"
-	"userspace/bin/vmtest/vmtest.elf::usr/bin/vmtest.elf"
-	"userspace/bin/uidemo/uidemo.elf::usr/bin/uidemo.elf"
-	"userspace/bin/pe_test/pe_test.exe::usr/bin/pe_test.exe"
-	"userspace/bin/hello/hello.exe::usr/bin/hello.exe"
-	"userspace/bin/ls/ls.exe::usr/bin/ls.exe"
-	"userspace/bin/btop/btop.elf::usr/bin/btop.elf"
-	"userspace/bin/thread/thread.elf::usr/bin/thread.elf"
-	"userspace/bin/deskelf/deskelf.elf::usr/bin/deskelf.elf"
-	"userspace/bin/stress/stress.elf::usr/bin/stress.elf"
-	"userspace/bin/stress_peer/stress_peer.elf::usr/bin/stress_peer.elf"
-	"userspace/bin/audiotest/audiotest.elf::usr/bin/audiotest.elf"
-	"userspace/bin/muse/muse.elf::usr/bin/muse.elf"
-	"userspace/bin/mmaptest/mmaptest.elf::usr/bin/mmaptest.elf"
-	"userspace/bin/faulter/faulter.elf::usr/bin/faulter.elf"
-	"userspace/bin/netmon/netmon.elf::usr/bin/netmon.elf"
-	"userspace/bin/ping/ping.elf::usr/bin/ping.elf"
-	"userspace/bin/udpecho/udpecho.elf::usr/bin/udpecho.elf"
 
 # System Apps
 	"userspace/bin/shutdown/shutdown.elf::system/bin/shutdown.elf"
@@ -127,6 +85,47 @@ optional_payloads=(
 	"rootfs/firmware/gsp_tu10x.bin::firmware/gsp_tu10x.bin"
 	"rootfs/firmware/ucodes_ga10x.bin::firmware/ucodes_ga10x.bin"
 	"rootfs/firmware/ucodes_tu10x.bin::firmware/ucodes_tu10x.bin"
+
+		# The .hd scripts come from the HolyD submodule, which is their only
+		# home now , edit them in userspace/bin/holyd and commit there.
+		#
+		# The split between the two directories is load-bearing: `holyd --test`
+		# runs every .hd under holyd/tests and waits for each to finish, so a
+		# script that waits on a person or on the network would hang the run.
+		# Those are samples, and get run by path: holyd holyd/samples/gui.hd
+		"userspace/bin/holyd/tests/array.hd::holyd/tests/array.hd"
+		"userspace/bin/holyd/tests/conditionals.hd::holyd/tests/conditionals.hd"
+		"userspace/bin/holyd/tests/strings.hd::holyd/tests/strings.hd"
+		"userspace/bin/holyd/tests/hello.hd::holyd/tests/hello.hd"
+		"userspace/bin/holyd/tests/math.hd::holyd/tests/math.hd"
+		"userspace/bin/holyd/tests/functions.hd::holyd/tests/functions.hd"
+		"userspace/bin/holyd/tests/no_semis.hd::holyd/tests/no_semis.hd"
+		"userspace/bin/holyd/tests/holyc_d_style.hd::holyd/tests/holyc_d_style.hd"
+		"userspace/bin/holyd/samples/window.hd::holyd/samples/window.hd"
+		"userspace/bin/holyd/samples/gui.hd::holyd/samples/gui.hd"
+		"userspace/bin/holyd/samples/net.hd::holyd/samples/net.hd"
+
+		# User Apps
+			"userspace/bin/hello/hello.elf::usr/bin/hello.elf"
+			"userspace/bin/gfx/gfx.elf::usr/bin/gfx.elf"
+			"userspace/bin/fdchild/fdchild.elf::usr/bin/fdchild.elf"
+			"userspace/bin/mtest/mtest.elf::usr/bin/mtest.elf"
+			"userspace/bin/vmtest/vmtest.elf::usr/bin/vmtest.elf"
+			"userspace/bin/uidemo/uidemo.elf::usr/bin/uidemo.elf"
+			"userspace/bin/pe_test/pe_test.exe::usr/bin/pe_test.exe"
+			"userspace/bin/hello/hello.exe::usr/bin/hello.exe"
+			"userspace/bin/ls/ls.exe::usr/bin/ls.exe"
+			"userspace/bin/btop/btop.elf::usr/bin/btop.elf"
+			"userspace/bin/thread/thread.elf::usr/bin/thread.elf"
+			"userspace/bin/deskelf/deskelf.elf::usr/bin/deskelf.elf"
+			"userspace/bin/stress/stress.elf::usr/bin/stress.elf"
+			"userspace/bin/stress_peer/stress_peer.elf::usr/bin/stress_peer.elf"
+			"userspace/bin/audiotest/audiotest.elf::usr/bin/audiotest.elf"
+			"userspace/bin/muse/muse.elf::usr/bin/muse.elf"
+			"userspace/bin/mmaptest/mmaptest.elf::usr/bin/mmaptest.elf"
+			"userspace/bin/netmon/netmon.elf::usr/bin/netmon.elf"
+			"userspace/bin/ping/ping.elf::usr/bin/ping.elf"
+			"userspace/bin/udpecho/udpecho.elf::usr/bin/udpecho.elf"
 )
 
 for entry in "${optional_payloads[@]}"; do

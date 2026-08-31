@@ -139,6 +139,21 @@ struct task_input {
   volatile u32 tail;
 };
 
+/* Linux x86_64 rt_sigaction state. TOS does not yet deliver asynchronous
+ * handlers, but retaining dispositions makes registration and lookup honest
+ * and lets ports install SIG_IGN without a userspace-specific shim. */
+#define TASK_SIGNAL_COUNT 64
+
+struct task_signal_action {
+  u64 handler;
+  u64 flags;
+  u64 restorer;
+  u64 mask;
+};
+
+_Static_assert(sizeof(struct task_signal_action) == 32,
+               "x86_64 kernel sigaction ABI must remain 32 bytes");
+
 /* Architecture-specific execution state */
 struct task_context {
   /*
@@ -152,6 +167,10 @@ struct task_context {
    * IA32_FS_BASE for userspace TLS.
    */
   u64 fs_base;
+
+  /* Indexed by signal-1. Fresh processes start with SIG_DFL (all zero).
+   * User threads copy their creator's dispositions at creation time. */
+  struct task_signal_action signal_actions[TASK_SIGNAL_COUNT];
 
   /*
    * x87/SSE state. Must remain 16-byte aligned for fxsave/fxrstor.

@@ -3,6 +3,11 @@
 #include <stdint.h>
 #include <stdio.h>
 
+
+#include <lib/app_info.h>
+
+APP_INFO(APP_TYPE_CLI, "audiotest");
+
 #define TEST_RATE   22050U
 #define TEST_HZ       440U
 #define TEST_FRAMES  1024U

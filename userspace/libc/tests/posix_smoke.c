@@ -1,11 +1,13 @@
 #include <dirent.h>
 #include <errno.h>
 #include <poll.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/utsname.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -16,6 +18,27 @@ static int fail(const char *what) {
 
 int main(void) {
     printf("posix-smoke: start\n");
+
+    struct utsname uts;
+    if (uname(&uts) != 0) return fail("uname");
+    if (strcmp(uts.sysname, "TOS") != 0 ||
+        strcmp(uts.machine, "x86_64") != 0)
+        return fail("uname-shape");
+
+    struct sigaction old_pipe;
+    struct sigaction ignore_pipe;
+    struct sigaction readback;
+    memset(&ignore_pipe, 0, sizeof(ignore_pipe));
+    ignore_pipe.sa_handler = SIG_IGN;
+    if (sigemptyset(&ignore_pipe.sa_mask) != 0)
+        return fail("sigemptyset");
+    if (sigaction(SIGPIPE, &ignore_pipe, &old_pipe) != 0)
+        return fail("sigaction-set");
+    if (sigaction(SIGPIPE, NULL, &readback) != 0 ||
+        readback.sa_handler != SIG_IGN)
+        return fail("sigaction-readback");
+    if (sigaction(SIGPIPE, &old_pipe, NULL) != 0)
+        return fail("sigaction-restore");
 
     char *heap = malloc(8192);
     if (!heap) return fail("malloc");

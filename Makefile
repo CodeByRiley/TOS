@@ -345,7 +345,9 @@ test-heavy: test-host test-qemu-heavy
 clean_paths := build dist \
 	$(iso_dir)/boot/kernel.bin \
 	$(iso_dir)/boot/disk.img \
-	$(iso_dir)/boot/grub/eltorito.img
+	$(iso_dir)/boot/grub/eltorito.img \
+	$(iso_dir)/boot/grub/efi.img \
+	$(iso_dir)/EFI
 
 clean:
 	$(call run_linux,rm -rf $(clean_paths))

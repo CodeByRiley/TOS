@@ -333,7 +333,7 @@ static int e1000_poll_rx(struct device *dev) {
 
     // Hand the frame to the stack. netmon above saw it either way; the
     // address filter and protocol demux live in eth_input now.
-    log_write_fmt(KERNEL, LOG_INFO, "[e1000] Packet length: %d expecting 1514", packet_len);
+    log_write_fmt(KERNEL, LOG_INFO, "[e1000] Packet length: %d expecting <= 1514", packet_len);
     if (packet_len <= E1000_FRAME_MAX) {
       log_write_fmt(KERNEL, LOG_INFO, "[e1000] Packet length is less than max, we accept", packet_len);
       eth_input((const u8 *)nic->rx_buffers[nic->rx_current], packet_len);

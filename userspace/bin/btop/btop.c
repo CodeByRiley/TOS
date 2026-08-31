@@ -13,6 +13,7 @@
 #include <lib/console.h>
 #include <lib/keymap.h>
 #include <include/key_codes.h>
+#include <lib/app_info.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stddef.h>
@@ -29,6 +30,8 @@ extern void  *memset(void *, int, size_t);
 #define BAR_WIDTH    40
 #define REFRESH_TICK 50          /* 100 Hz PIT * 50 = 500 ms */
 // #endregion CONSTANTS
+
+APP_INFO(APP_TYPE_CLI, "btop");
 
 // #region PRINTF WRAPPER
 /* Local printf that goes through console_write (no stdout pollution if

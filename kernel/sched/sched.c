@@ -782,6 +782,8 @@ struct task *task_spawn_thread(u64 entry, u64 user_stack) {
   t->context->user_entry = entry;
   t->context->user_rsp_initial = user_stack;
   t->context->fs_base = parent->context->fs_base;
+  memcpy(t->context->signal_actions, parent->context->signal_actions,
+         sizeof(t->context->signal_actions));
 
   task_inherit_cwd(t, parent);
   task_inherit_tty(t, parent);

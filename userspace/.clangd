@@ -1,11 +1,8 @@
 CompileFlags:
-  Add:
-    - "-xc"
-    - "-std=gnu23"
-    - -isystemE:/Projects/Weird/TOS/userspace/include
-    - -isystemE:/Projects/Weird/TOS/userspace/libc/build-musl-tos/obj/include  # generated bits/
-    - -isystemE:/Projects/Weird/TOS/userspace/libc/musl-1.2.6/include
-    - -isystemE:/Projects/Weird/TOS/userspace/libc/musl-1.2.6/include
-    - -isystemE:/Projects/Weird/TOS/userspace/libc/musl-1.2.6/arch/x86_64
-    - -ferror-limit=0
-  CompilationDatabase: build
+  # Do not duplicate musl's include order here.  The compile database chooses
+  # musl or the legacy libc per translation unit.
+  CompilationDatabase: ../build
+
+Diagnostics:
+  Suppress:
+    -Wimplicit-function-declaration

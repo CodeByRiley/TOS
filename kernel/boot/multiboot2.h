@@ -19,8 +19,14 @@
 #define MULTIBOOT_TAG_MODULE        3
 #define MULTIBOOT_TAG_MMAP          6
 #define MULTIBOOT_TAG_FRAMEBUFFER   8
+#define MULTIBOOT_TAG_EFI32        11
+#define MULTIBOOT_TAG_EFI64        12
 #define MULTIBOOT_TAG_ACPI_OLD     14   /* RSDP v1 (ACPI 1.0) , 20-byte header */
 #define MULTIBOOT_TAG_ACPI_NEW     15   /* XSDP v2+ , 36-byte header           */
+#define MULTIBOOT_TAG_EFI_MMAP     17
+#define MULTIBOOT_TAG_EFI_BS       18
+#define MULTIBOOT_TAG_EFI32_IH     19
+#define MULTIBOOT_TAG_EFI64_IH     20
 
 /* Framebuffer color encodings reported by tag 8. */
 #define FB_TYPE_INDEXED 0
@@ -85,6 +91,36 @@ struct MB2_TAG_ACPI {
     u32 size;
     u8  rsdp[];
 } PACKED;
+
+/* EFI handoff tags. The pointers are firmware addresses supplied by GRUB;
+ * merely recording them is safe after ExitBootServices, but callers must not
+ * assume that boot-service function pointers remain callable. */
+struct MB2_TAG_EFI32_PTR {
+    u32 type;
+    u32 size;
+    u32 pointer;
+} PACKED;
+
+struct MB2_TAG_EFI64_PTR {
+    u32 type;
+    u32 size;
+    u64 pointer;
+} PACKED;
+
+struct MB2_TAG_EFI_MMAP {
+    u32 type;
+    u32 size;
+    u32 descriptor_size;
+    u32 descriptor_version;
+    u8  descriptors[];
+} PACKED;
+
+_Static_assert(sizeof(struct MB2_TAG_EFI32_PTR) == 12,
+               "Multiboot EFI32 pointer tag layout");
+_Static_assert(sizeof(struct MB2_TAG_EFI64_PTR) == 16,
+               "Multiboot EFI64 pointer tag layout");
+_Static_assert(sizeof(struct MB2_TAG_EFI_MMAP) == 16,
+               "Multiboot EFI memory-map tag layout");
 
 /* Walk tags looking for one of the given `type`. Returns NULL if absent. */
 struct MB2_TAG        *mb2_find_tag(u64 mb2_addr, u32 type);

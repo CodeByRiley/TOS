@@ -68,11 +68,13 @@ musl programs to run unchanged:
   unsupported so musl falls back to `mmap`
 - process/time probes used by libc: `getpid`, `exit_group`,
   `set_tid_address`, `clock_gettime`, `gettimeofday`, `nanosleep`, `poll`,
-  `fcntl`, and tty-shaped `ioctl` calls
+  `fcntl`, `uname`, and tty-shaped `ioctl` calls
+- signal disposition registration and lookup through `rt_sigaction`; TOS does
+  not yet deliver asynchronous userspace signal handlers
 
 This is still a bootstrap layer, not a full Linux personality. The important
 known gaps before large ports like Vim are broader terminal behavior, more
-filesystem calls (`access`, `readlink`, `dup`, `pipe`, etc. as needed), signals,
-and full pthread support (`clone`, signal masks, robust futex handling). The
-current strategy is to keep musl mostly upstream and add compatible kernel
+filesystem calls (`access`, `readlink`, `dup`, `pipe`, etc. as needed), signal
+delivery and masks, and full pthread support (`clone`, robust futex handling).
+The current strategy is to keep musl mostly upstream and add compatible kernel
 syscall semantics where ports naturally hit them.

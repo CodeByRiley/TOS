@@ -29,8 +29,8 @@
 #define MAY_ALIAS __attribute__((may_alias))
 
 #include <stdbool.h>
-#include <stddef.h>
 #include <stdint.h>
+#include <stddef.h>
 
 /* --- Linux-style short names ------------------------------------------ */
 typedef unsigned char  uchar;
@@ -77,13 +77,21 @@ typedef uintptr_t paddr_t;
 typedef uintptr_t vaddr_t;
 
 /* --- POSIX scalar types ---------------------------------------------- */
-typedef long          ssize_t;
+#ifndef _SSIZE_T_DEFINED
+typedef long ssize_t;
+#define _SSIZE_T_DEFINED
+#endif
+#ifndef _TIME_T_DEFINED
+typedef long time_t;
+#define _TIME_T_DEFINED
+#endif
+#ifndef OFF_T
 typedef long          off_t;
+#endif
 typedef int           pid_t;
 typedef unsigned int  mode_t;
 typedef unsigned int  uid_t;
 typedef unsigned int  gid_t;
-typedef long          time_t;
 
 typedef void (*func_ptr)(void);
 

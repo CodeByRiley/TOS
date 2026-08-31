@@ -5,6 +5,7 @@
 #include <arch/percpu.h>
 #include <arch/syscall.h>
 #include <boot/multiboot2.h>
+#include <boot/uefi.h>
 #include <devices/lapic.h>
 #include <devices/pit.h>
 #include <devices/serial.h>
@@ -18,6 +19,7 @@
 #include <drivers/sound/sb16.h>
 #include <drivers/storage/ahci.h>
 #include <drivers/video/nvidia/nvidia.h>
+#include <drivers/video/virtualbox/vbox_video.h>
 #include <drivers/video/virtio/virtio_gpu.h>
 #include <fs/ext2/ext2.h>
 #include <fs/fat/ahci/fat_ahci.h>
@@ -126,18 +128,31 @@ static void display_init(u64 mb2_addr) {
       if (framebuffer_attach_virtio() != 0) {
         log_write("display: virtio attach failed, staying on MB2 fb", KERNEL,
                   LOG_WARN);
-      } else {
-        struct task *flush = task_spawn(framebuffer_flush_thread_entry);
-        if (flush)
-          sched_set_priority(flush, SCHED_PRIO_HIGH);
-        log_write("display: fb flush thread spawned", KERNEL, LOG_INFO);
+      }
+    } else if (vbox_video_init(framebuffer_width(), framebuffer_height()) ==
+               0) {
+      if (framebuffer_attach_virtualbox() != 0) {
+        log_write("display: VMSVGA attach failed, staying on MB2 fb", KERNEL,
+                  LOG_WARN);
       }
     } else {
-      log_write("display: no virtio-gpu, staying on MB2 fb", KERNEL, LOG_INFO);
+      log_write("display: no dynamic GPU, staying on MB2 fb", KERNEL,
+                LOG_INFO);
     }
   } else {
     log_write("display: NVIDIA driving scanout, keeping its framebuffer",
               KERNEL, LOG_INFO);
+  }
+
+  if (framebuffer_needs_flush()) {
+    struct task *flush = task_spawn(framebuffer_flush_thread_entry);
+    if (flush) {
+      sched_set_priority(flush, SCHED_PRIO_HIGH);
+      log_write("display: fb flush thread spawned", KERNEL, LOG_INFO);
+    } else {
+      log_write("display: could not spawn fb flush thread", KERNEL,
+                LOG_ERROR);
+    }
   }
 }
 
@@ -286,6 +301,7 @@ static void enable_interrupts_and_smp(void) {
 
 void kernel_main(u64 mb2_addr) {
   early_console_init();
+  uefi_init(mb2_addr);
   arch_init();
   memory_init(mb2_addr);
   acpi_and_smp_init(mb2_addr);

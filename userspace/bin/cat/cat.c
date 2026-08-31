@@ -8,7 +8,9 @@
  */
 #include <stdio.h>
 #include <unistd.h>
+#include <lib/app_info.h>
 
+APP_INFO(APP_TYPE_CLI, "cat");
 static int cat_one(const char *path) {
     FILE *fp = fopen(path, "rb");
     if (!fp) {

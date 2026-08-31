@@ -42,8 +42,8 @@
 /* ROM image lengths are counted in 512-byte blocks, not bytes. */
 #define PCI_ROM_BLOCK_SIZE      512u
 
-#define BIT_HEADER_ID        0xB8FFu
-#define BIT_HEADER_SIGNATURE 0x00544942u
+#define BIT_HEADER_ID           0xB8FFu
+#define BIT_HEADER_SIGNATURE    0x00544942u
 /* BIT_TOKEN_* ids live in nvidia_internal.h , later stages need them too. */
 
 struct vbios_layout {

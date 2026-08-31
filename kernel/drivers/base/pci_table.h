@@ -31,6 +31,8 @@ static const struct pci_device_desc pci_known_devices[] = {
     { PCI_VENDOR_ATHEROS, PCI_DEVICE_ATHEROS_AR8162, "Atheros AR8162" },
 
     { PCI_VENDOR_MARVELL, PCI_DEVICE_MARVELL_YUKON, "Marvell Yukon" },
+
+
 };
 
 SINLINE const char *pci_device_name(u16 vendor, u16 device)

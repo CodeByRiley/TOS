@@ -1,6 +1,9 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <lib/app_info.h>
+
+APP_INFO(APP_TYPE_CLI, "fdchild");
 
 int main(void) {
     int fd = open("readme.txt", O_RDONLY);

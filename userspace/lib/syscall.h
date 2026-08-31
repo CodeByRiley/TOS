@@ -50,6 +50,7 @@
 #define SYS_MPROTECT         	 10
 #define SYS_MUNMAP           	 11
 #define SYS_BRK              	 12
+#define SYS_RT_SIGACTION     	 13
 #define SYS_IOCTL            	 16
 #define SYS_READV            	 19
 #define SYS_WRITEV           	 20
@@ -101,6 +102,7 @@
 #define SYS_CON_POP          	 1063
 #define SYS_SPAWN            	 1021
 #define SYS_KILL             	 62
+#define SYS_UNAME            	 63
 #define SYS_CON_ZOOM         	 1064
 #define SYS_AUDIO_OPEN       	 1080
 #define SYS_AUDIO_WRITE      	 1081

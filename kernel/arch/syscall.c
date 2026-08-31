@@ -200,12 +200,82 @@ struct linux_pollfd {
   int16_t revents;
 };
 
+/* Linux's x86_64 new_utsname layout. musl conditionally renames the final
+ * field, but both public forms use these same six 65-byte arrays. */
+struct linux_utsname {
+  char sysname[65];
+  char nodename[65];
+  char release[65];
+  char version[65];
+  char machine[65];
+  char domainname[65];
+};
+
+_Static_assert(sizeof(struct linux_utsname) == 390,
+               "Linux x86_64 utsname ABI size");
+
+#define LINUX_SIGSET_BYTES 8
+#define LINUX_SIGKILL 9
+#define LINUX_SIGSTOP 19
+
 extern void syscall_entry(void);
 
 static int resolve_path(const char *path, char *out, usize max);
 static int user_buffer_ok(const void *pointer, u64 bytes, int writable);
 static long sys_futex_wait(u32 *addr, u32 expected);
 static long sys_futex_wake(u32 *addr);
+
+static void uts_field(char out[65], const char *value) {
+  usize i = 0;
+  while (i < 64 && value[i]) {
+    out[i] = value[i];
+    i++;
+  }
+  out[i] = 0;
+}
+
+static long sys_uname(struct linux_utsname *out) {
+  if (!out || !user_buffer_ok(out, sizeof(*out), 1))
+    return -1;
+
+  memset(out, 0, sizeof(*out));
+  uts_field(out->sysname, "TOS");
+  uts_field(out->nodename, "tos");
+  uts_field(out->release, "development");
+  uts_field(out->version, "TOS x86_64");
+  uts_field(out->machine, "x86_64");
+  uts_field(out->domainname, "localdomain");
+  return 0;
+}
+
+static long sys_rt_sigaction(int signal,
+                             const struct task_signal_action *action,
+                             struct task_signal_action *old_action,
+                             usize sigset_bytes) {
+  struct task *task = task_current();
+  if (!task || !task->context || signal < 1 || signal > TASK_SIGNAL_COUNT ||
+      sigset_bytes != LINUX_SIGSET_BYTES)
+    return -1;
+  if (action && (signal == LINUX_SIGKILL || signal == LINUX_SIGSTOP))
+    return -1;
+  if (action && !user_buffer_ok(action, sizeof(*action), 0))
+    return -1;
+  if (old_action && !user_buffer_ok(old_action, sizeof(*old_action), 1))
+    return -1;
+
+  /* Copy through locals so act == oldact consumes the new disposition before
+   * returning the previous one, matching the Linux syscall contract. */
+  struct task_signal_action next = {0};
+  struct task_signal_action previous =
+      task->context->signal_actions[signal - 1];
+  if (action)
+    next = *action;
+  if (action)
+    task->context->signal_actions[signal - 1] = next;
+  if (old_action)
+    *old_action = previous;
+  return 0;
+}
 
 static int fd_alloc_for(struct task *t, struct vfs_file *f) {
   if (!t || !t->files || !f)
@@ -2375,6 +2445,12 @@ long syscall_dispatch(struct syscall_frame *f) {
   case SYS_BRK:
     ret = sys_brk((u64)(uintptr_t)a1);
     break;
+  case SYS_RT_SIGACTION:
+    ret = sys_rt_sigaction((int)a1,
+                           (const struct task_signal_action *)(uintptr_t)a2,
+                           (struct task_signal_action *)(uintptr_t)a3,
+                           (usize)a4);
+    break;
   case SYS_STAT:
     ret = sys_stat((const char *)(uintptr_t)a1,
                    (struct linux_kstat *)(uintptr_t)a2);
@@ -2444,6 +2520,9 @@ long syscall_dispatch(struct syscall_frame *f) {
     break;
   case SYS_LINUX_GETPID:
     ret = sys_get_pid();
+    break;
+  case SYS_UNAME:
+    ret = sys_uname((struct linux_utsname *)(uintptr_t)a1);
     break;
   case SYS_EXIT:
     ret = sys_exit((uintptr_t)a1);

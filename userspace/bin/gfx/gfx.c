@@ -14,6 +14,9 @@
 #include <include/key_codes.h>
 
 extern int printf(const char *, ...);
+#include <lib/app_info.h>
+
+APP_INFO(APP_TYPE_GUI, "gfx_test");
 
 int main(void) {
   struct fb_info info;

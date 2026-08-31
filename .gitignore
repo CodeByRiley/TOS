@@ -18,6 +18,8 @@ diff.diff
 /boot/**/iso/boot/disk.img
 /boot/**/iso/boot/kernel.bin
 /boot/**/iso/boot/grub/eltorito.img
+/boot/**/iso/boot/grub/efi.img
+/boot/**/iso/EFI/
 *.iso
 
 # Local game/resource payloads

@@ -92,9 +92,12 @@ add(ROOT / "build/generated/symtab.c", ROOT, KERNEL_FLAGS)
 
 # --- userspace ------------------------------------------------------------
 # Keep in sync with LIBTOS_SRCS / SIMPLE_BINS in userspace/Makefile.
-LIBTOS_SRCS = {"lib/syscall.c", "lib/wm.c", "lib/gfx.c", "lib/ui.c",
-               "lib/ttf.c", "lib/bmp.c", "lib/keymap.c", "lib/console.c",
-               "lib/time_stub.c"}
+LIBTOS_SRCS = {
+    "lib/syscall.c", "lib/event.c", "lib/wm.c", "lib/app.c",
+    "lib/process.c", "lib/gfx.c", "lib/ui.c", "lib/ttf.c", "lib/bmp.c",
+    "lib/damage.c", "lib/page_alloc.c", "lib/keymap.c", "lib/console.c",
+    "lib/time_stub.c",
+}
 SIMPLE_BINS = {"thread"}
 
 for f in rglob(US / "lib"):

@@ -1,23 +1,29 @@
 /* kernel/display/framebuffer.c , framebuffer abstraction.
  *
- * Two backends behind a single API:
- *   MB2 mode    , the contiguous run of physical pages GRUB handed us.
+ * Four backends behind a single API:
+ *   MB2 direct  , a native 32-bit BGR framebuffer handed to us by GRUB.
  *                  Direct writes are visible on the scanout.
+ *   MB2 shadow  , a canonical 32-bit surface converted into a non-native
+ *                  VBE/GOP pixel layout when damage is presented.
  *   virtio-gpu  , a scatter-gather pixel buffer attached to the host
  *                  resource. Damage tracking + framebuffer_present()
  *                  flush touched rects over the virtqueue.
+ *   VMSVGA      , VirtualBox's 32-bit VMware SVGA II scanout. VMMDev
+ *                  supplies resize hints and the SVGA FIFO publishes damage.
  *
  * Page tables map either backend's pages contiguously at FB_VIRT_BASE so
  * pixel writers don't need to care which mode is active. Switching is
- * one-way (MB2 → virtio); on virtio failure the MB2 buffer stays live.
+ * one-way (MB2 → accelerated backend); on failure MB2 stays live.
  *
  * The flush thread (framebuffer_flush_thread_entry) polls + presents at
  * PIT tick rate so the (synchronous virtio ACK) flush is decoupled from
  * whoever marked damage.
  */
 #include <boot/multiboot2.h>
+#include <boot/uefi.h>
 #include <display/framebuffer.h>
 #include <display/graphics.h>
+#include <drivers/video/virtualbox/vbox_video.h>
 #include <drivers/video/virtio/virtio_gpu.h>
 #include <input/mouse.h>
 #include <memory/heap.h>
@@ -32,6 +38,7 @@
 #include <utilities/string.h>
 
 #define FB_VIRT_BASE 0xFFFFE00000000000ULL
+#define FB_SCANOUT_VIRT_BASE 0xFFFFE10000000000ULL
 /* Upper bound on FB size , 64 MiB. Covers 4K@32bpp (33 MiB) with headroom.
  * Anything bigger fails attach_virtio cleanly rather than corrupting state. */
 #define FB_MAX_BYTES (64ULL * 1024 * 1024)
@@ -40,8 +47,10 @@
 #define FB_MIN_RESOURCE_H 2048U
 
 #define FB_MODE_NONE 0
-#define FB_MODE_MB2 1
+#define FB_MODE_MB2_DIRECT 1
 #define FB_MODE_VIRTIO 2
+#define FB_MODE_MB2_SHADOW 3
+#define FB_MODE_VBOX 4
 
 #define FB_MAX_DAMAGE 8
 #define FB_DAMAGE_MERGE_SLACK 8192
@@ -56,6 +65,18 @@ static u32 fb_h = 0;
 static u32 fb_pitch = 0; /* bytes per row */
 static u32 fb_mode = FB_MODE_NONE;
 static u32 fb_resize_generation = 0;
+
+/* Non-native firmware scanouts keep their actual GOP/VBE mapping separate
+ * from the canonical 0x00RRGGBB surface exposed to the renderer/userspace. */
+static u8 *fb_scanout = 0;
+static u32 fb_scanout_pitch = 0;
+static u8 fb_scanout_bpp = 0;
+static u8 fb_red_pos = 0, fb_red_size = 0;
+static u8 fb_green_pos = 0, fb_green_size = 0;
+static u8 fb_blue_pos = 0, fb_blue_size = 0;
+static u32 fb_scanout_mapped_pages = 0;
+static u64 fb_shadow_phys = 0;
+static u32 fb_shadow_pages = 0;
 
 /* Damage rects: pending regions to push to the host scanout on next present.
  * A small fixed set keeps thin, distant writes (cursor + drag ghost strips)
@@ -177,10 +198,11 @@ static u64 fb_pool_phys = 0;    /* contiguous virtio backing base */
 static u32 fb_resource_w = 0;
 static u32 fb_resource_h = 0;
 static u64 fb_mb2_phys =
-    0; /* preserved so phys() still answers in MB2 mode */
+    0; /* preserved so drivers can identify the firmware scanout BAR */
 
 u64 framebuffer_phys(void) {
-  if (fb_mode == FB_MODE_MB2)
+  if (fb_mode == FB_MODE_MB2_DIRECT || fb_mode == FB_MODE_MB2_SHADOW ||
+      fb_mode == FB_MODE_VBOX)
     return fb_mb2_phys;
   if (fb_mode == FB_MODE_VIRTIO && fb_n_pages > 0)
     return fb_pages[0];
@@ -507,22 +529,86 @@ int framebuffer_present_user(u64 *user_pml4, int owner_pid,
   return __atomic_load_n(&batch.failed, __ATOMIC_ACQUIRE) ? -1 : 0;
 }
 
-static int map_pages_at_vbase(const u64 *pages, u32 n,
-                              int cacheable) {
+static int map_pages_at(u64 virtual_base, const u64 *pages, u32 n,
+                        int cacheable) {
   u64 flags = VMM_PRESENT | VMM_WRITE;
   if (!cacheable)
     flags |= VMM_PCD | VMM_PWT;
   for (u32 i = 0; i < n; i++) {
-    if (vmm_map(FB_VIRT_BASE + (u64)i * 4096, pages[i], flags) != 0) {
+    if (vmm_map(virtual_base + (u64)i * 4096, pages[i], flags) != 0) {
+      while (i > 0) {
+        i--;
+        vmm_unmap(virtual_base + (u64)i * 4096);
+      }
       return -1;
     }
   }
   return 0;
 }
 
-static void unmap_pages_at_vbase(u32 n) {
+static void unmap_pages_at(u64 virtual_base, u32 n) {
   for (u32 i = 0; i < n; i++) {
-    vmm_unmap(FB_VIRT_BASE + (u64)i * 4096);
+    vmm_unmap(virtual_base + (u64)i * 4096);
+  }
+}
+
+static int map_contiguous_at(u64 virtual_base, u64 physical, u64 bytes,
+                             int cacheable, u32 *mapped_pages) {
+  u64 physical_base = physical & ~4095ULL;
+  u64 offset = physical & 4095ULL;
+  if (bytes == 0 || bytes > UINT64_MAX - offset)
+    return -1;
+  u64 page_count64 = (offset + bytes + 4095ULL) / 4096ULL;
+  if (page_count64 == 0 || page_count64 > FB_MAX_PAGES)
+    return -1;
+
+  u64 flags = VMM_PRESENT | VMM_WRITE;
+  if (!cacheable)
+    flags |= VMM_PCD | VMM_PWT;
+  u32 page_count = (u32)page_count64;
+  for (u32 i = 0; i < page_count; i++) {
+    if (vmm_map(virtual_base + (u64)i * 4096,
+                physical_base + (u64)i * 4096, flags) != 0) {
+      unmap_pages_at(virtual_base, i);
+      return -1;
+    }
+  }
+  *mapped_pages = page_count;
+  return 0;
+}
+
+static int channel_layout_valid(u8 position, u8 size, u8 bpp) {
+  return size > 0 && size <= 8 && position < bpp &&
+         (u16)position + size <= bpp;
+}
+
+static u32 encode_channel(u8 value, u8 position, u8 size) {
+  u32 maximum = (1U << size) - 1U;
+  u32 scaled = ((u32)value * maximum + 127U) / 255U;
+  return scaled << position;
+}
+
+static u32 encode_scanout_pixel(u32 color) {
+  return encode_channel((u8)(color >> 16), fb_red_pos, fb_red_size) |
+         encode_channel((u8)(color >> 8), fb_green_pos, fb_green_size) |
+         encode_channel((u8)color, fb_blue_pos, fb_blue_size);
+}
+
+static void present_shadow_rect(const struct fb_damage_rect *rect) {
+  u32 scanout_bytes_per_pixel = (fb_scanout_bpp + 7U) / 8U;
+  for (u32 y = 0; y < rect->h; y++) {
+    const u32 *source =
+        (const u32 *)((const u8 *)fb + (u64)(rect->y + y) * fb_pitch) +
+        rect->x;
+    u8 *destination = fb_scanout +
+                      (u64)(rect->y + y) * fb_scanout_pitch +
+                      (u64)rect->x * scanout_bytes_per_pixel;
+    for (u32 x = 0; x < rect->w; x++) {
+      u32 encoded = encode_scanout_pixel(source[x]);
+      for (u32 byte = 0; byte < scanout_bytes_per_pixel; byte++)
+        destination[byte] = (u8)(encoded >> (byte * 8));
+      destination += scanout_bytes_per_pixel;
+    }
   }
 }
 
@@ -541,38 +627,107 @@ int framebuffer_init(u64 mb2_addr) {
     log_write_hex("FB: unsupported bpp =", t->bpp, KERNEL, LOG_ERROR);
     return -1;
   }
+  if (!channel_layout_valid(t->red_pos, t->red_size, t->bpp) ||
+      !channel_layout_valid(t->green_pos, t->green_size, t->bpp) ||
+      !channel_layout_valid(t->blue_pos, t->blue_size, t->bpp)) {
+    log_write("FB: unsupported RGB channel layout", KERNEL, LOG_ERROR);
+    return -1;
+  }
 
+  u32 scanout_bytes_per_pixel = (t->bpp + 7U) / 8U;
+  if (t->width == 0 || t->height == 0 ||
+      t->width > UINT32_MAX / scanout_bytes_per_pixel ||
+      t->pitch < t->width * scanout_bytes_per_pixel) {
+    log_write("FB: invalid dimensions or pitch", KERNEL, LOG_ERROR);
+    return -1;
+  }
+
+  log_write(uefi_booted() ? "FB: source = UEFI GOP"
+                          : "FB: source = BIOS VBE",
+            KERNEL, LOG_INFO);
   log_write_hex("FB: red_pos   =", t->red_pos, KERNEL, LOG_INFO);
   log_write_hex("FB: green_pos =", t->green_pos, KERNEL, LOG_INFO);
   log_write_hex("FB: blue_pos  =", t->blue_pos, KERNEL, LOG_INFO);
 
   fb_w = t->width;
   fb_h = t->height;
-  fb_pitch = t->pitch;
   fb_mb2_phys = t->addr;
+  fb_scanout_pitch = t->pitch;
+  fb_scanout_bpp = t->bpp;
+  fb_red_pos = t->red_pos;
+  fb_red_size = t->red_size;
+  fb_green_pos = t->green_pos;
+  fb_green_size = t->green_size;
+  fb_blue_pos = t->blue_pos;
+  fb_blue_size = t->blue_size;
 
   u64 fb_bytes = (u64)t->pitch * t->height;
-  u64 pages = (fb_bytes + 4095) / 4096;
-  if (pages > FB_MAX_PAGES) {
-    log_write_hex("FB: MB2 buffer too large, pages =", pages, KERNEL,
+  if (fb_bytes == 0 || fb_bytes > FB_MAX_BYTES) {
+    log_write_hex("FB: firmware buffer too large, bytes =", fb_bytes, KERNEL,
                   LOG_ERROR);
     return -1;
   }
-  /* Synthesise a page list from the contiguous MMIO base so that sys_fb_map
-   * (and the eventual switch to virtio) can iterate without caring which
-   * mode we're in. */
-  for (u32 i = 0; i < pages; i++) {
-    fb_pages[i] = t->addr + (u64)i * 4096;
-  }
-  fb_n_pages = (u32)pages;
-  fb_mapped_pages = fb_n_pages;
 
-  if (map_pages_at_vbase(fb_pages, fb_n_pages, /*cacheable=*/0) != 0) {
-    log_write("FB: MB2 map failed", KERNEL, LOG_ERROR);
-    return -1;
+  int native_layout = t->bpp == 32 && t->red_pos == 16 &&
+                      t->red_size == 8 && t->green_pos == 8 &&
+                      t->green_size == 8 && t->blue_pos == 0 &&
+                      t->blue_size == 8 && (t->addr & 4095ULL) == 0;
+  if (native_layout) {
+    u32 pages = (u32)((fb_bytes + 4095ULL) / 4096ULL);
+    for (u32 i = 0; i < pages; i++)
+      fb_pages[i] = t->addr + (u64)i * 4096;
+    if (map_pages_at(FB_VIRT_BASE, fb_pages, pages, /*cacheable=*/0) != 0) {
+      log_write("FB: direct firmware map failed", KERNEL, LOG_ERROR);
+      return -1;
+    }
+    fb = (u32 *)FB_VIRT_BASE;
+    fb_pitch = t->pitch;
+    fb_n_pages = pages;
+    fb_mapped_pages = pages;
+    fb_mode = FB_MODE_MB2_DIRECT;
+    log_write("FB: native 32-bit scanout, using direct writes", KERNEL,
+              LOG_INFO);
+  } else {
+    if (map_contiguous_at(FB_SCANOUT_VIRT_BASE, t->addr, fb_bytes,
+                          /*cacheable=*/0,
+                          &fb_scanout_mapped_pages) != 0) {
+      log_write("FB: firmware scanout map failed", KERNEL, LOG_ERROR);
+      return -1;
+    }
+    fb_scanout = (u8 *)(FB_SCANOUT_VIRT_BASE + (t->addr & 4095ULL));
+
+    u64 shadow_bytes = (u64)t->width * 4ULL * t->height;
+    u32 pages = (u32)((shadow_bytes + 4095ULL) / 4096ULL);
+    fb_shadow_phys = pmm_alloc_contiguous_below(UINT64_MAX, pages);
+    if (!fb_shadow_phys) {
+      unmap_pages_at(FB_SCANOUT_VIRT_BASE, fb_scanout_mapped_pages);
+      fb_scanout_mapped_pages = 0;
+      log_write("FB: no memory for format-conversion surface", KERNEL,
+                LOG_ERROR);
+      return -1;
+    }
+    fb_shadow_pages = pages;
+    for (u32 i = 0; i < pages; i++)
+      fb_pages[i] = fb_shadow_phys + (u64)i * 4096;
+    if (map_pages_at(FB_VIRT_BASE, fb_pages, pages, /*cacheable=*/1) != 0) {
+      pmm_free_contiguous(fb_shadow_phys, fb_shadow_pages);
+      fb_shadow_phys = 0;
+      fb_shadow_pages = 0;
+      unmap_pages_at(FB_SCANOUT_VIRT_BASE, fb_scanout_mapped_pages);
+      fb_scanout_mapped_pages = 0;
+      log_write("FB: format-conversion surface map failed", KERNEL,
+                LOG_ERROR);
+      return -1;
+    }
+    fb = (u32 *)FB_VIRT_BASE;
+    fb_pitch = t->width * 4U;
+    fb_n_pages = pages;
+    fb_mapped_pages = pages;
+    fb_mode = FB_MODE_MB2_SHADOW;
+    memset(fb, 0, shadow_bytes);
+    log_write("FB: non-native scanout, enabled 32-bit conversion surface",
+              KERNEL, LOG_INFO);
   }
-  fb = (u32 *)FB_VIRT_BASE;
-  fb_mode = FB_MODE_MB2;
   mark_full_damage();
 
   log_write_hex("DISPLAY: phys      =", t->addr, KERNEL, LOG_INFO);
@@ -580,6 +735,8 @@ int framebuffer_init(u64 mb2_addr) {
   log_write_hex("DISPLAY: height    =", fb_h, KERNEL, LOG_INFO);
   log_write_hex("DISPLAY: pitch     =", fb_pitch, KERNEL, LOG_INFO);
   log_write_hex("DISPLAY: bpp       =", t->bpp, KERNEL, LOG_INFO);
+  if (fb_mode == FB_MODE_MB2_SHADOW)
+    framebuffer_present();
   return 0;
 }
 
@@ -609,18 +766,98 @@ struct gfx_surface framebuffer_get_gfx_surface(void) {
   return s;
 }
 
-/* Tear down the current backing: unmap pages from FB_VIRT_BASE, and in virtio
- * mode also free the underlying PMM frames. MB2 frames are MMIO, not owned by
- * pmm, so leave them alone. */
+/* Tear down the current backing: unmap pages from FB_VIRT_BASE, and free only
+ * PMM-owned shadow/virtio memory. Firmware and VMSVGA frames are MMIO. */
 static void teardown_current(int free_virtio_pages) {
   if (fb_mapped_pages > 0)
-    unmap_pages_at_vbase(fb_mapped_pages);
+    unmap_pages_at(FB_VIRT_BASE, fb_mapped_pages);
+  if (fb_mode == FB_MODE_MB2_SHADOW) {
+    if (fb_scanout_mapped_pages > 0)
+      unmap_pages_at(FB_SCANOUT_VIRT_BASE, fb_scanout_mapped_pages);
+    if (fb_shadow_phys)
+      pmm_free_contiguous(fb_shadow_phys, fb_shadow_pages);
+  }
   if (free_virtio_pages && fb_mode == FB_MODE_VIRTIO && fb_pool_phys)
     pmm_free_contiguous(fb_pool_phys, fb_owned_pages);
   fb_n_pages = 0;
   fb_mapped_pages = 0;
   fb_owned_pages = 0;
   fb_pool_phys = 0;
+  fb_scanout = 0;
+  fb_scanout_mapped_pages = 0;
+  fb_shadow_phys = 0;
+  fb_shadow_pages = 0;
+}
+
+static int vbox_mode_valid(const struct vbox_video_mode *mode) {
+  if (!mode || mode->physical == 0 || (mode->physical & 4095ULL) != 0 ||
+      mode->width == 0 || mode->height == 0 || mode->bpp != 32 ||
+      mode->pitch < mode->width * 4U || mode->red_mask != 0x00FF0000U ||
+      mode->green_mask != 0x0000FF00U || mode->blue_mask != 0x000000FFU)
+    return 0;
+  u64 bytes = (u64)mode->pitch * mode->height;
+  return bytes != 0 && bytes <= FB_MAX_BYTES;
+}
+
+static int map_vbox_mode(const struct vbox_video_mode *mode,
+                         int initial_attach) {
+  if (!vbox_mode_valid(mode)) {
+    log_write("FB: unsupported VMSVGA framebuffer layout", KERNEL, LOG_ERROR);
+    return -1;
+  }
+
+  u32 pages = (u32)(((u64)mode->pitch * mode->height + 4095ULL) / 4096ULL);
+  int physical_changed = fb_mode != FB_MODE_VBOX ||
+                         fb_mb2_phys != mode->physical;
+  if (initial_attach) {
+    teardown_current(/*free_virtio_pages=*/1);
+    physical_changed = 1;
+  } else if (physical_changed && fb_mapped_pages > 0) {
+    unmap_pages_at(FB_VIRT_BASE, fb_mapped_pages);
+    fb_mapped_pages = 0;
+  }
+
+  for (u32 i = 0; i < pages; i++)
+    fb_pages[i] = mode->physical + (u64)i * 4096ULL;
+
+  if (physical_changed) {
+    if (map_pages_at(FB_VIRT_BASE, fb_pages, pages, /*cacheable=*/0) != 0)
+      return -1;
+    fb_mapped_pages = pages;
+  } else {
+    while (fb_mapped_pages < pages) {
+      u32 i = fb_mapped_pages;
+      if (vmm_map(FB_VIRT_BASE + (u64)i * 4096ULL, fb_pages[i],
+                  VMM_PRESENT | VMM_WRITE | VMM_PCD | VMM_PWT) != 0)
+        return -1;
+      fb_mapped_pages++;
+    }
+  }
+
+  fb = (u32 *)FB_VIRT_BASE;
+  fb_mb2_phys = mode->physical;
+  fb_w = mode->width;
+  fb_h = mode->height;
+  fb_pitch = mode->pitch;
+  fb_n_pages = pages;
+  fb_mode = FB_MODE_VBOX;
+  if (!initial_attach)
+    mouse_set_bounds(fb_w, fb_h);
+  mark_full_damage();
+  if (!initial_attach)
+    fb_resize_generation++;
+  return 0;
+}
+
+int framebuffer_attach_virtualbox(void) {
+  struct vbox_video_mode mode;
+  if (vbox_video_get_mode(&mode) != 0 || map_vbox_mode(&mode, 1) != 0)
+    return -1;
+  log_write_hex("FB: VirtualBox VMSVGA attached, w =", fb_w, KERNEL,
+                LOG_INFO);
+  log_write_hex("FB: VirtualBox VMSVGA attached, h =", fb_h, KERNEL,
+                LOG_INFO);
+  return 0;
 }
 
 /* Allocate one maximum-sized pool. The host resource keeps all of it attached,
@@ -643,7 +880,7 @@ static int alloc_and_map_virtio(u32 visible_pages) {
     fb_pages[i] = fb_pool_phys + (u64)i * 4096;
   fb_owned_pages = FB_MAX_PAGES;
 
-  if (map_pages_at_vbase(fb_pages, visible_pages, 1) != 0) {
+  if (map_pages_at(FB_VIRT_BASE, fb_pages, visible_pages, 1) != 0) {
     log_write("FB: virtio map failed", KERNEL, LOG_ERROR);
     pmm_free_contiguous(fb_pool_phys, FB_MAX_PAGES);
     fb_pool_phys = 0;
@@ -780,9 +1017,17 @@ int framebuffer_attach_virtio(void) {
 }
 
 int framebuffer_check_resize(void) {
-  if (fb_mode != FB_MODE_VIRTIO)
-    return 0;
-  if (!virtio_gpu_poll_display_event())
+  if (fb_mode == FB_MODE_VBOX) {
+    struct vbox_video_mode mode;
+    spin_lock(&scanout_lock);
+    int changed = vbox_video_poll_resize(&mode);
+    if (changed > 0)
+      changed = map_vbox_mode(&mode, 0) == 0;
+    spin_unlock(&scanout_lock);
+    return changed > 0;
+  }
+
+  if (fb_mode != FB_MODE_VIRTIO || !virtio_gpu_poll_display_event())
     return 0;
 
   u32 w = 0, h = 0;
@@ -794,7 +1039,8 @@ int framebuffer_check_resize(void) {
 }
 
 void framebuffer_present(void) {
-  if (fb_mode != FB_MODE_VIRTIO)
+  if (fb_mode != FB_MODE_VIRTIO && fb_mode != FB_MODE_MB2_SHADOW &&
+      fb_mode != FB_MODE_VBOX)
     return;
   /* Snapshot + clear before the synchronous flush so writers can continue
    * accumulating the next batch while virtio waits for host acknowledgement. */
@@ -814,10 +1060,21 @@ void framebuffer_present(void) {
 
   spin_lock(&scanout_lock);
   for (int i = 0; i < count; i++) {
-    virtio_gpu_flush_rect(pending[i].x, pending[i].y, pending[i].w,
-                          pending[i].h);
+    if (fb_mode == FB_MODE_MB2_SHADOW)
+      present_shadow_rect(&pending[i]);
+    else if (fb_mode == FB_MODE_VBOX)
+      vbox_video_flush_rect(pending[i].x, pending[i].y, pending[i].w,
+                            pending[i].h);
+    else
+      virtio_gpu_flush_rect(pending[i].x, pending[i].y, pending[i].w,
+                            pending[i].h);
   }
   spin_unlock(&scanout_lock);
+}
+
+int framebuffer_needs_flush(void) {
+  return fb_mode == FB_MODE_VIRTIO || fb_mode == FB_MODE_MB2_SHADOW ||
+         fb_mode == FB_MODE_VBOX;
 }
 
 u32 framebuffer_resize_generation(void) { return fb_resize_generation; }
@@ -851,6 +1108,7 @@ void framebuffer_clear(u32 color) {
     u32 n = fb_w * fb_h;
     for (u32 i = 0; i < n; i++)
       p[i] = color;
+    mark_full_damage();
     return;
   }
   /* Strength-reduced: advance row pointer by pitch instead of multiplying
