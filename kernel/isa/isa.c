@@ -19,7 +19,6 @@ static const struct isa_legacy_entry legacy_devices[] = {
     { 0x3F0, 6, "Primary ATA"     },  // Floppy / IDE
     { 0x2E8, 3, "COM4 Serial"     },
     { 0x2F8, 3, "COM2 Serial"     },
-    // Add more as needed
 };
 
 void isa_probe_devices(void) {

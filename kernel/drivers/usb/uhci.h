@@ -2,6 +2,8 @@
 #define UHCI_H
 
 #include <utilities/types.h>
+#include <drivers/base/macros.h>
+
 
 /* UHCI I/O Registers */
 // Offset | Name 			 | Description 					   | Length

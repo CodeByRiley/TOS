@@ -12,7 +12,7 @@ enum pci_vendor_id {
     PCI_VENDOR_ATHEROS    = 0x168C,
     PCI_VENDOR_QUALCOMM   = 0x17CB,
     PCI_VENDOR_MARVELL    = 0x11AB,
-    PCI_VENDOR_MICROSOFT  = 0x1414,
+    PCI_VENDOR_MICROSOFT  = 0x1414, /* microslop */
     PCI_VENDOR_VBOX       = 0x80EE,
     PCI_VENDOR_VMWARE     = 0x15AD,
     PCI_VENDOR_VIRTIO     = 0x1AF4,

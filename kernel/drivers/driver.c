@@ -31,21 +31,25 @@ static int poll_task_started;
  * the e1000 interrupt handler, which is on the TODO; polling is honest
  * while the protocol layers above it are still the unknown quantity. */
 static void driver_poll_thread(void) {
-    for (;;) {
-        int worked = 0;
+  int busy = 0;
+  for (;;) {
+    int worked = 0;
 
-        for (u32 i = 0; i < device_count; i++) {
-            struct device *device = &devices[i];
-            if (device->driver && device->driver->poll) {
-                worked |= device->driver->poll(device);
-            }
-        }
-
-        if (worked)
-            task_yield();
-        else
-            task_sleep_ticks(1);
+    for (u32 i = 0; i < device_count; i++) {
+      struct device *device = &devices[i];
+      if (device->driver && device->driver->poll) {
+        worked |= device->driver->poll(device);
+      }
     }
+
+    if (worked && busy < 8) {
+      busy++;
+      task_yield();
+    } else {
+      busy = 0;
+      task_sleep_ticks(1);
+    }
+  }
 }
 
 static void ensure_poll_task(void) {
@@ -67,7 +71,6 @@ static int bind_device(struct device *device) {
   if (device->driver)
     return 1;
 
-  log_write("DRIVER: binding device", KERNEL, LOG_INFO);
   for (u32 i = 0; i < driver_count; i++) {
     const struct driver *driver = drivers[i];
     if (driver->bus != device->bus)
@@ -76,10 +79,12 @@ static int bind_device(struct device *device) {
       continue;
 
     log_write_string("DRIVER: probing", driver->name, KERNEL, LOG_INFO);
+
     if (driver->probe(device) != 0) {
       log_write_string("DRIVER: probe failed", driver->name, KERNEL, LOG_WARN);
       continue;
     }
+    log_write_string("DRIVER: probe success", driver->name, KERNEL, LOG_INFO);
     device->driver = driver;
     /* A successful probe means the device is operational. Keep this
      * explicit so diagnostics can distinguish a registered driver from
@@ -139,17 +144,17 @@ int driver_register_isa_device(u16 io_base, u8 irq) {
 
   device_count++;
   log_write_hex("DRIVER: device registered ", device_count, KERNEL, LOG_INFO);
-  // Try to bind a driver to it immediately
   bind_device(device);
   return 0;
 }
 
 int driver_probe_pci_devices(void) {
+  u32 count = pci_device_count();
+  if (count == 0)
+    return 0; /* not enumerated yet, or genuinely empty */
   if (pci_devices_probed)
     return 0;
   pci_devices_probed = 1;
-
-  u32 count = pci_device_count();
   u32 imported = 0;
 
   for (u32 i = 0; i < count; i++) {
@@ -159,13 +164,13 @@ int driver_probe_pci_devices(void) {
     }
 
     struct device *device = &devices[device_count];
+    if (!pci_device_at(i, &device->bus_info.pci))
+      continue;
+
     device->bus = DEVICE_BUS_PCI;
     device->enabled = 0;
     device->driver = 0;
     device->driver_data = 0;
-
-    if (!pci_device_at(i, &device->bus_info.pci))
-      continue;
 
     device_count++;
     imported++;

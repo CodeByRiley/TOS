@@ -33,7 +33,6 @@ static double ttf_stb_fabs(double x) {
 #include "stb_truetype.h"
 
 struct ttf_font *g_sys_font = NULL;
-
 int ttf_load(struct ttf_font *font, const char *path) {
     if (!font || !path) return -1;
     memset(font, 0, sizeof(*font));
@@ -92,7 +91,7 @@ void ttf_init_font(void) {
         return;
     }
 
-    if (ttf_load(g_sys_font, "/system/fonts/SansDisplayStatic.ttf") != 0) {
+    if (ttf_load(g_sys_font, "/system/fonts/sansdisplaystatic.ttf") != 0) {
         log_write("display: failed to load TTF, using font8x8", KERNEL, LOG_WARN);
         kfree(g_sys_font);
         g_sys_font = NULL;
@@ -112,10 +111,10 @@ static int ttf_round(float v) {
 int ttf_char_advance(struct ttf_font *font, int cp, int px_size) {
     if (!font || !font->file_buffer || px_size <= 0) return 0;
 
-    float scale = stbtt_ScaleForPixelHeight(&font->info, px_size);
+    float scale = stbtt_ScaleForPixelHeight(&font->info, (float)px_size);
     int advance, lsb;
     stbtt_GetCodepointHMetrics(&font->info, cp, &advance, &lsb);
-    return ttf_round(advance * scale);
+    return ttf_round((float)advance * scale);
 }
 
 void ttf_vmetrics(struct ttf_font *font, int px_size,

@@ -11,6 +11,10 @@
 #ifndef KERNEL_TYPES_H
 #define KERNEL_TYPES_H
 
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
 /* --- Compiler Attributes & Macros --------------------------------- */
 #define PACKED __attribute__((packed))
 #define ALIGNED(x) __attribute__((aligned(x)))
@@ -29,11 +33,6 @@
 
 /* For declaring aliases or preventing strict aliasing optimisations */
 #define MAY_ALIAS __attribute__((may_alias))
-
-#include <stdbool.h>
-#include <stddef.h>
-#include <stdint.h>
-
 
 /* --- Linux-style short names --------------------------------------- */
 typedef unsigned char uchar;

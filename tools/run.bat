@@ -87,9 +87,9 @@ qemu-system-x86_64 ^
     -vga vmware ^
     -serial stdio ^
     -m 16384M ^
+    -device ich9-usb-ehci1,id=ehci ^
+    -device usb-tablet,bus=ehci.0 ^
     -audiodev sdl,id=snd0 ^
-    -device piix3-usb-uhci,id=uhci ^
-    -device usb-tablet,bus=uhci.0 ^
     -device sb16,audiodev=snd0 ^
     -netdev user,id=n0,dhcpstart=10.0.2.30,hostfwd=tcp::2222-:22,hostfwd=udp::5000-:5000 ^
     -device e1000,netdev=n0 ^
@@ -102,4 +102,6 @@ popd
 endlocal
 exit /b %RESULT%
 
-    REM -vga virtio ^
+REM -vga virtio ^
+REM -device piix3-usb-uhci,id=uhci ^
+REM -device usb-tablet,bus=uhci.0 ^

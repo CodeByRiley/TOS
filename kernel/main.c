@@ -19,8 +19,8 @@
 #include <drivers/sound/sb16.h>
 #include <drivers/storage/ahci.h>
 #include <drivers/video/nvidia/nvidia.h>
-#include <drivers/video/virtualbox/vbox_video.h>
 #include <drivers/video/virtio/virtio_gpu.h>
+#include <drivers/video/virtualbox/vbox_video.h>
 #include <fs/ext2/ext2.h>
 #include <fs/fat/ahci/fat_ahci.h>
 #include <fs/fat/fat_vfs.h>
@@ -66,25 +66,6 @@ static void memory_init(u64 mb2_addr) {
   vma_init();
   heap_init();
   log_write("pmm, vmm, heap initialised", KERNEL, LOG_INFO);
-
-  // /* Demand-paging boot check. */
-  // log_write("Testing Demand Paging...", KERNEL, LOG_INFO);
-  // u64 test_page = vma_alloc(4096);
-  // if (!test_page) {
-  //   log_write("Demand Paging Test: vma_alloc failed!", KERNEL, LOG_ERROR);
-  //   return;
-  // }
-  // log_write("Allocated unmapped VMA. Preparing to write to it...", KERNEL,
-  //           LOG_INFO);
-  // u32 *ptr = (u32 *)test_page;
-  // *ptr = 0xDEADBEEF;
-  // if (*ptr == 0xDEADBEEF) {
-  //   log_write("Demand Paging Success! Hardware fault handled dynamically.",
-  //             KERNEL, LOG_INFO);
-  // } else {
-  //   log_write("Demand Paging FAILED!", KERNEL, LOG_ERROR);
-  // }
-  // vfree(test_page);
 }
 
 static void acpi_and_smp_init(u64 mb2_addr) {
@@ -108,8 +89,7 @@ static void acpi_and_smp_init(u64 mb2_addr) {
 static void ipc_and_sched_init(void) {
   msg_init();
   log_write("message queue initialised", KERNEL, LOG_INFO);
-  syscall_init_this_cpu(
-      (u64)(bsp_syscall_kstack + sizeof(bsp_syscall_kstack)));
+  syscall_init_this_cpu((u64)(bsp_syscall_kstack + sizeof(bsp_syscall_kstack)));
   sched_init();
   log_write("scheduler initialised", KERNEL, LOG_INFO);
 }
@@ -136,8 +116,7 @@ static void display_init(u64 mb2_addr) {
                   LOG_WARN);
       }
     } else {
-      log_write("display: no dynamic GPU, staying on MB2 fb", KERNEL,
-                LOG_INFO);
+      log_write("display: no dynamic GPU, staying on MB2 fb", KERNEL, LOG_INFO);
     }
   } else {
     log_write("display: NVIDIA driving scanout, keeping its framebuffer",
@@ -150,8 +129,7 @@ static void display_init(u64 mb2_addr) {
       sched_set_priority(flush, SCHED_PRIO_HIGH);
       log_write("display: fb flush thread spawned", KERNEL, LOG_INFO);
     } else {
-      log_write("display: could not spawn fb flush thread", KERNEL,
-                LOG_ERROR);
+      log_write("display: could not spawn fb flush thread", KERNEL, LOG_ERROR);
     }
   }
 }
@@ -179,40 +157,42 @@ static void devices_init(void) {
 }
 
 static void filesystem_init(u64 mb2_addr) {
-  struct MB2_TAG_MODULE *m = mb2_find_module(mb2_addr, "rootfs");
-  if (!m) {
-    log_write("rootfs: no rootfs module", KERNEL, LOG_ERROR);
-    for (;;)
-      __asm__ volatile("hlt");
-  }
-
-  bool fs_mounted = false;
   vfs_init();
   ext2_vfs_register();
   fat_vfs_register();
 
-  if (g_ahci_dev && fat_mount_from_ahci(g_ahci_dev, 0) == 0 &&
-      fat_vfs_attach("/") == 0) {
-    log_write("rootfs: mounted from AHCI SATA drive", FILESYS, LOG_INFO);
-    fs_mounted = true;
-  } else {
+  bool fs_mounted = false;
+
+  /* Try AHCI */
+  if (g_ahci_dev) {
+    if (fat_mount_from_ahci(g_ahci_dev, 0) == 0) {
+      if (fat_vfs_attach("/") == 0) {
+        log_write("rootfs: mounted from AHCI SATA drive", FILESYS, LOG_INFO);
+        fs_mounted = true;
+      } else {
+        log_write("rootfs: FAT mounted but VFS attach failed", FILESYS, LOG_WARN);
+        /* detach/unmount here so state doesn't linger */
+      }
+    }
+  }
+  if (!fs_mounted)
     log_write("rootfs: AHCI unavailable or unformatted, trying ramdisk...",
               KERNEL, LOG_WARN);
-  }
 
+  /* Try Ramdisk */
+  struct MB2_TAG_MODULE *m = mb2_find_module(mb2_addr, "rootfs");
   if (!fs_mounted && m) {
-    const char *filesystem_type = 0;
+    const char *fstype = 0;
     if (vfs_mount_auto("/", phys_to_virt(m->mod_start),
-                       m->mod_end - m->mod_start,
-                       &filesystem_type) == 0) {
-      log_write("rootfs: mounted from Multiboot2 ramdisk module", FILESYS,
-                LOG_INFO);
-      if (filesystem_type)
-        log_write(filesystem_type, FILESYS, LOG_INFO);
+                       m->mod_end - m->mod_start, &fstype) == 0) {
+      log_write("rootfs: mounted from Multiboot2 ramdisk module", FILESYS, LOG_INFO);
+      if (fstype)
+        log_write(fstype, FILESYS, LOG_INFO);
       fs_mounted = true;
     }
   }
 
+  /* Panic only if nothing worked */
   if (!fs_mounted) {
     log_write("PANIC: Unable to mount any root filesystem!", KERNEL, LOG_ERROR);
     for (;;)
@@ -234,13 +214,11 @@ static void late_init(void) {
   task_spawn(tty_thread_entry);
   log_write("tty: render thread spawned", KERNEL, LOG_INFO);
 
-
   task_spawn(udp_echo_thread);
   log_write("udp: echo server thread spawned", KERNEL, LOG_INFO);
 
   task_spawn(task_reaper_thread_entry);
   log_write("sched: zombie reaper thread spawned", KERNEL, LOG_INFO);
-
 }
 
 /* Ticks to wait for winman to register before concluding it is not coming.
@@ -266,26 +244,25 @@ static void late_init(void) {
  * nothing at all, and every shell in the system , including that fallback ,
  * can exit without consequence. */
 static void init_task_entry(void) {
-    char *winman_argv[] = { (char *)"winman", NULL };
-    long winman_pid = process_spawn_async("/system/bin/winman.elf", winman_argv);
-    if (winman_pid < 0)
-        log_write("winman: launch failed , TTY-only mode", USER, LOG_INFO);
-    else
-        log_write_hex("winman: spawn returned pid =", (u64)winman_pid, USER,
-                      LOG_INFO);
+  char *winman_argv[] = {(char *)"winman", NULL};
+  long winman_pid = process_spawn_async("/system/bin/winman.elf", winman_argv);
+  if (winman_pid < 0)
+    log_write("winman: launch failed , TTY-only mode", USER, LOG_INFO);
+  else
+    log_write_hex("winman: spawn returned pid =", (u64)winman_pid, USER,
+                  LOG_INFO);
 
-    for (int i = 0; i < WM_REGISTER_GRACE_TICKS && msg_input_owner() == 0; i++)
-        task_sleep_ticks(1);
+  for (int i = 0; i < WM_REGISTER_GRACE_TICKS && msg_input_owner() == 0; i++)
+    task_sleep_ticks(1);
 
-    for (;;) {
-        if (msg_input_owner() == 0) {
-            char *sh_argv[] = { (char *)"sh", NULL };
-            long code = process_exec("/system/bin/sh.elf", sh_argv);
-            log_write_hex("fallback shell exited code =", (u64)code, USER,
-                          LOG_INFO);
-        }
-        task_sleep_ticks(50);
+  for (;;) {
+    if (msg_input_owner() == 0) {
+      char *sh_argv[] = {(char *)"sh", NULL};
+      long code = process_exec("/system/bin/sh.elf", sh_argv);
+      log_write_hex("fallback shell exited code =", (u64)code, USER, LOG_INFO);
     }
+    task_sleep_ticks(50);
+  }
 }
 
 static void enable_interrupts_and_smp(void) {

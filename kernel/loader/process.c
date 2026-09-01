@@ -407,10 +407,11 @@ long process_exec(const char *path, char *const argv[]) {
     struct spawn_request *req = snapshot_request(path, argv);
     if (!req)
         return -1;
-    log_write_hex("process_exec: created process id", req->reserved->pid, USER, LOG_INFO);
     int child_pid = spawn_request_now(req);
     kfree(req);
     if (child_pid < 0) return -1;
+    log_write_hex("process_exec: created process id", (u64)child_pid,
+                  USER, LOG_INFO);
 
     task_block(child_pid);
 

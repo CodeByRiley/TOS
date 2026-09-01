@@ -403,6 +403,7 @@ static void page_fault_report(const struct interrupt_frame *r,
 
   fault_hex2("cr0", cr0, "cr3", cr3);
   fault_hex2("cr4", cr4, "rflags", r->rflags);
+  fault_hex("rip", r->rip);
   fault_hex2("cs", r->cs, "rsp", rsp);
   if ((r->cs & 3) == 3)
     fault_hex("ss", r->ss);

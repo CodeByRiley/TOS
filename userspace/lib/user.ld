@@ -41,7 +41,12 @@ SECTIONS
     {
         PROVIDE_HIDDEN(__init_array_start = .);
         KEEP(*(SORT_BY_INIT_PRIORITY(.init_array.*)))
+        /* This bare-metal GCC emits __attribute__((constructor)) entries in
+         * the legacy .ctors sections.  Musl walks only the bounds named
+         * __init_array_start/end, so merge both formats into that range. */
+        KEEP(*(SORT_BY_INIT_PRIORITY(.ctors.*)))
         KEEP(*(.init_array))
+        KEEP(*(.ctors))
         PROVIDE_HIDDEN(__init_array_end = .);
     } :data
 
@@ -49,7 +54,9 @@ SECTIONS
     {
         PROVIDE_HIDDEN(__fini_array_start = .);
         KEEP(*(SORT_BY_INIT_PRIORITY(.fini_array.*)))
+        KEEP(*(SORT_BY_INIT_PRIORITY(.dtors.*)))
         KEEP(*(.fini_array))
+        KEEP(*(.dtors))
         PROVIDE_HIDDEN(__fini_array_end = .);
     } :data
 
