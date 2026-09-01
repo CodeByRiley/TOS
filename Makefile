@@ -338,6 +338,7 @@ test-qemu-heavy: build-x86_64
 		python3 tests/winman_partial_repaint_test.py --timeout 90 && \
 		python3 tests/winman_titlebar_double_click_test.py --timeout 90 && \
 		python3 tests/path_lookup_test.py --timeout 90 && \
+		python3 tests/ehci_test.py && \
 		python3 tests/kernel_panic_test.py --timeout 90"
 
 test-heavy: test-host test-qemu-heavy
