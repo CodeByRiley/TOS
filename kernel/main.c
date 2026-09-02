@@ -22,6 +22,7 @@
 #include <drivers/video/virtio/virtio_gpu.h>
 #include <drivers/video/virtualbox/vbox_video.h>
 #include <fs/ext2/ext2.h>
+#include <drivers/storage/ahci_block.h>
 #include <fs/fat/ahci/fat_ahci.h>
 #include <fs/fat/fat_vfs.h>
 #include <fs/vfs/vfs.h>
@@ -157,6 +158,7 @@ static void devices_init(void) {
 }
 
 static void filesystem_init(u64 mb2_addr) {
+  static struct ahci_block_device root_disk;
   vfs_init();
   ext2_vfs_register();
   fat_vfs_register();
@@ -165,6 +167,17 @@ static void filesystem_init(u64 mb2_addr) {
 
   /* Try AHCI */
   if (g_ahci_dev) {
+    for (int port = 0; port < AHCI_MAX_PORTS && !fs_mounted; port++) {
+      if (ahci_block_open(&root_disk, g_ahci_dev, port)) continue;
+      if (ext2_mount_device("/", &root_disk.device) == 0) {
+        log_write("rootfs: ext2 mounted from AHCI SATA drive", FILESYS, LOG_INFO);
+        fs_mounted = true;
+      } else {
+        ahci_block_close(&root_disk);
+      }
+    }
+  }
+  if (g_ahci_dev && !fs_mounted) {
     if (fat_mount_from_ahci(g_ahci_dev, 0) == 0) {
       if (fat_vfs_attach("/") == 0) {
         log_write("rootfs: mounted from AHCI SATA drive", FILESYS, LOG_INFO);

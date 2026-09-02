@@ -91,7 +91,10 @@ accept partial state. Unmount releases the root before backend state.
 
 `drivers/storage/block.h` is the common 512-byte sector interface. A transport
 supplies read, write, flush and capacity; callers supply ordinary virtual
-buffers. The transport owns DMA mapping and device-specific commands.
+buffers. AHCI uses one low physical bounce page, so heap/stack buffers do not
+need to be contiguous or DMA-addressable. The AHCI command builder is shared
+by reads, writes, IDENTIFY and FLUSH CACHE EXT. Failed commands disable the
+port and stop DMA before releasing buffers; recovery currently needs reboot.
 
 `ext2_mount_device(path, device)` copies a raw volume into an owned cache
 (currently capped at 128 MiB). The transport context must outlive the mount.

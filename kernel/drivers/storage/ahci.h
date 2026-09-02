@@ -2,6 +2,7 @@
 #define AHCI_H
 
 #include <utilities/types.h>
+#include <sync/spinlock.h>
 #ifndef QEMU
 
 #else
@@ -219,6 +220,7 @@ _Static_assert(sizeof(struct AHCI_CMD_TABLE) == 256,
 
 /* State and memory allocations for a single SATA port */
 struct AHCI_PORT {
+    struct spinlock io_lock; // Serialize commands, including cache barriers.
     int is_active;          // 1 if a drive is present and initialized
     u32 signature;     // 0x00000101 for SATA, 0xEB140101 for ATAPI
 
@@ -255,5 +257,8 @@ int ahci_read_sector(struct AHCI_DEVICE_DATA *dev, int port, u64 lba,
  * `buf_phys`. Returns 0 on success, -1 on error or timeout. */
 int ahci_write_sector(struct AHCI_DEVICE_DATA *dev, int port, u64 lba,
                       u32 count, void *buf_phys);
+
+int ahci_identify(struct AHCI_DEVICE_DATA *dev, int port, void *buf_phys);
+int ahci_flush_cache(struct AHCI_DEVICE_DATA *dev, int port);
 
 #endif

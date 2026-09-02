@@ -135,177 +135,96 @@ static void ahci_clear_status(volatile void *port_base) {
                ahci_read32(port_base, AHCI_PORT_PxSERR));
 }
 
-int ahci_write_sector(struct AHCI_DEVICE_DATA *dev, int port, u64 lba,
-                      u32 count, void *buf_phys) {
-    if (port < 0 || port >= AHCI_MAX_PORTS) return -1;
-    if (count == 0 || count > 0xFFFF) return -1;
-
+/* One command builder for reads, writes, IDENTIFY and cache barriers.
+ * A failed/timed-out command poisons this port: never reuse its DMA memory
+ * while the HBA may still own it. Stop the engine before returning. */
+static int ahci_command(struct AHCI_DEVICE_DATA *dev, int port, u8 command,
+                         u64 lba, u32 count, void *buffer, u32 bytes, int writing) {
+    if (!dev || port < 0 || port >= AHCI_MAX_PORTS ||
+        bytes > 4u * 1024u * 1024u || (bytes && !buffer)) return -1;
+    u64 physical = (u64)(uintptr_t)buffer;
+    if (bytes && ((physical & 1) || physical > UINT64_MAX - bytes)) return -1;
+    if (bytes && !(ahci_read32(dev->abar_virtual, AHCI_CAP) & (1u << 31)) &&
+        physical + bytes > (1ull << 32)) return -1;
     struct AHCI_PORT *p = &dev->ports[port];
-    if (!p->is_active) return -1;
-
-    volatile void *port_base = ahci_port_base(dev->abar_virtual, port);
-    ahci_clear_status(port_base);
-
-    if (ahci_wait_ready(port_base) != 0) return -1;
-
-    int slot = ahci_find_cmd_slot(port_base, p->slots);
-    if (slot < 0) return -1;
-
-    struct AHCI_CMD_HEADER *cmd_list = (struct AHCI_CMD_HEADER *)p->cmd_list_virt;
-    struct AHCI_CMD_HEADER *cmd_hdr = &cmd_list[slot];
-    memset(cmd_hdr, 0, sizeof(struct AHCI_CMD_HEADER));
-    cmd_hdr->cfl = 5;
-    cmd_hdr->write = 1; // 1 = WRITE to device
-    cmd_hdr->prdt_length = 1;
-    cmd_hdr->c = 1;
-
-    u64 table_phys = ahci_cmd_table_phys(p, slot);
-    cmd_hdr->command_table_base = (u32)table_phys;
-    cmd_hdr->command_table_base_upper = (u32)(table_phys >> 32);
-
-    struct AHCI_CMD_TABLE *cmd_table = ahci_cmd_table(p, slot);
-    memset(cmd_table, 0, sizeof(struct AHCI_CMD_TABLE));
-
-    cmd_table->prdt[0].data_base = (u32)(u64)buf_phys;
-    cmd_table->prdt[0].data_base_upper = (u32)((u64)buf_phys >> 32);
-    cmd_table->prdt[0].size = (count * 512) - 1;
-    cmd_table->prdt[0].size |= (1u << 31);
-
-    struct FIS_REG_H2D *fis = &cmd_table->command_fis;
+    spin_lock(&p->io_lock);
+    int result = -1;
+    if (!p->is_active || p->signature != AHCI_SIG_SATA) goto done;
+    volatile void *base = ahci_port_base(dev->abar_virtual, port);
+    if (ahci_wait_ready(base)) goto failed;
+    ahci_clear_status(base);
+    int slot = ahci_find_cmd_slot(base, p->slots);
+    if (slot < 0) goto done;
+    struct AHCI_CMD_HEADER *header = &((struct AHCI_CMD_HEADER *)p->cmd_list_virt)[slot];
+    struct AHCI_CMD_TABLE *table = ahci_cmd_table(p, slot);
+    memset(header, 0, sizeof(*header));
+    memset(table, 0, sizeof(*table));
+    u64 table_physical = ahci_cmd_table_phys(p, slot);
+    header->cfl = sizeof(struct FIS_REG_H2D) / sizeof(u32);
+    header->write = writing;
+    header->prdt_length = bytes ? 1 : 0;
+    header->command_table_base = (u32)table_physical;
+    header->command_table_base_upper = (u32)(table_physical >> 32);
+    if (bytes) {
+        table->prdt[0].data_base = (u32)(uintptr_t)buffer;
+        table->prdt[0].data_base_upper = (u32)((u64)(uintptr_t)buffer >> 32);
+        table->prdt[0].size = (bytes - 1) | (1u << 31);
+    }
+    struct FIS_REG_H2D *fis = &table->command_fis;
     fis->fis_type = FIS_TYPE_REG_H2D;
     fis->c = 1;
-    fis->command = 0x35; // 0x35 = WRITE DMA EXT
-
-    fis->lba0 = (u8)(lba & 0xFF);
-    fis->lba1 = (u8)((lba >> 8) & 0xFF);
-    fis->lba2 = (u8)((lba >> 16) & 0xFF);
-    fis->lba3 = (u8)((lba >> 24) & 0xFF);
-    fis->lba4 = (u8)((lba >> 32) & 0xFF);
-    fis->lba5 = (u8)((lba >> 40) & 0xFF);
-
-    fis->device = 1 << 6;
-    fis->countl = (u8)(count & 0xFF);
-    fis->counth = (u8)((count >> 8) & 0xFF);
-
-    ahci_write32(port_base, AHCI_PORT_PxCI, 1u << slot);
-
-    u32 spins;
-    for (spins = 0; spins < AHCI_SPIN_LIMIT; spins++) {
-        if (!(ahci_read32(port_base, AHCI_PORT_PxCI) & (1u << slot)))
-            break;
-        if (ahci_read32(port_base, AHCI_PORT_PxIS) & AHCI_PxIS_TFES) {
-            return -1;
+    fis->command = command;
+    fis->device = 1u << 6;
+    fis->lba0 = (u8)lba; fis->lba1 = (u8)(lba >> 8); fis->lba2 = (u8)(lba >> 16);
+    fis->lba3 = (u8)(lba >> 24); fis->lba4 = (u8)(lba >> 32); fis->lba5 = (u8)(lba >> 40);
+    fis->countl = (u8)count; fis->counth = (u8)(count >> 8);
+    __atomic_thread_fence(__ATOMIC_RELEASE);
+    ahci_write32(base, AHCI_PORT_PxCI, 1u << slot);
+    for (u32 spins = 0; spins < AHCI_SPIN_LIMIT; spins++) {
+        u32 active = ahci_read32(base, AHCI_PORT_PxCI);
+        if (ahci_read32(base, AHCI_PORT_PxIS) & AHCI_PxIS_TFES) goto failed;
+        if (!(active & (1u << slot))) {
+            __atomic_thread_fence(__ATOMIC_ACQUIRE);
+            if ((ahci_read32(base, AHCI_PORT_PxTFD) & AHCI_PxTFD_STS_ERR) ||
+                header->prdbc != bytes) goto failed;
+            result = 0;
+            goto done;
         }
         ahci_pause();
     }
-
-    if (spins == AHCI_SPIN_LIMIT) return -1;
-    if (cmd_hdr->prdbc != count * 512) return -1;
-
-    return 0;
+failed:
+    p->is_active = 0;
+    if (ahci_port_stop(base)) {
+        /* An unquiesced DMA engine cannot safely return to a caller that will
+         * free the buffer. Fail-stop rather than permit arbitrary corruption. */
+        log_write("AHCI: cannot stop failed DMA engine", KERNEL, LOG_ERROR);
+        for (;;) __asm__ volatile("cli; hlt");
+    }
+done:
+    spin_unlock(&p->io_lock);
+    return result;
 }
 
-/* Read `count` sectors from `lba` into physical buffer `buf_phys` */
+static int sector_command(struct AHCI_DEVICE_DATA *dev, int port, u64 lba,
+                           u32 count, void *buffer, int writing) {
+    if (!count || count > 8192 || lba >= (1ull << 48) ||
+        count > (1ull << 48) - lba) return -1;
+    return ahci_command(dev, port, writing ? 0x35 : 0x25,
+                         lba, count, buffer, count * 512u, writing);
+}
 int ahci_read_sector(struct AHCI_DEVICE_DATA *dev, int port, u64 lba,
-                     u32 count, void *buf_phys) {
-    if (port < 0 || port >= AHCI_MAX_PORTS) return -1;
-    if (count == 0 || count > 0xFFFF) return -1;
-
-    struct AHCI_PORT *p = &dev->ports[port];
-    if (!p->is_active) return -1;
-
-    /* One PRDT entry covers at most 4 MiB, and this path only ever programs
-     * one. Anything larger needs the scatter/gather loop we do not have. */
-    if ((u64)count * 512 > 4u * 1024u * 1024u) return -1;
-
-    volatile void *port_base = ahci_port_base(dev->abar_virtual, port);
-
-    ahci_clear_status(port_base);
-
-    if (ahci_wait_ready(port_base) != 0) {
-        log_write("AHCI: drive still busy, cannot issue read", KERNEL, LOG_ERROR);
-        return -1;
-    }
-
-    int slot = ahci_find_cmd_slot(port_base, p->slots);
-    if (slot < 0) {
-        log_write("AHCI: no free command slot", KERNEL, LOG_ERROR);
-        return -1;
-    }
-
-    struct AHCI_CMD_HEADER *cmd_list = (struct AHCI_CMD_HEADER *)p->cmd_list_virt;
-    struct AHCI_CMD_HEADER *cmd_hdr = &cmd_list[slot];
-    memset(cmd_hdr, 0, sizeof(struct AHCI_CMD_HEADER));
-    cmd_hdr->cfl = sizeof(struct FIS_REG_H2D) / sizeof(u32); // 5 DWORDs
-    cmd_hdr->write = 0;
-    cmd_hdr->prdt_length = 1;
-    cmd_hdr->c = 1;
-
-    u64 table_phys = ahci_cmd_table_phys(p, slot);
-    cmd_hdr->command_table_base = (u32)table_phys;
-    cmd_hdr->command_table_base_upper = (u32)(table_phys >> 32);
-
-    struct AHCI_CMD_TABLE *cmd_table = ahci_cmd_table(p, slot);
-    memset(cmd_table, 0, sizeof(struct AHCI_CMD_TABLE));
-
-    // Setup the PRDT
-    cmd_table->prdt[0].data_base = (u32)(u64)buf_phys;
-    cmd_table->prdt[0].data_base_upper = (u32)((u64)buf_phys >> 32);
-    cmd_table->prdt[0].size = (count * 512) - 1;
-    cmd_table->prdt[0].size |= (1u << 31); // Interrupt on completion
-
-    // Setup the FIS
-    struct FIS_REG_H2D *fis = &cmd_table->command_fis;
-    fis->fis_type = FIS_TYPE_REG_H2D;
-    fis->c = 1;
-    fis->command = 0x25; // READ DMA EXT
-
-    fis->lba0 = (u8)(lba & 0xFF);
-    fis->lba1 = (u8)((lba >> 8) & 0xFF);
-    fis->lba2 = (u8)((lba >> 16) & 0xFF);
-    fis->lba3 = (u8)((lba >> 24) & 0xFF);
-    fis->lba4 = (u8)((lba >> 32) & 0xFF);
-    fis->lba5 = (u8)((lba >> 40) & 0xFF);
-
-    fis->device = 1 << 6; // LBA mode
-    fis->countl = (u8)(count & 0xFF);
-    fis->counth = (u8)((count >> 8) & 0xFF);
-
-    // Issue the command
-    ahci_write32(port_base, AHCI_PORT_PxCI, 1u << slot);
-
-    /* Bound completion polling and stop on task-file errors. */
-    u32 spins;
-    for (spins = 0; spins < AHCI_SPIN_LIMIT; spins++) {
-        if (!(ahci_read32(port_base, AHCI_PORT_PxCI) & (1u << slot)))
-            break;
-        if (ahci_read32(port_base, AHCI_PORT_PxIS) & AHCI_PxIS_TFES) {
-            log_write_hex("AHCI: task file error, PxTFD =",
-                          ahci_read32(port_base, AHCI_PORT_PxTFD), KERNEL,
-                          LOG_ERROR);
-            return -1;
-        }
-        ahci_pause();
-    }
-
-    if (spins == AHCI_SPIN_LIMIT) {
-        log_write_hex("AHCI: read timed out, PxTFD =",
-                      ahci_read32(port_base, AHCI_PORT_PxTFD), KERNEL, LOG_ERROR);
-        return -1;
-    }
-
-    if (ahci_read32(port_base, AHCI_PORT_PxTFD) & AHCI_PxTFD_STS_ERR) {
-        log_write("AHCI: ATA error reported after read", KERNEL, LOG_ERROR);
-        return -1;
-    }
-
-    if (cmd_hdr->prdbc != count * 512) {
-        log_write_hex("AHCI: short read, bytes transferred =", cmd_hdr->prdbc,
-                      KERNEL, LOG_ERROR);
-        return -1;
-    }
-
-    return 0;
+                     u32 count, void *buffer) {
+    return sector_command(dev, port, lba, count, buffer, 0);
+}
+int ahci_write_sector(struct AHCI_DEVICE_DATA *dev, int port, u64 lba,
+                      u32 count, void *buffer) {
+    return sector_command(dev, port, lba, count, buffer, 1);
+}
+int ahci_identify(struct AHCI_DEVICE_DATA *dev, int port, void *buffer) {
+    return ahci_command(dev, port, 0xec, 0, 0, buffer, 512, 0);
+}
+int ahci_flush_cache(struct AHCI_DEVICE_DATA *dev, int port) {
+    return ahci_command(dev, port, 0xea, 0, 0, 0, 0, 0);
 }
 
 static int ahci_init_port(struct AHCI_DEVICE_DATA *dev, int port) {
@@ -335,7 +254,7 @@ static int ahci_init_port(struct AHCI_DEVICE_DATA *dev, int port) {
      *
      * A frame base is 4 KiB aligned, which satisfies the 1 KiB command-list
      * and 256-byte received-FIS alignment rules at offsets 0 and 1024. */
-    u64 clb_frame = pmm_alloc_frame();
+    u64 clb_frame = pmm_alloc_frame_below(1ull << 32);
     if (!clb_frame) {
         log_write("AHCI: no frame for command list", KERNEL, LOG_ERROR);
         return -1;
@@ -348,7 +267,7 @@ static int ahci_init_port(struct AHCI_DEVICE_DATA *dev, int port) {
     p->fis_virt = (void *)((uintptr_t)p->cmd_list_virt + 1024);
     /* One frame holds AHCI_SLOTS_PER_PORT command tables at a 256-byte
      * stride, each therefore 128-byte aligned as the spec requires. */
-    u64 ctba_frame = pmm_alloc_frame();
+    u64 ctba_frame = pmm_alloc_frame_below(1ull << 32);
     if (!ctba_frame) {
         log_write("AHCI: no frame for command tables", KERNEL, LOG_ERROR);
         pmm_free_frame(clb_frame);
@@ -383,7 +302,7 @@ static int ahci_init_port(struct AHCI_DEVICE_DATA *dev, int port) {
         log_write("AHCI: SATA Signature Detected", KERNEL, LOG_INFO);
         /* The DMA target needs a physical address too, so this buffer also
          * comes from the PMM rather than the heap. */
-        u64 read_buf_phys = pmm_alloc_frame();
+        u64 read_buf_phys = pmm_alloc_frame_below(1ull << 32);
         if (!read_buf_phys) {
             log_write("AHCI: Failed to allocate read buffer", KERNEL, LOG_ERROR);
             return -1;
