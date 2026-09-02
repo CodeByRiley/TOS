@@ -53,7 +53,7 @@ goto parse_args
 if /i "%FS%"=="ext2" (
     set "ROOTFS_TYPE=ext2"
 ) else if /i "%FS%"=="fat32" (
-    set "ROOTFS_TYPE=fat32"
+    set "ROOTFS_TYPE=fat"
 ) else if /i "%FS%"=="fat" (
     set "ROOTFS_TYPE=fat"
 ) else (

@@ -50,8 +50,9 @@ if /i "%KEY%"=="FS" (
     endlocal
     exit /b 1
 )
-
-if /i "%FS%"=="fat" (
+if /i "%FS%"=="fat32" (
+		set "DISK=build/disk-fat.img"
+) else if /i "%FS%"=="fat" (
     set "DISK=build/disk-fat.img"
 ) else if /i "%FS%"=="ext2" (
     set "DISK=build/disk-ext2.img"
@@ -84,9 +85,9 @@ qemu-system-x86_64 ^
     -accel tcg,thread=multi,tb-size=128 ^
     -cpu max ^
     -smp 4 ^
-    -vga vmware ^
+    -vga virtio ^
     -serial stdio ^
-    -m 16384M ^
+    -m 512M ^
     -device ich9-usb-ehci1,id=ehci ^
     -device usb-tablet,bus=ehci.0 ^
     -audiodev sdl,id=snd0 ^
