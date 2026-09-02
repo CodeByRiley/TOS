@@ -7,22 +7,22 @@
  * loader but adapts to the PE section-based layout.
  */
 
-#include <utilities/string.h>
-#include <utilities/log.h>
-#include <memory/pmm.h>
-#include <memory/hhdm.h>
-#include <memory/vmm.h>
+#include <fs/stdio.h>
 #include <loader/pe.h>
 #include <loader/process.h>
-#include <fs/stdio.h>
+#include <memory/hhdm.h>
+#include <memory/pmm.h>
+#include <memory/vmm.h>
 #include <sched/sched.h>
+#include <utilities/log.h>
+#include <utilities/string.h>
 
 /// Section characteristic flag: Section can be executed as code.
 #define IMAGE_SCN_MEM_EXECUTE 0x20000000
 /// Section characteristic flag: Section can be read.
-#define IMAGE_SCN_MEM_READ    0x40000000
+#define IMAGE_SCN_MEM_READ 0x40000000
 /// Section characteristic flag: Section can be written to.
-#define IMAGE_SCN_MEM_WRITE   0x80000000
+#define IMAGE_SCN_MEM_WRITE 0x80000000
 
 /**
  * @brief Load a PE image from disk and prepare it for execution.
@@ -38,159 +38,169 @@
  * @return The virtual address of the image's entry point, or 0 on failure.
  */
 u64 pe_load(const char *path, u64 *pml4) {
-    FILE *fp = fopen(path, "rb");
-    if (!fp) {
-        log_write("pe: fopen failed", KERNEL, LOG_ERROR);
-        return 0;
-    }
+  FILE *fp = fopen(path, "rb");
+  if (!fp) {
+    log_write("pe: fopen failed", KERNEL, LOG_ERROR);
+    return 0;
+  }
 
-    // Parse DOS Header
-    struct IMAGE_DOS_HEADER dos;
-    if (fread(&dos, sizeof(dos), 1, fp) != 1) {
-        log_write("pe: fread failed for DOS header", KERNEL, LOG_ERROR);
-        fclose(fp);
-        return 0;
-    }
-    if (dos.e_magic != 0x5A4D) { // "MZ"
-        log_write_hex("pe: bad DOS magic, expected 0x5A4D, got ", dos.e_magic, KERNEL, LOG_ERROR);
-        fclose(fp);
-        return 0;
-    }
-
-    // Parse NT Headers
-    struct IMAGE_NT_HEADERS64 nt;
-    fseek(fp, dos.e_lfanew, SEEK_SET);
-    if (fread(&nt, sizeof(nt), 1, fp) != 1) {
-        log_write("pe: fread failed for NT headers", KERNEL, LOG_ERROR);
-        fclose(fp);
-        return 0;
-    }
-    if (nt.signature != 0x00004550) { // "PE\0\0"
-        log_write_hex("pe: bad PE signature, expected 0x00004550, got ", nt.signature, KERNEL, LOG_ERROR);
-        fclose(fp);
-        return 0;
-    }
-    if (nt.fileHeader.machine != 0x8664) {
-        log_write("pe: not x86_64", KERNEL, LOG_ERROR);
-        fclose(fp);
-        return 0;
-    }
-
-    u64 image_base = nt.optionalHeader.imageBase;
-    u32 size_of_image = nt.optionalHeader.sizeOfImage;
-    u32 entry_rva = nt.optionalHeader.addressOfEntryPoint;
-
-    /* In ELF, PT_LOAD segments are typically under 0x70000000.
-     * In 64-bit PE, ImageBase is usually 0x140000000 (5 GiB).
-     * We must allow it to land in the MAP_FIXED region.
-     * We still bound check it so it doesn't run into kernel space (PML4[256..511]). */
-    u64 kernel_half_limit = 0xFFFF800000000000ULL; // Upper bound for kernel space
-
-    if (size_of_image > kernel_half_limit ||
-        image_base > kernel_half_limit - size_of_image) {
-        log_write("pe: image base or size out of range", KERNEL, LOG_ERROR);
-        fclose(fp);
-        return 0;
-    }
-
-    /* PE sections follow the optional header. */
-    u32 num_sections = nt.fileHeader.numberOfSections;
-    u32 size_of_optional = nt.fileHeader.sizeOfOptionalHeader;
-
-    long sections_offset = dos.e_lfanew + sizeof(nt.signature) + sizeof(struct IMAGE_FILE_HEADER) + size_of_optional;
-
-    for (int i = 0; i < num_sections; i++) {
-        struct IMAGE_SECTION_HEADER sh;
-        fseek(fp, sections_offset + i * sizeof(sh), SEEK_SET);
-        if (fread(&sh, sizeof(sh), 1, fp) != 1) {
-            log_write("pe: fread failed for section header", KERNEL, LOG_ERROR);
-            fclose(fp);
-            return 0;
-        }
-
-        // Skip empty sections (e.g., .bss variants with no data)
-        if (sh.virtualSize == 0 && sh.sizeOfRawData == 0) continue;
-
-        /* PE VirtualSize is like p_memsz. SizeOfRawData is like p_filesz. */
-        u32 memsz = sh.virtualSize;
-        u32 filesz = sh.sizeOfRawData;
-        if (filesz > memsz) memsz = filesz; // Sometimes SizeOfRawData is larger due to file alignment
-
-        /* VirtualAddress is an RVA. Actual VA is ImageBase + VirtualAddress */
-        u64 va_base = image_base + sh.virtualAddress;
-
-        // Bound check the section's virtual address range against user space limits
-        u64 user_limit = 0x0000800000000000ULL;
-        if (memsz > user_limit || va_base > user_limit - memsz) {
-            log_write("pe: section vaddr out of range", KERNEL, LOG_ERROR);
-            fclose(fp);
-            return 0;
-        }
-
-        u64 va_start = va_base & ~0xFFFULL;
-        u64 va_end   = (va_base + memsz + 0xFFF) & ~0xFFFULL;
-
-        u64 flags = VMM_PRESENT | VMM_USER;
-        if (sh.characteristics & IMAGE_SCN_MEM_WRITE) flags |= VMM_WRITE;
-        if (!(sh.characteristics & IMAGE_SCN_MEM_EXECUTE)) flags |= VMM_NX;
-
-        // Map missing pages and zero them, just like ELF PT_LOAD bss handling
-        int mapped_since_yield = 0;
-        for (u64 va = va_start; va < va_end; va += 4096) {
-            if (!vmm_translate_in(pml4, va)) {
-                u64 phys = pmm_alloc_frame();
-                if (!phys) {
-                    log_write("pe: failed to allocate physical frame", KERNEL, LOG_ERROR);
-                    fclose(fp);
-                    return 0;
-                }
-                memset(phys_to_virt(phys), 0, 4096);
-                if (vmm_map_in(pml4, va, phys, flags) != 0) {
-                    pmm_free_frame(phys);
-                    log_write("pe: map failed", KERNEL, LOG_ERROR);
-                    fclose(fp);
-                    return 0;
-                }
-            }
-            /* Keep large images scheduler-friendly. */
-            if (++mapped_since_yield == 32) {
-                mapped_since_yield = 0;
-                task_yield();
-            }
-        }
-
-        if (filesz > 0) {
-            fseek(fp, sh.pointerToRawData, SEEK_SET);
-            int copied_since_yield = 0;
-            for (u64 done = 0; done < filesz; ) {
-                u64 va    = va_base + done;
-                u64 phys  = vmm_translate_in(pml4, va & ~0xFFFULL);
-                if (!phys) {
-                    log_write("pe: section page not mapped", KERNEL, LOG_ERROR);
-                    fclose(fp);
-                    return 0;
-                }
-
-                usize   chunk = 4096 - (va & 0xFFF);
-                if (chunk > filesz - done) chunk = filesz - done;
-
-                if (fread((u8*)phys_to_virt(phys) + (va & 0xFFF), 1, chunk, fp) != chunk) {
-                    log_write("pe: could not read full section data", KERNEL, LOG_ERROR);
-                    fclose(fp);
-                    return 0;
-                }
-                done += chunk;
-
-                if (++copied_since_yield == 32) {
-                    copied_since_yield = 0;
-                    task_yield();
-                }
-            }
-        }
-    }
-
+  // Parse DOS Header
+  struct IMAGE_DOS_HEADER dos;
+  if (fread(&dos, sizeof(dos), 1, fp) != 1) {
+    log_write("pe: fread failed for DOS header", KERNEL, LOG_ERROR);
     fclose(fp);
+    return 0;
+  }
+  if (dos.e_magic != 0x5A4D) { // "MZ"
+    log_write_hex("pe: bad DOS magic, expected 0x5A4D, got ", dos.e_magic,
+                  KERNEL, LOG_ERROR);
+    fclose(fp);
+    return 0;
+  }
 
-    /* PE entry points are RVAs, unlike ELF's absolute e_entry. */
-    return image_base + entry_rva;
+  // Parse NT Headers
+  struct IMAGE_NT_HEADERS64 nt;
+  fseek(fp, dos.e_lfanew, SEEK_SET);
+  if (fread(&nt, sizeof(nt), 1, fp) != 1) {
+    log_write("pe: fread failed for NT headers", KERNEL, LOG_ERROR);
+    fclose(fp);
+    return 0;
+  }
+  if (nt.signature != 0x00004550) { // "PE\0\0"
+    log_write_hex("pe: bad PE signature, expected 0x00004550, got ",
+                  nt.signature, KERNEL, LOG_ERROR);
+    fclose(fp);
+    return 0;
+  }
+  if (nt.fileHeader.machine != 0x8664) {
+    log_write("pe: not x86_64", KERNEL, LOG_ERROR);
+    fclose(fp);
+    return 0;
+  }
+
+  u64 image_base = nt.optionalHeader.imageBase;
+  u32 size_of_image = nt.optionalHeader.sizeOfImage;
+  u32 entry_rva = nt.optionalHeader.addressOfEntryPoint;
+
+  /* In ELF, PT_LOAD segments are typically under 0x70000000.
+   * In 64-bit PE, ImageBase is usually 0x140000000 (5 GiB).
+   * We must allow it to land in the MAP_FIXED region.
+   * We still bound check it so it doesn't run into kernel space
+   * (PML4[256..511]). */
+  u64 kernel_half_limit = 0xFFFF800000000000ULL; // Upper bound for kernel space
+
+  if (size_of_image > kernel_half_limit ||
+      image_base > kernel_half_limit - size_of_image) {
+    log_write("pe: image base or size out of range", KERNEL, LOG_ERROR);
+    fclose(fp);
+    return 0;
+  }
+
+  /* PE sections follow the optional header. */
+  u32 num_sections = nt.fileHeader.numberOfSections;
+  u32 size_of_optional = nt.fileHeader.sizeOfOptionalHeader;
+
+  long sections_offset = dos.e_lfanew + sizeof(nt.signature) +
+                         sizeof(struct IMAGE_FILE_HEADER) + size_of_optional;
+
+  for (int i = 0; i < num_sections; i++) {
+    struct IMAGE_SECTION_HEADER sh;
+    fseek(fp, sections_offset + i * sizeof(sh), SEEK_SET);
+    if (fread(&sh, sizeof(sh), 1, fp) != 1) {
+      log_write("pe: fread failed for section header", KERNEL, LOG_ERROR);
+      fclose(fp);
+      return 0;
+    }
+
+    // Skip empty sections (e.g., .bss variants with no data)
+    if (sh.virtualSize == 0 && sh.sizeOfRawData == 0)
+      continue;
+
+    /* PE VirtualSize is like p_memsz. SizeOfRawData is like p_filesz. */
+    u32 memsz = sh.virtualSize;
+    u32 filesz = sh.sizeOfRawData;
+    if (filesz > memsz)
+      memsz = filesz; // Sometimes SizeOfRawData is larger due to file alignment
+
+    /* VirtualAddress is an RVA. Actual VA is ImageBase + VirtualAddress */
+    u64 va_base = image_base + sh.virtualAddress;
+
+    // Bound check the section's virtual address range against user space limits
+    u64 user_limit = 0x0000800000000000ULL;
+    if (memsz > user_limit || va_base > user_limit - memsz) {
+      log_write("pe: section vaddr out of range", KERNEL, LOG_ERROR);
+      fclose(fp);
+      return 0;
+    }
+
+    u64 va_start = va_base & ~0xFFFULL;
+    u64 va_end = (va_base + memsz + 0xFFF) & ~0xFFFULL;
+
+    u64 flags = VMM_PRESENT | VMM_USER;
+    if (sh.characteristics & IMAGE_SCN_MEM_WRITE)
+      flags |= VMM_WRITE;
+    if (!(sh.characteristics & IMAGE_SCN_MEM_EXECUTE))
+      flags |= VMM_NX;
+
+    // Map missing pages and zero them, just like ELF PT_LOAD bss handling
+    int mapped_since_yield = 0;
+    for (u64 va = va_start; va < va_end; va += 4096) {
+      if (!vmm_translate_in(pml4, va)) {
+        u64 phys = pmm_alloc_frame();
+        if (!phys) {
+          log_write("pe: failed to allocate physical frame", KERNEL, LOG_ERROR);
+          fclose(fp);
+          return 0;
+        }
+        memset(phys_to_virt(phys), 0, 4096);
+        if (vmm_map_in(pml4, va, phys, flags) != 0) {
+          pmm_free_frame(phys);
+          log_write("pe: map failed", KERNEL, LOG_ERROR);
+          fclose(fp);
+          return 0;
+        }
+      }
+      /* Keep large images scheduler-friendly. */
+      if (++mapped_since_yield == 32) {
+        mapped_since_yield = 0;
+        task_yield();
+      }
+    }
+
+    if (filesz > 0) {
+      fseek(fp, sh.pointerToRawData, SEEK_SET);
+      int copied_since_yield = 0;
+      for (u64 done = 0; done < filesz;) {
+        u64 va = va_base + done;
+        u64 phys = vmm_translate_in(pml4, va & ~0xFFFULL);
+        if (!phys) {
+          log_write("pe: section page not mapped", KERNEL, LOG_ERROR);
+          fclose(fp);
+          return 0;
+        }
+
+        usize chunk = 4096 - (va & 0xFFF);
+        if (chunk > filesz - done)
+          chunk = filesz - done;
+
+        if (fread((u8 *)phys_to_virt(phys) + (va & 0xFFF), 1, chunk, fp) !=
+            chunk) {
+          log_write("pe: could not read full section data", KERNEL, LOG_ERROR);
+          fclose(fp);
+          return 0;
+        }
+        done += chunk;
+
+        if (++copied_since_yield == 32) {
+          copied_since_yield = 0;
+          task_yield();
+        }
+      }
+    }
+  }
+
+  fclose(fp);
+
+  /* PE entry points are RVAs, unlike ELF's absolute e_entry. */
+  return image_base + entry_rva;
 }

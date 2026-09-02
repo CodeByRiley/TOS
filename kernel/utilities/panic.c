@@ -552,13 +552,6 @@ static void panic_diagnostic_screen(const struct panic_record *record,
   diag_line(&surface, &y, 8, screen_line, PANIC_FG);
 
   snprintf(screen_line, sizeof(screen_line),
-           "*** Address %016llx has base at %016llx",
-           (unsigned long long)record->caller,
-           (unsigned long long)(uintptr_t)_kernel_start);
-  diag_line(&surface, &y, 8, screen_line, PANIC_FG);
-  diag_rule(&surface, &y);
-
-  snprintf(screen_line, sizeof(screen_line),
            "CPU %d: TOS x86_64 development  uptime ticks %llu", record->cpu_id,
            (unsigned long long)pit_ticks());
   diag_line(&surface, &y, 8, screen_line, PANIC_MUTED);

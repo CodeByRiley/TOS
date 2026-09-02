@@ -30,16 +30,17 @@ struct task;
 struct tss;
 
 struct cpu_local {
-    struct cpu_local  *self;            /* gs:0 , for C-level read of base   */
-    int               cpu_id;           /* logical id, 0..MAX_CPUS-1         */
-    u8           lapic_id;         /* hardware APIC id                  */
-    u8           _pad[3];
-    u64          kernel_rsp_top;   /* SYSCALL entry: pop here           */
-    u64          user_rsp_save;    /* entry-only user-rsp scratch       */
-    struct task       *current;         /* running task on this CPU          */
-    struct task       *idle_task;       /* per-CPU idle thread               */
-    struct tss        *tss;             /* points into per-CPU TSS array     */
-  volatile int        online;           /* 1 once AP has reached scheduler   */
+  struct cpu_local  *self;            /* gs:0 , for C-level read of base   */
+  int               cpu_id;           /* logical id, 0..MAX_CPUS-1         */
+  u8                lapic_id;         /* hardware APIC id                  */
+  u8                _pad0[3];
+  u64               kernel_rsp_top;   /* SYSCALL entry: pop here           */
+  u64               user_rsp_save;    /* entry-only user-rsp scratch       */
+  struct task       *current;         /* running task on this CPU          */
+  struct task       *idle_task;       /* per-CPU idle thread               */
+  struct tss        *tss;             /* points into per-CPU TSS array     */
+  volatile int       online;           /* 1 once AP has reached scheduler   */
+  u8                _pad1[4];         /* Explicitly pad to 64 bytes        */
 };
 
 /* Asm-visible offsets. Must stay in lockstep with the struct above ,

@@ -36,68 +36,60 @@
 #include <utilities/panic.h>
 #include <utilities/string.h>
 
-static int task_set_cwd(struct task *t, const char *path)
-{
-    usize i;
+static int task_set_cwd(struct task *t, const char *path) {
+  usize i;
 
-    if (t == NULL || t->files == NULL || path == NULL)
-        return -1;
+  if (t == NULL || t->files == NULL || path == NULL)
+    return -1;
 
-    for (i = 0; i + 1 < sizeof(t->files->cwd) && path[i] != '\0'; i++)
-        t->files->cwd[i] = path[i];
+  for (i = 0; i + 1 < sizeof(t->files->cwd) && path[i] != '\0'; i++)
+    t->files->cwd[i] = path[i];
 
-    t->files->cwd[i] = '\0';
+  t->files->cwd[i] = '\0';
 
-    /*
-     * Reject paths that do not fit rather than silently truncating them.
-     */
-    if (path[i] != '\0')
-        return -1;
+  /*
+   * Reject paths that do not fit rather than silently truncating them.
+   */
+  if (path[i] != '\0')
+    return -1;
 
-    return 0;
+  return 0;
 }
 
-static void task_set_cwd_truncated(struct task *t, const char *path)
-{
-    usize i;
+static void task_set_cwd_truncated(struct task *t, const char *path) {
+  usize i;
 
-    if (t == NULL || t->files == NULL || path == NULL)
-        return;
+  if (t == NULL || t->files == NULL || path == NULL)
+    return;
 
-    for (i = 0; i + 1 < sizeof(t->files->cwd) && path[i] != '\0'; i++)
-        t->files->cwd[i] = path[i];
+  for (i = 0; i + 1 < sizeof(t->files->cwd) && path[i] != '\0'; i++)
+    t->files->cwd[i] = path[i];
 
-    t->files->cwd[i] = '\0';
+  t->files->cwd[i] = '\0';
 }
 
-static int task_set_cwd_root(struct task *t)
-{
-    return task_set_cwd(t, "/");
-}
+static int task_set_cwd_root(struct task *t) { return task_set_cwd(t, "/"); }
 
-void task_inherit_cwd(struct task *child, struct task *parent)
-{
-    usize i;
+void task_inherit_cwd(struct task *child, struct task *parent) {
+  usize i;
 
-    if (child == NULL || child->files == NULL)
-        return;
+  if (child == NULL || child->files == NULL)
+    return;
 
-    if (parent == NULL ||
-        parent->files == NULL ||
-        parent->files->cwd[0] == '\0') {
-        child->files->cwd[0] = '/';
-        child->files->cwd[1] = '\0';
-        return;
-    }
+  if (parent == NULL || parent->files == NULL ||
+      parent->files->cwd[0] == '\0') {
+    child->files->cwd[0] = '/';
+    child->files->cwd[1] = '\0';
+    return;
+  }
 
-    for (i = 0;
-         i + 1 < sizeof(child->files->cwd) &&
-         parent->files->cwd[i] != '\0';
-         i++) {
-        child->files->cwd[i] = parent->files->cwd[i];
-    }
+  for (i = 0;
+       i + 1 < sizeof(child->files->cwd) && parent->files->cwd[i] != '\0';
+       i++) {
+    child->files->cwd[i] = parent->files->cwd[i];
+  }
 
-    child->files->cwd[i] = '\0';
+  child->files->cwd[i] = '\0';
 }
 
 void task_inherit_tty(struct task *child, struct task *parent) {
@@ -106,9 +98,8 @@ void task_inherit_tty(struct task *child, struct task *parent) {
   child->tty = parent ? parent->tty : 0;
 }
 
-extern void context_switch(u64 *old_rsp_ptr, u64 new_rsp,
-                           u64 new_cr3, void *old_fxstate,
-                           void *new_fxstate);
+extern void context_switch(u64 *old_rsp_ptr, u64 new_rsp, u64 new_cr3,
+                           void *old_fxstate, void *new_fxstate);
 
 /* Capture the CPU's current x87/SSE state into `buf`. Used at task creation
  * so a fresh task's first context_switch fxrstors from a valid snapshot
@@ -295,8 +286,7 @@ static struct task *idle_task = 0;
 static void user_task_trampoline(void);
 static void idle_thread(void);
 static void mark_task_exited(struct task *task, long code);
-extern void arch_enter_user(u64 entry, u64 user_rsp,
-                            u64 arg) NORETURN;
+extern void arch_enter_user(u64 entry, u64 user_rsp, u64 arg) NORETURN;
 
 static u64 irq_save(void) {
   u64 rflags;
@@ -447,19 +437,18 @@ static u64 kstack_aligned_top(void *kstack_base) {
 /* Build a kernel-stack frame matching context_switch's epilogue, which
  * pops r15, r14, r13, r12, rbp, rbx, ret. So we lay out (low → high):
  * [r15][r14][r13][r12][rbp][rbx][ret]. saved_rsp points at r15. */
-static u64 build_initial_frame(void *kstack_base,
-                                    void (*trampoline)(void)) {
+static u64 build_initial_frame(void *kstack_base, void (*trampoline)(void)) {
   /* context_switch enters a fresh task with ret, not call. After that ret,
    * the trampoline still has to look like a normal SysV C callee: rsp % 16
    * must be 8 on function entry. */
   u64 *sp = (u64 *)(kstack_aligned_top(kstack_base) - 8);
   *--sp = (u64)trampoline; /* ret addr */
-  *--sp = 0;                    /* rbx */
-  *--sp = 0;                    /* rbp */
-  *--sp = 0;                    /* r12 */
-  *--sp = 0;                    /* r13 */
-  *--sp = 0;                    /* r14 */
-  *--sp = 0;                    /* r15 */
+  *--sp = 0;               /* rbx */
+  *--sp = 0;               /* rbp */
+  *--sp = 0;               /* r12 */
+  *--sp = 0;               /* r13 */
+  *--sp = 0;               /* r14 */
+  *--sp = 0;               /* r15 */
   return (u64)sp;
 }
 
@@ -602,8 +591,8 @@ struct task *task_spawn(void (*entry)(void)) {
   return t;
 }
 
-struct task *task_spawn_user(u64 *user_pml4, u64 entry,
-                             u64 user_rsp, int parent_pid) {
+struct task *task_spawn_user(u64 *user_pml4, u64 entry, u64 user_rsp,
+                             int parent_pid) {
   struct task *t = alloc_slot();
   if (!t) {
     log_write("sched: task table full", KERNEL, LOG_ERROR);
@@ -697,8 +686,8 @@ struct task *task_reserve_user(int parent_pid) {
   return t;
 }
 
-int task_activate_reserved_user(struct task *t, u64 *user_pml4,
-                                u64 entry, u64 user_rsp) {
+int task_activate_reserved_user(struct task *t, u64 *user_pml4, u64 entry,
+                                u64 user_rsp) {
   if (!t || t->state != TASK_LOADING || !user_pml4 || !entry)
     return -1;
   if (!t->vm || !t->context)
@@ -818,9 +807,12 @@ void task_yield(void) {
   u64 rflags = irq_save();
   slice_ticks = 0;
   struct task *next = ready_pop();
+
+  /* ready_pop is guaranteed to return idle_task if nothing else is ready.
+   * If we are the idle task, ready_pop returns NULL, so we just return. */
   if (!next) {
     irq_restore(rflags);
-    return; /* nothing else runnable */
+    return;
   }
 
   struct task *prev = current;
@@ -834,9 +826,9 @@ void task_yield(void) {
   current = next;
   stage_for(next);
 
-  context_switch(&prev->saved_rsp, next->saved_rsp, next->cr3, prev->context->fxstate,
-                 next->context->fxstate);
-  irq_restore(rflags);
+  context_switch(&prev->saved_rsp, next->saved_rsp, next->cr3,
+                 prev->context->fxstate, next->context->fxstate);
+  /* REMOVED: irq_restore(rflags); */
 }
 
 void sched_preempt_tick(void) {
@@ -865,23 +857,13 @@ void task_block(int waiting_for_pid) {
   u64 rflags = irq_save();
   slice_ticks = 0;
   struct task *next = ready_pop();
-  if (!next) {
-    // Fall back to the idle task (BSP) instead of hanging
-    current->state = TASK_READY;
-    ready_push(current);
-    next = ready_pop();
-    if (!next) {
-      log_write("sched: no runnable task, falling back to idle", KERNEL,
-                LOG_ERROR);
-      __asm__ volatile("sti; hlt"); // Re-enable interrupts and halt
-    }
-  }
+
+  /* REMOVED: The entire !next fallback block.
+   * next is guaranteed to be the idle task at worst. */
 
   struct task *prev = current;
   prev->state = TASK_BLOCKED;
   prev->waiting_for_pid = waiting_for_pid;
-  /* Note: NOT pushed onto ready queue. Whoever satisfies the wait
-   * (typically a child task_exit calling task_wakeup) will requeue us. */
 
   capture_from(prev);
 
@@ -889,9 +871,9 @@ void task_block(int waiting_for_pid) {
   current = next;
   stage_for(next);
 
-  context_switch(&prev->saved_rsp, next->saved_rsp, next->cr3, prev->context->fxstate,
-                 next->context->fxstate);
-  irq_restore(rflags);
+  context_switch(&prev->saved_rsp, next->saved_rsp, next->cr3,
+                 prev->context->fxstate, next->context->fxstate);
+  /* REMOVED: irq_restore(rflags); */
 }
 
 void task_wakeup(struct task *t) {
@@ -928,17 +910,10 @@ void task_sleep_ticks(u64 ticks) {
   n_sleeping++;
 
   struct task *next = ready_pop();
-  if (!next) {
-    /* Nothing else runnable , fall back to halting until the next IRQ.
-     * The PIT IRQ that does eventually fire will run sched_wake_sleepers
-     * and put us back on the ready queue; we re-poll on the next loop. */
-    current->state = TASK_RUNNING;
-    n_sleeping--;
-    irq_restore(rflags);
-    while (pit_ticks() < current->wake_tick)
-      __asm__ volatile("hlt");
-    return;
-  }
+
+  /* REMOVED: The entire !next spin/hlt fallback block.
+   * We just switch to the idle task. The PIT IRQ will safely wake us up later.
+   */
 
   struct task *prev = current;
   capture_from(prev);
@@ -947,9 +922,9 @@ void task_sleep_ticks(u64 ticks) {
   current = next;
   stage_for(next);
 
-  context_switch(&prev->saved_rsp, next->saved_rsp, next->cr3, prev->context->fxstate,
-                 next->context->fxstate);
-  irq_restore(rflags);
+  context_switch(&prev->saved_rsp, next->saved_rsp, next->cr3,
+                 prev->context->fxstate, next->context->fxstate);
+  /* REMOVED: irq_restore(rflags); */
 }
 
 /* Called from the PIT IRQ. Short-circuits when n_sleeping == 0 (the common

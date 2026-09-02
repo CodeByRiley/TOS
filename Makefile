@@ -21,7 +21,7 @@ kernel_asm_object_files := $(patsubst kernel/%.asm, build/kernel/%.o, $(kernel_a
 kernel_object_files := $(kernel_c_object_files) $(kernel_asm_object_files) $(ap_trampoline_obj)
 
 # Emit header dependencies for incremental rebuilds.
-kernel_c_flags := -I kernel -ffreestanding -mno-red-zone -mcmodel=kernel -fno-pic -fno-pie -MMD -MP -std=gnu23
+kernel_c_flags := -I kernel -ffreestanding -mno-red-zone -mcmodel=kernel -fno-pic -fno-pie -MMD -MP -std=gnu23 -Og
 
 kernel_dep_files := $(kernel_c_object_files:.o=.d)
 
