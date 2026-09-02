@@ -23,8 +23,8 @@
 #include <boot/uefi.h>
 #include <display/framebuffer.h>
 #include <display/graphics.h>
-#include <drivers/video/virtualbox/vbox_video.h>
 #include <drivers/video/virtio/virtio_gpu.h>
+#include <drivers/video/virtualbox/vbox_video.h>
 #include <input/mouse.h>
 #include <memory/heap.h>
 #include <memory/hhdm.h>
@@ -109,7 +109,7 @@ static void damage_union(struct fb_damage_rect *out,
 }
 
 static u64 damage_merge_waste(const struct fb_damage_rect *a,
-                                   const struct fb_damage_rect *b) {
+                              const struct fb_damage_rect *b) {
   struct fb_damage_rect u;
   damage_union(&u, a, b);
   u64 sum = damage_area(a) + damage_area(b);
@@ -260,9 +260,8 @@ static struct fb_user_registration user_registration;
 static struct spinlock user_registration_lock = SPINLOCK_INIT;
 
 static int registration_matches(const struct fb_user_registration *registration,
-                                u64 *user_pml4, int owner_pid,
-                                u64 source, u32 source_pitch,
-                                u64 source_bytes) {
+                                u64 *user_pml4, int owner_pid, u64 source,
+                                u32 source_pitch, u64 source_bytes) {
   return registration->pages && registration->user_pml4 == user_pml4 &&
          registration->owner_pid == owner_pid &&
          registration->source == source &&
@@ -270,9 +269,8 @@ static int registration_matches(const struct fb_user_registration *registration,
          registration->source_bytes >= source_bytes;
 }
 
-int framebuffer_register_user(u64 *user_pml4, int owner_pid,
-                              u64 source, u32 source_pitch,
-                              u64 source_bytes) {
+int framebuffer_register_user(u64 *user_pml4, int owner_pid, u64 source,
+                              u32 source_pitch, u64 source_bytes) {
   if (!user_pml4 || owner_pid <= 0 || !source || source_bytes == 0 ||
       source + source_bytes < source) {
     return -1;
@@ -349,8 +347,7 @@ int framebuffer_user_buffer_registered(u64 *user_pml4, int owner_pid,
   return matched;
 }
 
-int framebuffer_registered_range_overlaps(u64 *user_pml4, u64 base,
-                                          u64 bytes) {
+int framebuffer_registered_range_overlaps(u64 *user_pml4, u64 base, u64 bytes) {
   if (!user_pml4 || bytes == 0 || base + bytes < base)
     return 0;
 
@@ -411,13 +408,11 @@ static void framebuffer_copy_lane(void *argument) {
       if (__atomic_load_n(&batch->failed, __ATOMIC_ACQUIRE))
         break;
 
-      u64 source = batch->source +
-                        (u64)(rect->y + row) * batch->source_pitch +
+      u64 source = batch->source + (u64)(rect->y + row) * batch->source_pitch +
+                   (u64)rect->x * 4ULL;
+      u8 *destination = batch->destination +
+                        (u64)(rect->y + row) * batch->destination_pitch +
                         (u64)rect->x * 4ULL;
-      u8 *destination =
-          batch->destination +
-          (u64)(rect->y + row) * batch->destination_pitch +
-          (u64)rect->x * 4ULL;
       if (copy_user_pixels(batch, source, destination, rect->w * 4U) != 0) {
         __atomic_store_n(&batch->failed, 1, __ATOMIC_RELEASE);
         break;
@@ -428,9 +423,9 @@ static void framebuffer_copy_lane(void *argument) {
   __atomic_sub_fetch(&batch->remaining, 1, __ATOMIC_ACQ_REL);
 }
 
-int framebuffer_present_user(u64 *user_pml4, int owner_pid,
-                             u64 source, u32 source_pitch,
-                             const struct fb_rect *rects, u32 rect_count) {
+int framebuffer_present_user(u64 *user_pml4, int owner_pid, u64 source,
+                             u32 source_pitch, const struct fb_rect *rects,
+                             u32 rect_count) {
   if (!user_pml4 || !source || !rects || rect_count == 0 ||
       rect_count > FB_PRESENT_MAX_RECTS || !fb || fb_w == 0 || fb_h == 0 ||
       source_pitch < fb_w * 4U) {
@@ -445,8 +440,7 @@ int framebuffer_present_user(u64 *user_pml4, int owner_pid,
       .destination_pitch = fb_pitch,
   };
 
-  u64 required_bytes =
-      (u64)source_pitch * (fb_h - 1) + (u64)fb_w * 4ULL;
+  u64 required_bytes = (u64)source_pitch * (fb_h - 1) + (u64)fb_w * 4ULL;
   int registration_locked = 0;
   spin_lock(&user_registration_lock);
   if (registration_matches(&user_registration, user_pml4, owner_pid, source,
@@ -483,7 +477,7 @@ int framebuffer_present_user(u64 *user_pml4, int owner_pid,
   int ap_workers = smp_worker_count();
   if (ap_workers > 0 && total_bytes >= FB_COPY_PARALLEL_MIN_BYTES) {
     u64 wanted = (total_bytes + FB_COPY_PARALLEL_MIN_BYTES - 1) /
-                      FB_COPY_PARALLEL_MIN_BYTES;
+                 FB_COPY_PARALLEL_MIN_BYTES;
     u64 available = (u64)ap_workers + 1;
     if (wanted > available)
       wanted = available;
@@ -567,8 +561,8 @@ static int map_contiguous_at(u64 virtual_base, u64 physical, u64 bytes,
     flags |= VMM_PCD | VMM_PWT;
   u32 page_count = (u32)page_count64;
   for (u32 i = 0; i < page_count; i++) {
-    if (vmm_map(virtual_base + (u64)i * 4096,
-                physical_base + (u64)i * 4096, flags) != 0) {
+    if (vmm_map(virtual_base + (u64)i * 4096, physical_base + (u64)i * 4096,
+                flags) != 0) {
       unmap_pages_at(virtual_base, i);
       return -1;
     }
@@ -578,8 +572,7 @@ static int map_contiguous_at(u64 virtual_base, u64 physical, u64 bytes,
 }
 
 static int channel_layout_valid(u8 position, u8 size, u8 bpp) {
-  return size > 0 && size <= 8 && position < bpp &&
-         (u16)position + size <= bpp;
+  return size > 0 && size <= 8 && position < bpp && (u16)position + size <= bpp;
 }
 
 static u32 encode_channel(u8 value, u8 position, u8 size) {
@@ -598,10 +591,8 @@ static void present_shadow_rect(const struct fb_damage_rect *rect) {
   u32 scanout_bytes_per_pixel = (fb_scanout_bpp + 7U) / 8U;
   for (u32 y = 0; y < rect->h; y++) {
     const u32 *source =
-        (const u32 *)((const u8 *)fb + (u64)(rect->y + y) * fb_pitch) +
-        rect->x;
-    u8 *destination = fb_scanout +
-                      (u64)(rect->y + y) * fb_scanout_pitch +
+        (const u32 *)((const u8 *)fb + (u64)(rect->y + y) * fb_pitch) + rect->x;
+    u8 *destination = fb_scanout + (u64)(rect->y + y) * fb_scanout_pitch +
                       (u64)rect->x * scanout_bytes_per_pixel;
     for (u32 x = 0; x < rect->w; x++) {
       u32 encoded = encode_scanout_pixel(source[x]);
@@ -642,8 +633,7 @@ int framebuffer_init(u64 mb2_addr) {
     return -1;
   }
 
-  log_write(uefi_booted() ? "FB: source = UEFI GOP"
-                          : "FB: source = BIOS VBE",
+  log_write(uefi_booted() ? "FB: source = UEFI GOP" : "FB: source = BIOS VBE",
             KERNEL, LOG_INFO);
   log_write_hex("FB: red_pos   =", t->red_pos, KERNEL, LOG_INFO);
   log_write_hex("FB: green_pos =", t->green_pos, KERNEL, LOG_INFO);
@@ -668,10 +658,10 @@ int framebuffer_init(u64 mb2_addr) {
     return -1;
   }
 
-  int native_layout = t->bpp == 32 && t->red_pos == 16 &&
-                      t->red_size == 8 && t->green_pos == 8 &&
-                      t->green_size == 8 && t->blue_pos == 0 &&
-                      t->blue_size == 8 && (t->addr & 4095ULL) == 0;
+  int native_layout = t->bpp == 32 && t->red_pos == 16 && t->red_size == 8 &&
+                      t->green_pos == 8 && t->green_size == 8 &&
+                      t->blue_pos == 0 && t->blue_size == 8 &&
+                      (t->addr & 4095ULL) == 0;
   if (native_layout) {
     u32 pages = (u32)((fb_bytes + 4095ULL) / 4096ULL);
     for (u32 i = 0; i < pages; i++)
@@ -689,8 +679,7 @@ int framebuffer_init(u64 mb2_addr) {
               LOG_INFO);
   } else {
     if (map_contiguous_at(FB_SCANOUT_VIRT_BASE, t->addr, fb_bytes,
-                          /*cacheable=*/0,
-                          &fb_scanout_mapped_pages) != 0) {
+                          /*cacheable=*/0, &fb_scanout_mapped_pages) != 0) {
       log_write("FB: firmware scanout map failed", KERNEL, LOG_ERROR);
       return -1;
     }
@@ -715,8 +704,7 @@ int framebuffer_init(u64 mb2_addr) {
       fb_shadow_pages = 0;
       unmap_pages_at(FB_SCANOUT_VIRT_BASE, fb_scanout_mapped_pages);
       fb_scanout_mapped_pages = 0;
-      log_write("FB: format-conversion surface map failed", KERNEL,
-                LOG_ERROR);
+      log_write("FB: format-conversion surface map failed", KERNEL, LOG_ERROR);
       return -1;
     }
     fb = (u32 *)FB_VIRT_BASE;
@@ -807,8 +795,8 @@ static int map_vbox_mode(const struct vbox_video_mode *mode,
   }
 
   u32 pages = (u32)(((u64)mode->pitch * mode->height + 4095ULL) / 4096ULL);
-  int physical_changed = fb_mode != FB_MODE_VBOX ||
-                         fb_mb2_phys != mode->physical;
+  int physical_changed =
+      fb_mode != FB_MODE_VBOX || fb_mb2_phys != mode->physical;
   if (initial_attach) {
     teardown_current(/*free_virtio_pages=*/1);
     physical_changed = 1;
@@ -853,10 +841,8 @@ int framebuffer_attach_virtualbox(void) {
   struct vbox_video_mode mode;
   if (vbox_video_get_mode(&mode) != 0 || map_vbox_mode(&mode, 1) != 0)
     return -1;
-  log_write_hex("FB: VirtualBox VMSVGA attached, w =", fb_w, KERNEL,
-                LOG_INFO);
-  log_write_hex("FB: VirtualBox VMSVGA attached, h =", fb_h, KERNEL,
-                LOG_INFO);
+  log_write_hex("FB: VirtualBox VMSVGA attached, w =", fb_w, KERNEL, LOG_INFO);
+  log_write_hex("FB: VirtualBox VMSVGA attached, h =", fb_h, KERNEL, LOG_INFO);
   return 0;
 }
 
@@ -869,8 +855,9 @@ static int alloc_and_map_virtio(u32 visible_pages) {
     return -1;
   }
 
-  /* One contiguous allocation avoids O(n^2) repeated first-fit scans and
-   * guarantees RESOURCE_ATTACH_BACKING fits in one memory entry. */
+  /* Page accessors used by sys_fb_map. Pages are always contiguous: MB2 maps
+   * the firmware BAR, while virtio-gpu uses a single contiguous 64 MiB pool
+   * to avoid O(n^2) first-fit scatter and fit VirtIO in one memory entry. */
   fb_pool_phys = pmm_alloc_contiguous_below(UINT64_MAX, FB_MAX_PAGES);
   if (!fb_pool_phys) {
     log_write("FB: no contiguous 64 MiB backing pool", KERNEL, LOG_ERROR);
@@ -1104,10 +1091,9 @@ void framebuffer_clear(u32 color) {
    * path still walks rows so we don't trample padding bytes some
    * pre-2010s GPU decided it cared about. */
   if (fb_pitch == fb_w * 4) {
-    u32 *p = fb;
     u32 n = fb_w * fb_h;
-    for (u32 i = 0; i < n; i++)
-      p[i] = color;
+    u32 *p = fb;
+    while (n--) *p++ = color;
     mark_full_damage();
     return;
   }
