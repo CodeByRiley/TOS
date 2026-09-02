@@ -1,65 +1,81 @@
 # TOS roadmap
 
-Last reconciled with the source tree on 2026-08-28.
+Reordered on 2026-09-02 after the filesystem, AHCI and USB storage commits.
 
-This file is a prioritized engineering roadmap, not a list of every feature an
-operating system could have. Each checkbox should be small enough to land with
-its regression coverage. Check an item only when its **Done when** condition is
-true; partial work belongs in the sub-bullets or in the commit that advances it.
+## Ordering and estimates
 
-## How priorities work
+Rank by necessity first, respect dependencies, then prefer the smaller/easier
+task when it unlocks comparable value. This is not an easiest-first queue:
+a quick feature must not bypass a known corruption or lifetime problem.
 
-- **P0 — baseline:** work needed to make the current tree reproducible and
-  trustworthy. A regression here makes unrelated development unreliable.
-- **P1 — correctness:** bugs that can corrupt memory, leak resources, kill the
-  kernel from ring 3, or make an API lie about what it did.
-- **P2 — active networking line:** the dependency chain from today's UDP stack
-  to a useful NetSurf fetcher.
-- **P3 — compatibility and user-visible work:** broader musl/POSIX support and
-  features that are valuable but do not block the current baseline.
-- **P4 — architectural work:** larger changes that should start only after
-  their lower-level dependencies and stress tests are in place.
+- **P0 - baseline and diagnostics:** inexpensive checks that make work repeatable.
+- **P1 - safety:** memory, data integrity, isolation and ownership contracts.
+- **P2 - active storage line:** make the new AHCI/USB path useful beyond test images.
+- **P3 - networking:** retain the protocol dependency chain after storage priorities.
+- **P4 - compatibility and applications:** implement slices for an actual consumer.
+- **P5 - larger architecture/optimization:** only after prerequisites and evidence.
 
-Three rules apply across every priority:
+Necessity is Critical / High / Medium / Optional. Difficulty is Easy / Medium /
+Hard / Very hard. Effort means rough focused engineering days for one developer,
+including implementation, tests and integration, not elapsed calendar or agent
+runtime. Unknown hardware/concurrency work can take twice the upper estimate.
+These ranges are planning judgments, not measured delivery promises.
 
-1. Prefer standard Linux/POSIX ABI entry points when musl already issues them.
-   A TOS-only shim is appropriate only for a genuinely TOS-specific service
-   such as Winman or framebuffer presentation.
-2. Add the cheapest deterministic host test first, then an end-to-end QEMU test
-   where hardware, privilege transitions, or process lifetime are part of the
-   behavior.
-3. Keep optional ports optional. A clean recursive clone must continue to
-   produce a bootable image without local WADs, NetSurf sources, music, NVIDIA
-   firmware, or other ignored payloads.
+Within a tier, order reflects risk and dependencies as well as cost. P0 does not
+mean every baseline improvement blocks every P1 fix. For the current storage
+work, integrate its tests, establish serialization/failure handling, then take
+the small MBR milestone before broadening FAT or host-controller support.
 
-The main dependency chains are:
+Existing non-storage implementation notes were retained from the older roadmap,
+not re-audited in this planning pass. Check the current source and regressions
+before implementing them; ongoing work elsewhere may already satisfy an item.
+Only the explicitly verified storage milestones below are newly checked off.
 
-```text
-reproducible baseline -> reliable port work
+Keep the files minimal: one responsibility per implementation file, ordinary
+shared helpers/private headers for duplicate logic, and no speculative framework.
+Use standard Linux/POSIX entry points where musl already expects them. Add cheap
+deterministic host tests first and QEMU tests for device/lifetime behavior. Keep
+optional ports and payloads optional in a clean recursive checkout.
 
-UDP hardening -> DHCP -> DNS -> TCP -> HTTP -> TLS -> useful NetSurf
+Each checkbox includes its acceptance test. Check it only when **Done when** is
+true; partial implementations are not completed features.
 
-open-file descriptions -> dup/pipe -> terminal semantics -> larger musl ports
+## P0 - baseline and diagnostics
 
-UHCI reference -> xHCI core -> enumeration -> HID -> broader USB classes
-```
+- [ ] Make storage regressions part of the normal test graph.
+  - **Necessity:** High | **Difficulty:** Easy | **Effort:** 0.5-1 day.
+  - **Depends on:** landed storage tests.
+  - Include ext2 1/2/4 KiB fixtures and BOT/SCSI host checks without duplicating
+    test invocations. Add AHCI and USB restart/persistence tests to the heavy
+    graph, followed by read-only e2fsck on disposable images.
+  - Keep real host disks out of automation; rebuild the ISO before boot tests.
+  - **Done when:** test-heavy cannot pass after breaking either transport's
+    persisted writes or the supported ext2 directory/block layouts.
 
-## P0 — make the current baseline a contract
+- [ ] Add a toolchain preflight check.
+  - **Necessity:** High | **Difficulty:** Easy | **Effort:** 0.5-1 day.
+  - **Depends on:** none.
+  - Check the Windows/MSYS tools, `x86_64-elf-*` binutils, NASM, WSL image
+    tools, Python, QEMU, and the initialized submodule before a long build.
+  - Report the missing executable and which stage needs it. Do not hardcode
+    one developer's installation paths.
+  - **Done when:** a fresh contributor gets one actionable error before any
+    partial build instead of failing later inside musl, WSL, or ISO creation.
 
-- [ ] Add one clean-checkout release test.
-  - Run from a fresh recursive clone or disposable worktree with no
-    `build/`, `dist/`, musl build tree, or prebuilt userspace objects.
-  - Exercise `mingw32-make build-x86_64`, `test-host`, and `test-heavy`,
-    followed by the HolyD and musl smoke tests.
-  - Assert that the HolyD submodule is populated at the recorded commit and
-    that the resulting ISO and FAT image are non-empty.
-  - Keep the ordinary inner loop fast; make this a separate `test-release`
-    or CI job rather than adding clean rebuilds to `test-host`.
-  - **Done when:** a clean recursive checkout can run one command that proves
-    it builds, boots, exercises the full regression suite, and leaves no
-    unexplained tracked changes.
+- [ ] Route kernel assertions through the panic machinery.
+  - **Necessity:** High | **Difficulty:** Easy | **Effort:** 0.5-1 day.
+  - **Depends on:** existing panic test; early-boot serial output.
+  - Replace the infinite loop in `kernel/assert.h` with file/line/expression
+    reporting and `panic`.
+  - Make the path safe before the graphical framebuffer and scheduler exist;
+    serial output must remain the last-resort reporter.
+  - Add a controlled assertion mode to the existing panic-screen QEMU test.
+  - **Done when:** an early and a late assertion both produce a named,
+    diagnosable panic instead of a silent hang.
 
 - [ ] Put both musl smoke tests in the normal QEMU regression graph.
+  - **Necessity:** High | **Difficulty:** Easy | **Effort:** 0.5-1 day.
+  - **Depends on:** existing musl build and smoke tests.
   - Add build rules for `muslhello.elf` and `muslposix.elf` instead of
     requiring the manual link commands in `userspace/libc/README.md`.
   - Package them deterministically, then run
@@ -72,6 +88,8 @@ UHCI reference -> xHCI core -> enumeration -> HID -> broader USB classes
     program fails to start or use its covered POSIX calls.
 
 - [ ] Define and enforce the generated-artifact policy.
+  - **Necessity:** High | **Difficulty:** Medium | **Effort:** 1-2 days.
+  - **Depends on:** agreement on tracked binary policy.
   - Classify `userspace/bin/{hello,ls,pe_test}/*.exe`,
     `userspace/lib/libtos.a`, and `diskback.back.img` as either source
     inputs, release snapshots, or build output.
@@ -83,15 +101,22 @@ UHCI reference -> xHCI core -> enumeration -> HID -> broader USB classes
   - **Done when:** two builds from the same source/toolchain are explainable,
     and a normal build does not leave mysterious binary-only diffs.
 
-- [ ] Add a toolchain preflight check.
-  - Check the Windows/MSYS tools, `x86_64-elf-*` binutils, NASM, WSL image
-    tools, Python, QEMU, and the initialized submodule before a long build.
-  - Report the missing executable and which stage needs it. Do not hardcode
-    one developer's installation paths.
-  - **Done when:** a fresh contributor gets one actionable error before any
-    partial build instead of failing later inside musl, WSL, or ISO creation.
+- [ ] Keep HolyD integration tested without duplicating its language roadmap.
+  - **Necessity:** High | **Difficulty:** Medium | **Effort:** 1-2 days.
+  - **Depends on:** recorded HolyD submodule revision.
+  - HolyD language/compiler features belong in the HolyD submodule's
+    `docs/roadmap.md`, not in this file.
+  - In TOS, build the recorded submodule revision, run its terminating script
+    suite, and exercise one windowing plus one UDP sample in QEMU.
+  - Add an ABI check for `ffi_tos.c` against current Winman, gfx, input, and
+    socket headers so a submodule bump fails clearly when TOS changed beneath
+    it.
+  - **Done when:** updating the HolyD pointer has one documented validation
+    command and cannot silently break either the native Windows or TOS host.
 
 - [ ] Make every C/assembly ABI boundary mechanically verifiable.
+  - **Necessity:** High | **Difficulty:** Medium | **Effort:** 1-2 days.
+  - **Depends on:** generated C/assembly offsets.
   - Done: the dead `enter_user`/`user_exit_jump` launcher is gone. The only
     remaining hand-built ring-3 entry is `arch_enter_user`
     (`kernel/arch/x86_64/cpu/user_entry.asm`), which is one-way and has no
@@ -110,9 +135,52 @@ UHCI reference -> xHCI core -> enumeration -> HID -> broader USB classes
   - **Done when:** no dead assembly is linked and every numeric contract shared
     with C is generated from one source or independently checked by the build.
 
-## P1 — correctness, isolation, and lifetime safety
+- [ ] Add one clean-checkout release test.
+  - **Necessity:** High | **Difficulty:** Medium | **Effort:** 2-3 days.
+  - **Depends on:** preflight, artifact policy, musl/HolyD/storage regression wiring.
+  - Run from a fresh recursive clone or disposable worktree with no
+    `build/`, `dist/`, musl build tree, or prebuilt userspace objects.
+  - Exercise `mingw32-make build-x86_64`, `test-host`, and `test-heavy`,
+    followed by the HolyD and musl smoke tests.
+  - Assert that the HolyD submodule is populated at the recorded commit and
+    that the resulting ISO and FAT image are non-empty.
+  - Keep the ordinary inner loop fast; make this a separate `test-release`
+    or CI job rather than adding clean rebuilds to `test-host`.
+  - **Done when:** a clean recursive checkout can run one command that proves
+    it builds, boots, exercises the full regression suite, and leaves no
+    unexplained tracked changes.
+
+## P1 - safety before broader write access
+
+- [x] Enforce the VFS and filesystem serialization contract on the BSP.
+  - **Necessity:** Critical | **Difficulty:** Hard | **Effort:** 3-6 days.
+  - **Depends on:** existing VFS/backend tests; lock-order audit.
+  - Public operations now use a sleeping FIFO gate; private helpers/backend
+    callbacks run already locked. IRQ/AP calls and recursive entry are rejected.
+  - Queued/active tasks reject kill; reaping claims zombies before blocking
+    descriptor cleanup. Idle leaves cleanup to the dedicated reaper thread.
+  - Atomic append refreshes EOF under the same gate as writing. Host tests cover
+    concurrent namespace mutations, shared offsets, append and close/unmount.
+  - **Scope:** cooperative BSP kernel, not SMP or arbitrary kernel preemption.
+    Host tests exercise the real queue with a scheduler adapter; forced in-kernel
+    I/O suspension plus kill/reap fault injection remains follow-up coverage.
+
+- [ ] Expand storage failure, capacity and corruption coverage.
+  - **Necessity:** Critical | **Difficulty:** Medium | **Effort:** 2-4 days.
+  - **Depends on:** storage regression integration; serialization for race cases.
+  - Extend existing write/flush-failure tests with disk-full, inode exhaustion,
+    malformed metadata, allocation failure, failed unmount and interrupted
+    writeback at each barrier. Check both disk consistency and reported errors.
+  - Add AHCI timeout/error checks and USB short/stalled/malformed response cases
+    not already covered. Never automatically replay an ambiguous write.
+  - Verify clean-state claims, retained dirty data, and inability to redirect a
+    stale device reference to newly attached media.
+  - **Done when:** each failure has a deterministic outcome: consistent disk,
+    explicitly unclean disk requiring repair, or safe refusal; no false success.
 
 - [ ] Add regression coverage for fatal ring-3 faults.
+  - **Necessity:** Critical | **Difficulty:** Medium | **Effort:** 1-2 days.
+  - **Depends on:** existing exception and panic tests.
   - The exception path already calls `task_exit(-11)` for blameable user
     faults; `userspace/bin/vmtest/vmtest.c` still claims those faults panic
     the kernel.
@@ -128,6 +196,8 @@ UHCI reference -> xHCI core -> enumeration -> HID -> broader USB classes
     kernel panic and covers both page-fault and non-page-fault exceptions.
 
 - [ ] Make task teardown close every file-descriptor kind.
+  - **Necessity:** Critical | **Difficulty:** Hard | **Effort:** 2-4 days.
+  - **Depends on:** descriptor/lifetime audit; fault/exit tests.
   - `sys_close` handles `fd_sockets[]`, but `task_close_fds` currently
     frees only `fds[]`. A killed or faulting socket owner therefore leaks its
     socket and queued datagrams.
@@ -141,7 +211,25 @@ UHCI reference -> xHCI core -> enumeration -> HID -> broader USB classes
   - **Done when:** repeatedly killing tasks with open files and sockets returns
     descriptor, heap, socket-queue, PMM, and Winman counts to their baselines.
 
+- [ ] Replace best-effort user-pointer access with copy helpers.
+  - **Necessity:** Critical | **Difficulty:** Hard | **Effort:** 4-8 days.
+  - **Depends on:** page-walking validation and syscall audit.
+  - Introduce page-walking `copy_from_user`, `copy_to_user`, and bounded
+    string-copy helpers that validate the caller's PML4 and permissions one
+    page at a time.
+  - Stop directly dereferencing user pointers after only a range/mapping
+    check, especially in filesystem paths, socket addresses, iovecs, futexes,
+    process argv, and structures written back to userspace.
+  - Define partial-copy behavior and return consistent negative errno values.
+  - Test unmapped pointers, read-only output buffers, integer wraparound, a
+    valid first page followed by an invalid second page, and strings without a
+    terminator.
+  - **Done when:** malformed syscall pointers return an error or kill only the
+    caller; they never fault while the kernel holds a lock or crash TOS.
+
 - [ ] Replace the shared-memory exit leak with explicit ownership records.
+  - **Necessity:** Critical | **Difficulty:** Hard | **Effort:** 3-6 days.
+  - **Depends on:** task teardown contract; shared-mapping tests.
   - `shmem_shared_out` is only a page count. The automatic reaper skips a
     dead owner while it is positive, but receiver exit cannot identify and
     release the owner's count. That can leave the dead task unreapable.
@@ -156,21 +244,37 @@ UHCI reference -> xHCI core -> enumeration -> HID -> broader USB classes
   - **Done when:** stress tests kill owner and receiver in both orders, with
     and without explicit unshare, and task slots plus PMM counts always recover.
 
-- [ ] Replace best-effort user-pointer access with copy helpers.
-  - Introduce page-walking `copy_from_user`, `copy_to_user`, and bounded
-    string-copy helpers that validate the caller's PML4 and permissions one
-    page at a time.
-  - Stop directly dereferencing user pointers after only a range/mapping
-    check, especially in filesystem paths, socket addresses, iovecs, futexes,
-    process argv, and structures written back to userspace.
-  - Define partial-copy behavior and return consistent negative errno values.
-  - Test unmapped pointers, read-only output buffers, integer wraparound, a
-    valid first page followed by an invalid second page, and strings without a
-    terminator.
-  - **Done when:** malformed syscall pointers return an error or kill only the
-    caller; they never fault while the kernel holds a lock or crash TOS.
+- [ ] Finish the native thread ABI's cleanup semantics.
+  - **Necessity:** Critical | **Difficulty:** Hard | **Effort:** 2-4 days.
+  - **Depends on:** task teardown and shared-address-space ownership.
+  - If the userspace pthread wrapper cannot allocate its join record after
+    creating a thread, terminate/reap that thread rather than freeing its live
+    stack.
+  - Preserve and return thread results, reject self-join and duplicate join,
+    and define detach behavior.
+  - Exercise join, exit, allocation failure, process kill, and shared-PML4
+    teardown under repeated two-thread contention.
+  - **Done when:** the temporary TOS-native thread implementation has no live
+    stack use-after-free or unreapable join records while musl `clone` support
+    is still pending.
+
+- [ ] Fix the memory-unsafe legacy-libc paths.
+  - **Necessity:** Critical | **Difficulty:** Medium | **Effort:** 2-4 days.
+  - **Depends on:** host-safe legacy runtime test seam.
+  - Track allocation sizes so `realloc` copies
+    `min(old_size, new_size)`, preserves the old block on allocation failure,
+    and handles `NULL`/zero-size inputs deliberately.
+  - Clamp `printf`/file writes to the bytes actually stored in scratch
+    buffers when `vsnprintf` reports truncation.
+  - Add allocator overflow checks for multiplication and alignment.
+  - Build focused host tests with ASan for grow/shrink/realloc failure,
+    allocation overflow, and output longer than each internal buffer.
+  - **Done when:** the legacy runtime used by DOOM and `thread.elf` passes its
+    host suite under ASan with no over-read, overwrite, or use-after-free.
 
 - [ ] Harden the x86-64 syscall entry and return contract.
+  - **Necessity:** Critical | **Difficulty:** Hard | **Effort:** 2-4 days.
+  - **Depends on:** generated entry offsets; current CPU-local implementation.
   - Done: the global `kernel_rsp_top`/`user_rsp_save` words are gone. Entry
     finds its stack through `gs:` in `cpu_local`, uses the user-RSP slot only
     for the two instructions before the stack swap, and then pushes a complete
@@ -191,70 +295,117 @@ UHCI reference -> xHCI core -> enumeration -> HID -> broader USB classes
     base is exposed). `isr_common` swaps based on the saved CS; NMI, #DF and
     #MC take a paranoid entry that reads IA32_GS_BASE instead, because a
     `swapgs; iretq` return window has CPL 0 with a user GS.
-  - Remaining: add a measured `sysretq` fast path for canonical safe frames.
-    `iretq` is the correctness-first choice and is what ships today; sysretq is
-    only worth its RCX-canonicality handling if syscall entry cost shows up in
-    a profile.
-  - Remaining: stage `next->gs_base` into KERNEL_GS_BASE from `stage_for` when
-    a per-task user GS base is actually exposed.
+  - Add adversarial return-frame/flags regression coverage to verify the
+    implemented contract; defer sysretq and user-GS expansion to P5.
   - **Done when:** adversarial flags and return frames cannot fault on a kernel
     stack, and concurrent syscalls on separate CPUs never share stack scratch.
 
-- [ ] Fix the memory-unsafe legacy-libc paths.
-  - Track allocation sizes so `realloc` copies
-    `min(old_size, new_size)`, preserves the old block on allocation failure,
-    and handles `NULL`/zero-size inputs deliberately.
-  - Clamp `printf`/file writes to the bytes actually stored in scratch
-    buffers when `vsnprintf` reports truncation.
-  - Add allocator overflow checks for multiplication and alignment.
-  - Build focused host tests with ASan for grow/shrink/realloc failure,
-    allocation overflow, and output longer than each internal buffer.
-  - **Done when:** the legacy runtime used by DOOM and `thread.elf` passes its
-    host suite under ASan with no over-read, overwrite, or use-after-free.
+## P2 - storage usability, then wider hardware
 
-- [ ] Make legacy-libc failure paths truthful.
-  - Change userspace `assert` to print expression, file, and line before
-    terminating through `abort`.
-  - Implement x86_64 `setjmp`/`longjmp`, or make unsupported use fail
-    immediately; the current `longjmp` spin is a silent deadlock.
-  - Replace the one-string `strerror` and unconditional wrapper failures with
-    a small real errno table and negative errno returns from the kernel.
-  - Distinguish deliberate compatibility no-ops, such as client-side console
-    color, from functions that falsely report success.
-  - **Done when:** every declared legacy API either works, reports a precise
-    error, or terminates predictably, with a focused test for each former stub.
+- [ ] Add bounded partition discovery above block devices.
+  - **Necessity:** High | **Difficulty:** Medium | **Effort:** 2-4 days.
+  - **Depends on:** block-device interface; storage failure tests.
+  - First milestone: MBR primary partitions and relative-LBA block slices
+    (about 1 day of the estimate). Preserve raw-volume detection.
+  - Then validate GPT headers, CRCs, backup metadata and entry bounds. Reject
+    overlaps, overflow and unsupported layouts rather than guessing.
+  - Leave extended-MBR chains for a separate consumer-driven milestone.
+  - **Done when:** AHCI and USB mount test volumes at nonzero offsets, malformed
+    tables are rejected, and writes cannot escape a partition's sector range.
 
-- [ ] Route kernel assertions through the panic machinery.
-  - Replace the infinite loop in `kernel/assert.h` with file/line/expression
-    reporting and `panic`.
-  - Make the path safe before the graphical framebuffer and scheduler exist;
-    serial output must remain the last-resort reporter.
-  - Add a controlled assertion mode to the existing panic-screen QEMU test.
-  - **Done when:** an early and a late assertion both produce a named,
-    diagnosable panic instead of a silent hang.
+- [ ] Make FAT mounts independent and transport-neutral.
+  - **Necessity:** High | **Difficulty:** Hard | **Effort:** 4-7 days.
+  - **Depends on:** VFS serialization; block interface; partitions for integration tests.
+  - Move the singleton fat_volume into per-superblock state, threading that
+    state through existing shared helpers without duplicating FAT16/32 code.
+  - Replace the FAT-specific AHCI path with block read/write/flush callbacks;
+    propagate failures through VFS and shutdown instead of ignoring them.
+  - Initially validate with small image-backed volumes, not full-size sticks.
+  - **Done when:** a FAT root and a second USB FAT volume coexist, changes
+    survive restart, and failing one device cannot mutate the other mount.
 
-- [ ] Finish the native thread ABI's cleanup semantics.
-  - If the userspace pthread wrapper cannot allocate its join record after
-    creating a thread, terminate/reap that thread rather than freeing its live
-    stack.
-  - Preserve and return thread results, reject self-join and duplicate join,
-    and define detach behavior.
-  - Exercise join, exit, allocation failure, process kill, and shared-PML4
-    teardown under repeated two-thread contention.
-  - **Done when:** the temporary TOS-native thread implementation has no live
-    stack use-after-free or unreapable join records while musl `clone` support
-    is still pending.
+- [ ] Add safe mounted-device removal and explicit USB eject.
+  - **Necessity:** High | **Difficulty:** Hard | **Effort:** 3-5 days.
+  - **Depends on:** VFS serialization; transport-independent sync; device lifetime references.
+  - Give device references stable identity/generation and an online state.
+    Cancel/drain transfers before releasing DMA buffers or controller context.
+  - Add a user-visible sync/unmount/eject path; refuse busy mounts and make a
+    flush failure visible. An unplugged cache must not look like live media.
+  - **Done when:** safe eject flushes before detach, busy/failed eject reports
+    an error, and unexpected unplug never causes stale writes or use-after-free.
 
-## P2 — networking, the active dependency chain
+- [ ] Replace whole-volume images with a bounded filesystem block cache.
+  - **Necessity:** High | **Difficulty:** Very hard | **Effort:** 10-20 days.
+  - **Depends on:** independent FAT state; dirty-writeback tests; serialization.
+  - First migrate ext2 to acquired/released block buffers; then migrate FAT.
+    Cached inode/directory pointers must not survive buffer eviction.
+  - Bound memory, define dirty-buffer pinning and eviction, and preserve flush
+    ordering, error propagation and the non-journaled crash contract.
+  - Do not simply raise ext2's 128 MiB image limit. FAT's legacy AHCI path also
+    loads whole volumes; both constrain ordinary multi-gigabyte USB drives.
+  - **Done when:** a volume much larger than available RAM supports read/write,
+    repeated eviction and remount within a measured memory budget, with fsck
+    checks and failure injection passing for both filesystems.
 
-Already landed: the protocol stack is outside the e1000 driver; Ethernet, ARP,
-IPv4, ICMP echo, outbound ping, Netmon, UDP, standard musl
-`socket`/`bind`/`sendto`/`recvfrom`, close, ephemeral ports, a userspace
-UDP echo test, and HolyD UDP FFI all work in QEMU.
+- [ ] Enumerate USB storage after boot and handle replug safely.
+  - **Necessity:** High | **Difficulty:** Hard | **Effort:** 4-7 days.
+  - **Depends on:** safe removal/eject; stable device generations.
+  - Move root-port change handling into deferred work, with debounce, reset,
+    enumeration and bounded retries outside IRQ context.
+  - Keep new media separate from stale mounts even on the same physical port.
+    Start with direct EHCI root ports; hubs are a later explicit milestone.
+  - **Done when:** repeated attach/remove/replug with open files and failed
+    transfers recovers controller/device resources without confusing two disks.
 
-The next work should harden that baseline before adding another protocol.
+- [ ] Replace legacy timing loops with explicit clock deadlines.
+  - **Necessity:** High | **Difficulty:** Medium | **Effort:** 2-4 days.
+  - **Depends on:** monotonic clock usable during early boot.
+  - Audit PS/2, storage, network, GPU, and USB waits. UHCI already uses PIT
+    deadlines; mouse initialization still contains a loop-count timeout.
+  - Provide monotonic deadline helpers usable before and after interrupts are
+    enabled, with bounded failure and useful diagnostics.
+  - **Done when:** controller absence or failure produces a time-bounded error
+    independent of host CPU speed, and boot continues where the device is
+    optional.
+
+- [ ] Add a real-hardware smoke-test matrix.
+  - **Necessity:** High | **Difficulty:** Medium | **Effort:** 2-4 days initial setup; ongoing runs.
+  - **Depends on:** named test hardware; safe eject; disposable test media.
+  - Record CPU/chipset, boot method, GPU, NIC, storage controller, USB
+    controller, resolution, and the last known result. Keep firmware blobs and
+    their licensing/distribution status explicit.
+  - Give serial logs stable boot markers so a hardware run can report the same
+    stages as QEMU tests.
+  - Make the Multiboot framebuffer request advisory, or provide a serial/text
+    fallback. Requiring exactly 1920x1080x32 in `header.asm` should not prevent
+    boot on firmware that offers a different usable graphics mode.
+  - Start with boot, storage read/write, keyboard/mouse, display, and network
+    link; do not call experimental NVIDIA scanout supported without a repeatable
+    test on named hardware.
+  - **Done when:** hardware claims in the README point to a reproducible test
+    record rather than a one-off successful boot.
+
+- [ ] Implement xHCI as the modern USB path.
+  - **Necessity:** Medium | **Difficulty:** Very hard | **Effort:** 10-20 days for initial storage; HID follow-up 3-5 days.
+  - **Depends on:** stable EHCI BOT reference; removal and DMA lifetime tests.
+  - Keep working UHCI HID and EHCI control/bulk/periodic behavior as references.
+    EHCI is implemented; OHCI remains a separate hardware-demand decision.
+  - Stage PCI/MMIO reset, command/event rings, slot/address-device, descriptor
+    enumeration, control transfers, then bulk endpoints for the current storage
+    goal. Reuse the BOT/SCSI transport contract rather than duplicating it.
+  - Land interrupt/HID endpoints as a separate follow-up; add multiple devices
+    only with explicit ownership, cancellation and disconnect handling.
+  - **Done when:** the storage persistence test passes through both EHCI and
+    xHCI, reset/unplug leaves no live DMA references, and existing HID tests pass.
+
+## P3 - networking in dependency order
+
+Keep the existing UDP/QEMU baseline working. Interrupt-driven e1000 is useful,
+but is not a prerequisite for proving TCP and a minimal HTTP fetcher.
 
 - [ ] Add host coverage for ARP, ICMP, socket queues, and UDP framing.
+  - **Necessity:** High | **Difficulty:** Medium | **Effort:** 2-4 days.
+  - **Depends on:** host-safe clock/locking seams.
   - Test ICMP checksum rejection and request/reply matching.
   - Test ARP cache eviction, retry deadlines, pending-frame exhaustion, and
     flushing every queued frame when a reply arrives.
@@ -267,6 +418,8 @@ The next work should harden that baseline before adding another protocol.
     reversing the checksum or eviction comparison makes them fail.
 
 - [ ] Harden UDP sockets into a dependable transport.
+  - **Necessity:** High | **Difficulty:** Hard | **Effort:** 4-7 days.
+  - **Depends on:** packet/queue tests; socket teardown safety.
   - Move UDP header creation/parsing from `ksocket.c` into the empty
     `kernel/net/udp.c`; generate and validate the IPv4 UDP pseudo-header
     checksum while still accepting a legal zero checksum on IPv4.
@@ -286,6 +439,8 @@ The next work should harden that baseline before adding another protocol.
     a pcap parser validates the transmitted checksums.
 
 - [ ] Acquire network configuration with DHCP.
+  - **Necessity:** Medium | **Difficulty:** Hard | **Effort:** 3-5 days.
+  - **Depends on:** hardened UDP; timer/lease handling.
   - Remove the hardcoded address, mask, and gateway from the e1000 driver;
     drivers should provide packets and link state, not policy.
   - Implement discover, offer validation, request, acknowledgement, lease
@@ -300,6 +455,8 @@ The next work should harden that baseline before adding another protocol.
     gratuitous ARP for the leased address.
 
 - [ ] Add bounded DNS resolution.
+  - **Necessity:** Medium | **Difficulty:** Hard | **Effort:** 3-5 days.
+  - **Depends on:** DHCP configuration; hardened UDP; resolver ABI seam.
   - Use the DNS server supplied by DHCP rather than another hardcoded QEMU
     address.
   - Implement A and AAAA parsing, CNAME following, TTL-aware caching, bounded
@@ -315,6 +472,8 @@ The next work should harden that baseline before adding another protocol.
     hanging or reading out of bounds.
 
 - [ ] Implement client-side TCP in testable stages.
+  - **Necessity:** Medium | **Difficulty:** Very hard | **Effort:** 15-30 days.
+  - **Depends on:** socket ownership, user-copy helpers and deterministic network tests.
   - First land tuple lookup, sequence arithmetic, checksums, SYN/SYN-ACK/ACK,
     and orderly/reset teardown.
   - Then add receive reassembly, advertised windows, retransmission with a
@@ -328,19 +487,9 @@ The next work should harden that baseline before adding another protocol.
     a deliberately dropped segment, closes cleanly, and repeated failures do
     not leave wedged socket state.
 
-- [ ] Move e1000 receive/transmit completion to interrupts.
-  - Enable PCI interrupts and the e1000 IMS bits for RX/TX/link events; the
-    current driver disables PCI interrupts and depends on its poll callback.
-  - Keep timer-driven ARP/DHCP maintenance and link reporting separate from
-    packet completion.
-  - Budget work per interrupt and defer protocol processing if needed so a
-    packet storm cannot monopolize IRQ context.
-  - Preserve a diagnostic polling mode for bring-up and broken hardware.
-  - **Done when:** normal RX/TX no longer depends on the poll loop,
-    `netmon_test.py` observes the same frames as the pcap, and an RX flood
-    neither loses timer progress nor wedges the kernel.
-
 - [ ] Give NetSurf a minimal HTTP/1.1 fetcher.
+  - **Necessity:** Medium | **Difficulty:** Hard | **Effort:** 5-10 days.
+  - **Depends on:** working client TCP, DNS and selected NetSurf build.
   - Keep NetSurf's upstream fetch interface intact and replace the current
     curl-registration shim with a TOS backend using standard sockets.
   - Support status lines, bounded headers, `Content-Length`, chunked bodies,
@@ -352,7 +501,23 @@ The next work should harden that baseline before adding another protocol.
     host, follows one redirect, handles chunked content, and cancels a stalled
     request without leaking the window or socket.
 
+- [ ] Move e1000 receive/transmit completion to interrupts.
+  - **Necessity:** Medium | **Difficulty:** Hard | **Effort:** 3-6 days.
+  - **Depends on:** bounded RX/TX processing; interrupt/driver regression coverage.
+  - Enable PCI interrupts and the e1000 IMS bits for RX/TX/link events; the
+    current driver disables PCI interrupts and depends on its poll callback.
+  - Keep timer-driven ARP/DHCP maintenance and link reporting separate from
+    packet completion.
+  - Budget work per interrupt and defer protocol processing if needed so a
+    packet storm cannot monopolize IRQ context.
+  - Preserve a diagnostic polling mode for bring-up and broken hardware.
+  - **Done when:** normal RX/TX no longer depends on the poll loop,
+    `netmon_test.py` observes the same frames as the pcap, and an RX flood
+    neither loses timer progress nor wedges the kernel.
+
 - [ ] Add HTTPS as a separate security milestone.
+  - **Necessity:** Medium | **Difficulty:** Very hard | **Effort:** 10-20 days after prerequisites.
+  - **Depends on:** HTTP, suitable entropy, trusted clock and certificate-store policy.
   - Select a small maintained TLS library that can build statically against the
     available musl surface; document entropy, wall-clock, certificate-store,
     and hostname-verification requirements before choosing it.
@@ -364,9 +529,36 @@ The next work should harden that baseline before adding another protocol.
   - **Done when:** NetSurf validates and renders an HTTPS page without a
     trust-all mode, and failure cases are visible to the user.
 
-## P3 — musl compatibility, ports, and user-visible work
+## P4 - compatibility driven by a real application
+
+- [ ] Create a stable userspace ABI header boundary.
+  - **Necessity:** High | **Difficulty:** Medium | **Effort:** 2-4 days.
+  - **Depends on:** shared ABI inventory and layout assertions.
+  - Move syscall numbers and shared userspace structures into dedicated UAPI
+    headers that do not pull kernel-private state into applications.
+  - Generate or include the same definitions for musl ELF, legacy ELF, PE, and
+    kernel dispatch builds; retain static assertions for sizes and offsets.
+  - Keep TOS-only calls visibly separate from mirrored Linux syscall numbers.
+  - **Done when:** changing a shared ABI definition requires one source edit
+    and incompatible layout changes fail at build time.
+
+- [ ] Make legacy-libc failure paths truthful.
+  - **Necessity:** Medium | **Difficulty:** Medium | **Effort:** 2-4 days.
+  - **Depends on:** legacy runtime tests.
+  - Change userspace `assert` to print expression, file, and line before
+    terminating through `abort`.
+  - Implement x86_64 `setjmp`/`longjmp`, or make unsupported use fail
+    immediately; the current `longjmp` spin is a silent deadlock.
+  - Replace the one-string `strerror` and unconditional wrapper failures with
+    a small real errno table and negative errno returns from the kernel.
+  - Distinguish deliberate compatibility no-ops, such as client-side console
+    color, from functions that falsely report success.
+  - **Done when:** every declared legacy API either works, reports a precise
+    error, or terminates predictably, with a focused test for each former stub.
 
 - [ ] Choose one reference port and implement its next coherent syscall slice.
+  - **Necessity:** Medium | **Difficulty:** Medium | **Effort:** 1 day trace/audit; 3-8 days for a bounded syscall slice.
+  - **Depends on:** choose a reference port; user-copy safety; follow FD dependencies.
   - Capture the port's actual unknown-syscall/errno trace before adding APIs.
     Likely filesystem/FD calls include `access`, `readlink`, `openat`,
     `rename`, `dup`/`dup2`, and `pipe`, but the consumer decides the
@@ -380,6 +572,8 @@ The next work should harden that baseline before adding another protocol.
     TOS-specific compatibility calls for that syscall group.
 
 - [ ] Introduce refcounted open-file descriptions before `dup` and `pipe`.
+  - **Necessity:** High | **Difficulty:** Hard | **Effort:** 5-10 days.
+  - **Depends on:** unified descriptor cleanup; VFS lifetime contract.
   - Separate an fd slot from the underlying file/socket/pipe object so duplicate
     descriptors share offsets and status flags while descriptor flags remain
     per fd.
@@ -391,6 +585,8 @@ The next work should harden that baseline before adding another protocol.
     counts to baseline.
 
 - [ ] Build enough terminal semantics for real console ports.
+  - **Necessity:** Medium | **Difficulty:** Hard | **Effort:** 4-7 days.
+  - **Depends on:** pollable descriptors; reference interactive port.
   - Implement truthful `isatty`, termios get/set behavior, canonical/raw input
     modes, echo control, window-size updates, and pollable stdin.
   - Decide how process groups, foreground ownership, and control characters
@@ -401,6 +597,8 @@ The next work should harden that baseline before adding another protocol.
     events, restore the terminal on exit/fault, and coexist with Winman focus.
 
 - [ ] Add a minimal signal ABI.
+  - **Necessity:** Medium | **Difficulty:** Very hard | **Effort:** 8-15 days.
+  - **Depends on:** safe user-copy and return-frame handling; task lifetime rules.
   - Implement `rt_sigaction`, `rt_sigprocmask`, signal frames/return, pending
     masks, and delivery at a safe return-to-userspace boundary.
   - Convert user faults and `kill` into default signal actions without
@@ -412,6 +610,8 @@ The next work should harden that baseline before adding another protocol.
     return restores registers/TLS reliably.
 
 - [ ] Support musl pthread creation with Linux `clone` semantics.
+  - **Necessity:** Medium | **Difficulty:** Very hard | **Effort:** 10-20 days.
+  - **Depends on:** signal masks, shared-address-space lifetime, futex and teardown tests.
   - Implement the subset of clone flags musl uses, child/parent TID writes,
     clear-child-tid plus futex wake, TLS setup, signal masks, and shared
     address-space lifetime.
@@ -423,6 +623,8 @@ The next work should harden that baseline before adding another protocol.
     futex waiters, or page tables.
 
 - [ ] Wire DOOM sound effects to the PCM API.
+  - **Necessity:** Optional | **Difficulty:** Medium | **Effort:** 2-4 days.
+  - **Depends on:** stable PCM ownership and process exit cleanup.
   - Replace `userspace/games/doom/sound_stub.c` with channel mixing and
     conversion to the signed 16-bit stereo format expected by the audio
     syscalls.
@@ -433,73 +635,11 @@ The next work should harden that baseline before adding another protocol.
   - **Done when:** simultaneous effects play without persistent underruns and
     the existing Muse/audio path still works after repeated DOOM launches.
 
-- [ ] Keep HolyD integration tested without duplicating its language roadmap.
-  - HolyD language/compiler features belong in the HolyD submodule's
-    `docs/roadmap.md`, not in this file.
-  - In TOS, build the recorded submodule revision, run its terminating script
-    suite, and exercise one windowing plus one UDP sample in QEMU.
-  - Add an ABI check for `ffi_tos.c` against current Winman, gfx, input, and
-    socket headers so a submodule bump fails clearly when TOS changed beneath
-    it.
-  - **Done when:** updating the HolyD pointer has one documented validation
-    command and cannot silently break either the native Windows or TOS host.
-
-- [ ] Create a stable userspace ABI header boundary.
-  - Move syscall numbers and shared userspace structures into dedicated UAPI
-    headers that do not pull kernel-private state into applications.
-  - Generate or include the same definitions for musl ELF, legacy ELF, PE, and
-    kernel dispatch builds; retain static assertions for sizes and offsets.
-  - Keep TOS-only calls visibly separate from mirrored Linux syscall numbers.
-  - **Done when:** changing a shared ABI definition requires one source edit
-    and incompatible layout changes fail at build time.
-
-## P4 — hardware and architectural milestones
-
-- [ ] Implement xHCI as the modern USB path.
-  - Keep working UHCI behavior as the functional reference; do not rewrite it
-    while xHCI is being brought up.
-  - Stage xHCI through PCI/MMIO reset, command/event rings, slot/address-device,
-    descriptor enumeration, control transfers, then interrupt endpoints.
-  - First support the same HID mouse/tablet path as UHCI. Expand the USB core
-    from one periodic endpoint/controller to multiple devices and endpoints
-    only with explicit ownership and disconnect handling.
-  - EHCI/OHCI can follow based on hardware need; empty probe functions should
-    report unsupported without pretending a controller was initialized.
-  - **Done when:** one USB HID QEMU test passes unchanged under UHCI and xHCI,
-    including unplug/replug or controller reset without stale DMA state.
-
-- [ ] Add a real-hardware smoke-test matrix.
-  - Record CPU/chipset, boot method, GPU, NIC, storage controller, USB
-    controller, resolution, and the last known result. Keep firmware blobs and
-    their licensing/distribution status explicit.
-  - Give serial logs stable boot markers so a hardware run can report the same
-    stages as QEMU tests.
-  - Make the Multiboot framebuffer request advisory, or provide a serial/text
-    fallback. Requiring exactly 1920x1080x32 in `header.asm` should not prevent
-    boot on firmware that offers a different usable graphics mode.
-  - Start with boot, storage read/write, keyboard/mouse, display, and network
-    link; do not call experimental NVIDIA scanout supported without a repeatable
-    test on named hardware.
-  - **Done when:** hardware claims in the README point to a reproducible test
-    record rather than a one-off successful boot.
-
-- [ ] Schedule general tasks across application processors.
-  - APs currently service an explicit work queue; the BSP owns the normal
-    scheduler. Define per-CPU current task, run queues or a locked global queue,
-    CPU-local syscall/interrupt stacks, affinity, wakeups, migration, and
-    cross-CPU rescheduling before moving user tasks.
-  - First run independent kernel workers, then address-space-sharing threads,
-    then ordinary processes. Preserve FPU/TLS/TSS state on every migration.
-  - Make the P1 CPU-local syscall transition a prerequisite; the current global
-    syscall stack scratch is safe only because ordinary userspace stays on the
-    BSP.
-  - Add lock-order documentation and stress forced migrations rather than
-    relying on timing to find races.
-  - **Done when:** a four-CPU QEMU test proves concurrent user work on distinct
-    CPUs, repeated migration preserves register/TLS/FPU state, and single-CPU
-    behavior remains correct.
+## P5 - larger architecture and measured optimization
 
 - [ ] Define the complete context-switch and preemption state contract.
+  - **Necessity:** High before migration | **Difficulty:** Hard | **Effort:** 3-6 days.
+  - **Depends on:** syscall-return tests; scheduler/IRQ lock-order audit.
   - `context_switch` saves callee-saved GPRs and FXSAVE state but not RFLAGS.
     Today an idle task can inherit IF=0 from a syscall and repairs that with
     `sti; hlt`; that workaround is too implicit for migration and kernel
@@ -515,30 +655,48 @@ The next work should harden that baseline before adding another protocol.
     contexts preserve registers, FPU/TLS, and interrupt state on one and four
     CPUs without relying on the next task to repair inherited flags.
 
-- [ ] Introduce a VFS boundary before adding another filesystem.
-  - Separate path lookup, open-file operations, directory iteration, metadata,
-    and mount points from FAT-specific structures currently used by syscalls.
-  - Migrate FAT behind the interface first. Add a tiny second backend such as
-    devfs or procfs to prove the abstraction is real before attempting another
-    disk filesystem.
-  - Preserve cwd, long-name, unlink-open-file, and write-through behavior with
-    existing host and QEMU tests.
-  - **Done when:** syscall code contains no FAT-specific handle assumptions and
-    two mounted backends work through the same fd/path APIs.
+- [ ] Schedule general tasks across application processors.
+  - **Necessity:** Optional until parallel workloads require it | **Difficulty:** Very hard | **Effort:** 15-30 days.
+  - **Depends on:** preemption contract, VFS serialization, safe task/mapping lifetimes and CPU-local syscall tests.
+  - APs currently service an explicit work queue; the BSP owns the normal
+    scheduler. Define per-CPU current task, run queues or a locked global queue,
+    CPU-local syscall/interrupt stacks, affinity, wakeups, migration, and
+    cross-CPU rescheduling before moving user tasks.
+  - First run independent kernel workers, then address-space-sharing threads,
+    then ordinary processes. Preserve FPU/TLS/TSS state on every migration.
+  - Require the P1 syscall-return tests, VFS serialization and the explicit
+    preemption contract below; CPU-local syscall entry is already implemented.
+  - Add lock-order documentation and stress forced migrations rather than
+    relying on timing to find races.
+  - **Done when:** a four-CPU QEMU test proves concurrent user work on distinct
+    CPUs, repeated migration preserves register/TLS/FPU state, and single-CPU
+    behavior remains correct.
 
-- [ ] Replace legacy timing loops with explicit clock deadlines.
-  - Audit PS/2, storage, network, GPU, and USB waits. UHCI already uses PIT
-    deadlines; mouse initialization still contains a loop-count timeout.
-  - Provide monotonic deadline helpers usable before and after interrupts are
-    enabled, with bounded failure and useful diagnostics.
-  - **Done when:** controller absence or failure produces a time-bounded error
-    independent of host CPU speed, and boot continues where the device is
-    optional.
+- [ ] Consider syscall fast paths only after profiling.
+  - **Necessity:** Optional | **Difficulty:** Hard | **Effort:** 3-6 days.
+  - **Depends on:** P1 return-frame tests; a measured syscall-entry bottleneck.
+  - Retain iretq unless a benchmark justifies sysretq's canonical-address and
+    return-state handling. A safe fallback must remain available.
+  - Stage per-task user GS into KERNEL_GS_BASE only if a user-GS API is exposed;
+    it is not a prerequisite for the current CPU-local syscall entry.
+  - **Done when:** a measured gain is demonstrated and adversarial return-frame,
+    flags, GS and multi-CPU regressions pass; otherwise keep this deferred.
 
 ## Recently completed foundations
 
 These are kept briefly so old unchecked tasks do not reappear during planning.
 Move detailed history to commits rather than growing this section indefinitely.
+
+- [x] Introduce component-based VFS inode/file operations and shared FAT16/32
+  helpers; mount FAT and ext2 through the same path/file API (0d700ed).
+  Open-file deletion remains deliberately rejected; concurrency is still P1.
+- [x] Add device-backed ext2 writeback and safe AHCI block I/O/root mounting
+  (0d700ed, d7176c6), including 1/2/4 KiB and indirect-block tests.
+  This is not a journaled or production-complete ext2 implementation.
+- [x] Add EHCI BOT/SCSI storage and raw ext2 USB mounts (d5e92cc). AHCI and
+  USB files survive complete QEMU restarts and the disks pass e2fsck.
+  Current limits: boot-attached root-port devices, LUN 0, 512-byte sectors,
+  no partitions/USB FAT/hotplug/xHCI, and a 128 MiB ext2 image-cache cap.
 
 - [x] Make musl 1.2.6 the default libc for regular userspace binaries.
 - [x] Bootstrap the generated musl build tree automatically from a clean clone.
@@ -561,7 +719,7 @@ Move detailed history to commits rather than growing this section indefinitely.
 ## Explicitly not promised yet
 
 Unless a concrete project depends on them, the roadmap does not currently
-promise 32-bit support, UEFI-native boot, dynamic linking, multi-user security,
+promise 32-bit support, dynamic linking, multi-user security,
 a package manager, POSIX certification, general Linux binary compatibility, or
 production-grade hardware support. Any of those can become a roadmap item once
 there is a bounded first milestone and an acceptance test.
