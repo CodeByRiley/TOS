@@ -65,6 +65,8 @@ int ext2_inode_allocate(struct ext2_fs *fs, u16 mode,
             inode->links_count = 1;
             if ((mode & EXT2_S_IFMT) == EXT2_S_IFDIR)
                 descriptor->used_directories_count++;
+            ext2_dirty_group(fs, group, bitmap);
+            ext2_dirty(fs, inode, fs->inode_size);
             *inode_number_out = number;
             return 0;
         }
@@ -101,6 +103,9 @@ u32 ext2_block_allocate(struct ext2_fs *fs,
             memset(block, 0, fs->block_size);
             if (owner)
                 owner->sectors_count += fs->block_size / 512u;
+            ext2_dirty_group(fs, group, bitmap);
+            ext2_dirty(fs, block, fs->block_size);
+            ext2_dirty(fs, owner, fs->inode_size);
             return number;
         }
     }
@@ -129,67 +134,53 @@ void ext2_block_free(struct ext2_fs *fs, u32 block_number,
     u32 sectors = fs->block_size / 512u;
     if (owner && owner->sectors_count >= sectors)
         owner->sectors_count -= sectors;
+    ext2_dirty_group(fs, group, bitmap);
+    ext2_dirty(fs, block, fs->block_size);
+    ext2_dirty(fs, owner, fs->inode_size);
 }
 
 static u32 ensure_pointer_block(struct ext2_fs *fs,
                                      struct ext2_inode *inode,
-                                     u32 *pointer, int create) {
-    if (*pointer)
-        return *pointer;
+                                     void *pointer, int create) {
+    u32 number;
+    memcpy(&number, pointer, sizeof(number));
+    if (number)
+        return number;
     if (!create)
         return 0;
-    *pointer = ext2_block_allocate(fs, inode);
-    return *pointer;
+    number = ext2_block_allocate(fs, inode);
+    memcpy(pointer, &number, sizeof(number));
+    ext2_dirty(fs, pointer, sizeof(number));
+    return number;
 }
 
 u32 ext2_inode_block(struct ext2_fs *fs, struct ext2_inode *inode,
                           u32 logical_block, int create) {
     if (!fs || !inode)
         return 0;
-    if (logical_block < EXT2_NDIR_BLOCKS) {
-        if (!inode->block[logical_block] && create)
-            inode->block[logical_block] = ext2_block_allocate(fs, inode);
-        return inode->block[logical_block];
-    }
+    u8 *roots = (u8 *)inode + offsetof(struct ext2_inode, block);
+    if (logical_block < EXT2_NDIR_BLOCKS)
+        return ensure_pointer_block(fs, inode, roots + logical_block * sizeof(u32), create);
 
-    logical_block -= EXT2_NDIR_BLOCKS;
-    if (logical_block < fs->pointers_per_block) {
-        u32 indirect = inode->block[EXT2_IND_BLOCK];
-        if (!indirect && create) {
-            indirect = ext2_block_allocate(fs, inode);
-            inode->block[EXT2_IND_BLOCK] = indirect;
+    /* Single, double and triple indirection are the same tree walk. Each
+     * pointer at a level covers 'stride' logical data blocks. */
+    u64 index = logical_block - EXT2_NDIR_BLOCKS;
+    u64 capacity = fs->pointers_per_block;
+    for (int depth = 1; depth <= 3; depth++, capacity *= fs->pointers_per_block) {
+        if (index >= capacity) { index -= capacity; continue; }
+        void *pointer = roots + (EXT2_IND_BLOCK + depth - 1) * sizeof(u32);
+        u64 stride = capacity;
+        for (int level = depth; level > 0; level--) {
+            u32 number = ensure_pointer_block(fs, inode, pointer, create);
+            u32 *entries = ext2_block(fs, number);
+            if (!entries) return 0;
+            stride /= fs->pointers_per_block;
+            pointer = &entries[index / stride];
+            index %= stride;
         }
-        u32 *pointers = ext2_block(fs, indirect);
-        if (!pointers)
-            return 0;
-        if (!pointers[logical_block] && create)
-            pointers[logical_block] = ext2_block_allocate(fs, inode);
-        return pointers[logical_block];
+        return ensure_pointer_block(fs, inode, pointer, create);
     }
-
-    logical_block -= fs->pointers_per_block;
-    u64 double_capacity =
-        (u64)fs->pointers_per_block * fs->pointers_per_block;
-    if (logical_block >= double_capacity)
-        return 0;
-    u32 doubly = inode->block[EXT2_DIND_BLOCK];
-    if (!doubly && create) {
-        doubly = ext2_block_allocate(fs, inode);
-        inode->block[EXT2_DIND_BLOCK] = doubly;
-    }
-    u32 *first = ext2_block(fs, doubly);
-    if (!first)
-        return 0;
-    u32 first_index = logical_block / fs->pointers_per_block;
-    u32 second_index = logical_block % fs->pointers_per_block;
-    u32 singly = ensure_pointer_block(fs, inode, &first[first_index],
-                                            create);
-    u32 *second = ext2_block(fs, singly);
-    if (!second)
-        return 0;
-    if (!second[second_index] && create)
-        second[second_index] = ext2_block_allocate(fs, inode);
-    return second[second_index];
+    return 0;
 }
 
 static void free_indirect(struct ext2_fs *fs, struct ext2_inode *inode,
@@ -224,6 +215,7 @@ void ext2_inode_truncate(struct ext2_fs *fs, struct ext2_inode *inode) {
     inode->size = 0;
     inode->directory_acl = 0;
     inode->sectors_count = 0;
+    ext2_dirty(fs, inode, fs->inode_size);
 }
 
 void ext2_inode_free(struct ext2_fs *fs, u32 inode_number,
@@ -244,6 +236,8 @@ void ext2_inode_free(struct ext2_fs *fs, u32 inode_number,
         if ((old_mode & EXT2_S_IFMT) == EXT2_S_IFDIR &&
             fs->groups[group].used_directories_count)
             fs->groups[group].used_directories_count--;
+        ext2_dirty_group(fs, group, bitmap);
     }
     memset(inode, 0, fs->inode_size);
+    ext2_dirty(fs, inode, fs->inode_size);
 }

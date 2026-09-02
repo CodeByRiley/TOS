@@ -1,5 +1,7 @@
 /* Host-side regression tests for the kernel FAT16/32 implementation. */
 #include "fs/fat/fat.h"
+#include "fs/fat/fat_vfs.h"
+#include "vfs_backend_checks.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -116,6 +118,17 @@ static int test_fat32(void) {
     failed |= expect(fat_type_bits() == 32, "select the FAT32 backend");
     failed |= expect(fat_mkdir("/DATA") == 0,
                      "create a FAT32 root directory");
+    uint32_t cookie = 0;
+    char guarded[3] = { 'L', 'X', 'R' };
+    failed |= expect(fat_read_dir_one("/", &cookie, guarded + 1, 1, NULL) < 0 &&
+                     cookie == 0 && guarded[0] == 'L' && guarded[2] == 'R',
+                     "short entry buffer is checked before copying name");
+    char packed[6];
+    failed |= expect(fat_read_dir("/", &cookie, packed, 4) < 0 && cookie == 0,
+                     "packed short buffer preserves directory cookie");
+    failed |= expect(fat_read_dir("/", &cookie, packed, sizeof(packed)) == 6 &&
+                     strcmp(packed, "DATA/") == 0,
+                     "packed entry can be retried after short buffer");
 
     struct fat_file file;
     static const char payload[] = "fat32 backend data";
@@ -136,6 +149,11 @@ static int test_fat32(void) {
     failed |= expect(fat_rmdir("/DATA") == 0,
                      "remove an empty FAT32 directory");
 
+    vfs_init();
+    fat_vfs_register();
+    failed |= expect(fat_vfs_attach("/") == 0, "attach existing FAT32 volume");
+    failed |= vfs_backend_checks(expect);
+    failed |= expect(vfs_unmount("/") == 0, "unmount FAT32 before releasing image");
     free(image);
     return failed;
 }
@@ -294,6 +312,13 @@ int main(void) {
                          memcmp(readback, payload, sizeof(payload)) == 0,
                      "cross-cluster file data survives a remount");
 
+    vfs_init();
+    fat_vfs_register();
+    failed |= expect(fat_vfs_attach("/") == 0, "attach existing FAT16 volume");
+    failed |= expect(vfs_mount_image("/second", "fat", image, image_size) < 0,
+                     "second FAT mount is rejected without replacing active volume");
+    failed |= vfs_backend_checks(expect);
+    failed |= expect(vfs_unmount("/") == 0, "unmount FAT16 before releasing image");
     free(image);
     free(persisted_image);
     persisted_image = NULL;

@@ -9,5 +9,8 @@
 #define KERNEL_EXT2_H
 
 void ext2_vfs_register(void);
+struct block_device;
+/* Device/context must outlive the mount. The filesystem owns its RAM cache. */
+int ext2_mount_device(const char *mountpoint, const struct block_device *device);
 
 #endif

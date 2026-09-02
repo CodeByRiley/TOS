@@ -66,78 +66,6 @@ int ext2_dir_lookup(struct ext2_fs *fs, u32 directory_inode,
     return -1;
 }
 
-static int next_component(const char **cursor, char out[VFS_NAME_MAX + 1]) {
-    const char *p = *cursor;
-    while (*p == '/')
-        p++;
-    if (!*p) {
-        *cursor = p;
-        return 0;
-    }
-    usize length = 0;
-    while (*p && *p != '/') {
-        if (length >= VFS_NAME_MAX)
-            return -1;
-        out[length++] = *p++;
-    }
-    out[length] = 0;
-    *cursor = p;
-    return 1;
-}
-
-int ext2_path_resolve(struct ext2_fs *fs, const char *path,
-                      u32 *inode_number_out) {
-    if (!fs || !path || !inode_number_out)
-        return -1;
-    u32 current = EXT2_ROOT_INODE;
-    const char *cursor = path;
-    char component[VFS_NAME_MAX + 1];
-    int status;
-    while ((status = next_component(&cursor, component)) > 0) {
-        u8 type;
-        if (ext2_dir_lookup(fs, current, component, &current, &type) != 0)
-            return -1;
-        while (*cursor == '/')
-            cursor++;
-        if (*cursor && type != EXT2_FT_DIR)
-            return -1;
-    }
-    if (status < 0)
-        return -1;
-    *inode_number_out = current;
-    return 0;
-}
-
-int ext2_path_parent(struct ext2_fs *fs, const char *path,
-                     u32 *parent_inode_out,
-                     char leaf[VFS_NAME_MAX + 1]) {
-    if (!fs || !path || !parent_inode_out || !leaf)
-        return -1;
-    u32 current = EXT2_ROOT_INODE;
-    const char *cursor = path;
-    char component[VFS_NAME_MAX + 1];
-    int status = next_component(&cursor, component);
-    if (status <= 0)
-        return -1;
-    for (;;) {
-        const char *lookahead = cursor;
-        char next[VFS_NAME_MAX + 1];
-        int next_status = next_component(&lookahead, next);
-        if (next_status < 0)
-            return -1;
-        if (next_status == 0) {
-            memcpy(leaf, component, strlen(component) + 1);
-            *parent_inode_out = current;
-            return strcmp(leaf, ".") && strcmp(leaf, "..") ? 0 : -1;
-        }
-        u8 type;
-        if (ext2_dir_lookup(fs, current, component, &current, &type) != 0 ||
-            type != EXT2_FT_DIR)
-            return -1;
-        memcpy(component, next, strlen(next) + 1);
-        cursor = lookahead;
-    }
-}
 
 static void initialize_entry(struct ext2_dir_entry *entry, u16 record,
                              u32 inode_number, u8 type,
@@ -152,6 +80,8 @@ static void initialize_entry(struct ext2_dir_entry *entry, u16 record,
 
 int ext2_dir_add(struct ext2_fs *fs, u32 directory_inode,
                  const char *name, u32 inode_number, u8 type) {
+    if (!fs) return -1;
+    type = ext2_directory_type(fs, type);
     struct ext2_inode *directory = ext2_inode_get(fs, directory_inode);
     usize name_length = name ? strlen(name) : 0;
     if (!directory || (directory->mode & EXT2_S_IFMT) != EXT2_S_IFDIR ||
@@ -173,6 +103,7 @@ int ext2_dir_add(struct ext2_fs *fs, u32 directory_inode,
             u16 available = entry->record_length;
             initialize_entry(entry, available, inode_number, type, name,
                              (u8)name_length);
+            ext2_dirty(fs, block, fs->block_size);
             return 0;
         }
         u16 used = directory_record_size(entry->name_length);
@@ -183,6 +114,7 @@ int ext2_dir_add(struct ext2_fs *fs, u32 directory_inode,
                 (struct ext2_dir_entry *)((u8 *)entry + used);
             initialize_entry(created, available, inode_number, type, name,
                              (u8)name_length);
+            ext2_dirty(fs, block, fs->block_size);
             return 0;
         }
         offset += entry->record_length;
@@ -197,6 +129,8 @@ int ext2_dir_add(struct ext2_fs *fs, u32 directory_inode,
     initialize_entry((struct ext2_dir_entry *)block, (u16)fs->block_size,
                      inode_number, type, name, (u8)name_length);
     directory->size = (logical + 1) * fs->block_size;
+    ext2_dirty(fs, block, fs->block_size);
+    ext2_dirty(fs, directory, fs->inode_size);
     return 0;
 }
 
@@ -231,6 +165,7 @@ int ext2_dir_remove(struct ext2_fs *fs, u32 directory_inode,
                 previous->record_length += entry->record_length;
             else
                 entry->inode = 0;
+            ext2_dirty(fs, block, fs->block_size);
             return 0;
         }
         previous = entry;

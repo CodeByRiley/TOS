@@ -10,7 +10,7 @@ void *ext2_bytes(struct ext2_fs *fs, u64 offset, usize length) {
 }
 
 void *ext2_block(struct ext2_fs *fs, u32 block_number) {
-    if (!fs || block_number >= fs->superblock->blocks_count)
+    if (!fs || !block_number || block_number >= fs->superblock->blocks_count)
         return 0;
     return ext2_bytes(fs, (u64)block_number * fs->block_size,
                       fs->block_size);
@@ -20,21 +20,24 @@ static int ext2_probe_image(const void *image, usize size) {
     return fs_probe_is_ext(image, size);
 }
 
-static int ext2_mount_image(void *image, usize size, void **fs_out) {
-    if (!fs_out || !ext2_probe_image(image, size))
+int ext2_mount_image(struct vfs_superblock *super, void *image, usize size) {
+    if (!ext2_probe_image(image, size))
         return -1;
     struct ext2_superblock *superblock =
         (struct ext2_superblock *)((u8 *)image + EXT_SUPERBLOCK_OFFSET);
-    if (superblock->log_block_size > 2 ||
+    if (superblock->revision_level > 1 || superblock->log_block_size > 2 ||
         superblock->blocks_per_group == 0 ||
         superblock->inodes_per_group == 0 ||
         superblock->blocks_count <= superblock->first_data_block ||
         (superblock->feature_compat & EXT2_FEATURE_COMPAT_HAS_JOURNAL) ||
-        (superblock->feature_incompat & ~EXT2_FEATURE_INCOMPAT_FILETYPE))
+        (superblock->feature_incompat & ~EXT2_FEATURE_INCOMPAT_FILETYPE) ||
+        (superblock->feature_ro_compat & ~0x0003u))
         return -1;
 
     u32 block_size = 1024u << superblock->log_block_size;
-    if (superblock->blocks_per_group > block_size * 8u ||
+    if (superblock->first_data_block != (block_size == 1024 ? 1u : 0u) ||
+        superblock->log_fragment_size != (i32)superblock->log_block_size ||
+        superblock->blocks_per_group > block_size * 8u ||
         superblock->inodes_per_group > block_size * 8u)
         return -1;
     u64 volume_size = (u64)superblock->blocks_count * block_size;
@@ -91,7 +94,7 @@ static int ext2_mount_image(void *image, usize size, void **fs_out) {
         const struct ext2_group_descriptor *descriptor = &groups[group];
         if (!ext2_block(fs, descriptor->block_bitmap) ||
             !ext2_block(fs, descriptor->inode_bitmap) ||
-            descriptor->inode_table >= superblock->blocks_count ||
+            !descriptor->inode_table || descriptor->inode_table >= superblock->blocks_count ||
             inode_table_blocks > superblock->blocks_count -
                                      descriptor->inode_table) {
             kfree(fs);
@@ -104,21 +107,24 @@ static int ext2_mount_image(void *image, usize size, void **fs_out) {
         kfree(fs);
         return -1;
     }
-    *fs_out = fs;
-    return 0;
+    super->private_data = fs;
+    super->root = ext2_vfs_inode(super, EXT2_ROOT_INODE);
+    return super->root ? 0 : -1;
 }
 
-static void ext2_unmount_image(void *context) {
-    if (context)
-        kfree(context);
+static void ext2_unmount_image(struct vfs_superblock *super) {
+    struct ext2_fs *fs = super->private_data;
+    if (!fs) return;
+    if (fs->dirty_blocks) kfree(fs->dirty_blocks);
+    if (fs->owns_image) kfree(fs->image);
+    kfree(fs);
 }
-
-extern const struct vfs_operations ext2_vfs_operations;
 
 const struct vfs_filesystem ext2_filesystem = {
     .name = "ext2",
     .probe = ext2_probe_image,
     .mount = ext2_mount_image,
+    .attach = ext2_mount_block,
+    .sync = ext2_sync_super,
     .unmount = ext2_unmount_image,
-    .operations = &ext2_vfs_operations,
 };

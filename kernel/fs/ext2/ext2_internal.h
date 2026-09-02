@@ -17,6 +17,7 @@
 #include <fs/vfs/vfs.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <drivers/storage/block.h>
 
 #define EXT2_ROOT_INODE 2u
 #define EXT2_NDIR_BLOCKS 12u
@@ -118,11 +119,30 @@ struct ext2_fs {
     u32 inode_size;
     u32 group_count;
     u32 pointers_per_block;
+    struct block_device device; /* Borrowed transport context; zero for RAM. */
+    u8 *dirty_blocks;
+    int owns_image;
+    int io_failed;
 };
 
-struct ext2_open_file {
-    u32 inode_number;
-};
+int ext2_mount_image(struct vfs_superblock *super, void *image, usize size);
+int ext2_mount_block(struct vfs_superblock *super, void *device);
+void ext2_dirty(struct ext2_fs *fs, const void *address, usize length);
+int ext2_sync(struct ext2_fs *fs);
+int ext2_sync_super(struct vfs_superblock *super);
+
+static inline u8 ext2_directory_type(struct ext2_fs *fs, u8 type) {
+    return fs->superblock->feature_incompat & EXT2_FEATURE_INCOMPAT_FILETYPE
+        ? type : EXT2_FT_UNKNOWN;
+}
+
+static inline void ext2_dirty_group(struct ext2_fs *fs, u32 group, const void *bitmap) {
+    ext2_dirty(fs, bitmap, fs->block_size);
+    ext2_dirty(fs, &fs->groups[group], sizeof(fs->groups[group]));
+    ext2_dirty(fs, fs->superblock, sizeof(*fs->superblock));
+}
+
+struct vfs_inode *ext2_vfs_inode(struct vfs_superblock *super, u32 number);
 
 void *ext2_bytes(struct ext2_fs *fs, u64 offset, usize length);
 void *ext2_block(struct ext2_fs *fs, u32 block_number);
@@ -139,10 +159,6 @@ u32 ext2_inode_block(struct ext2_fs *fs, struct ext2_inode *inode,
                           u32 logical_block, int create);
 void ext2_inode_truncate(struct ext2_fs *fs, struct ext2_inode *inode);
 
-int ext2_path_resolve(struct ext2_fs *fs, const char *path,
-                      u32 *inode_number_out);
-int ext2_path_parent(struct ext2_fs *fs, const char *path,
-                     u32 *parent_inode_out, char leaf[VFS_NAME_MAX + 1]);
 int ext2_dir_lookup(struct ext2_fs *fs, u32 directory_inode,
                     const char *name, u32 *inode_number_out,
                     u8 *type_out);

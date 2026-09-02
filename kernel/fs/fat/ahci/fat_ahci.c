@@ -127,7 +127,8 @@ void fat_flush(void) {
     usize image_size = 0;
     u32 bytes_per_sector = 0;
     u8 *image = fat_image_base(&image_size, &bytes_per_sector);
-    if (!image || !bytes_per_sector || !g_ahci_dev || !ahci_backed) return;
+    if (!image || !bytes_per_sector || !g_ahci_dev || !ahci_backed ||
+        !fat_write_through_enabled()) return;
 
     u32 total_sectors = (u32)(image_size / bytes_per_sector);
     u32 sectors_written = 0;

@@ -1,76 +1,7 @@
-/* kernel/fs/fat/fat_directory.c , shared VFAT directory engine.
- *
- * Implements FAT16/FAT32 BPB validation, directory traversal, 8.3 aliases,
- * long filenames, allocation, timestamps, and directory mutation.
- */
+/* Directory cursors, entry storage, metadata and VFAT slot allocation. */
 #include "fat_internal.h"
 #include <devices/rtc.h>
 #include <utilities/string.h>
-#include <utilities/log.h>
-
-/* Private directory-entry flags. */
-#define FAT_ATTR_LFN 0x0F
-#define FAT_CASE_BASE_LOWER 0x08
-#define FAT_CASE_EXT_LOWER 0x10
-#define FAT_LFN_CHARS_PER_SLOT 13
-#define FAT_LFN_MAX_SLOTS \
-  ((FAT_LFN_MAX + FAT_LFN_CHARS_PER_SLOT - 1) / FAT_LFN_CHARS_PER_SLOT)
-#define FAT_LFN_BUFFER (FAT_LFN_MAX_SLOTS * FAT_LFN_CHARS_PER_SLOT + 1)
-#define FAT_MAX_ENTRY_SLOTS (FAT_LFN_MAX_SLOTS + 1)
-
-/* BIOS parameter block shared by FAT16 and FAT32. */
-struct PACKED bpb {
-  u8 jmp[3];
-  char oem[8];
-  u16 bytes_per_sector;
-  u8 sectors_per_cluster;
-  u16 reserved_sectors;
-  u8 num_fats;
-  u16 root_entries;
-  u16 total_sectors_16;
-  u8 media;
-  u16 sectors_per_fat_16;
-  u16 sectors_per_track;
-  u16 heads;
-  u32 hidden_sectors;
-  u32 total_sectors_32;
-  u32 sectors_per_fat_32;
-  u16 ext_flags;
-  u16 fs_version;
-  u32 root_cluster;
-  u16 fs_info_sector;
-  u16 backup_boot_sector;
-};
-_Static_assert(sizeof(struct bpb) == 52, "BPB layout must match on-disk");
-
-/* On-disk 32-byte directory entry. */
-struct PACKED dir_entry {
-  char name[8];
-  char ext[3];
-  u8 attr;
-  u8 nt_case;
-  u8 create_time_tenth;
-  u16 create_time;
-  u16 create_date;
-  u16 access_date;
-  u16 first_cluster_high;
-  u16 write_time;
-  u16 write_date;
-  u16 first_cluster_low;
-  u32 size;
-};
-_Static_assert(sizeof(struct dir_entry) == 32,
-               "FAT directory entries must be 32 bytes");
-
-/* Long-filename accumulator. */
-struct lfn_state {
-  char name[FAT_LFN_BUFFER];
-  u32 length;
-  u32 start_index;
-  u8 checksum;
-  u8 expect;
-  u8 valid;
-};
 
 /* Cursor for walking a directory cluster chain. */
 struct dir_cursor {
@@ -82,11 +13,6 @@ struct dir_cursor {
   int ended;
 };
 
-/* Byte offsets of the 13 characters stored in one long-name slot. */
-static const u8 lfn_offsets[13] = {
-    1, 3, 5, 7, 9, 14, 16, 18, 20, 22, 24, 28, 30};
-
-
 /* Timestamp helpers. */
 static u16 fat_encode_date(const struct rtc_time *t) {
   u16 year = (u16)(t->year - 1980);
@@ -96,107 +22,6 @@ static u16 fat_encode_date(const struct rtc_time *t) {
 static u16 fat_encode_time(const struct rtc_time *t) {
   return (u16)(((u16)t->hour << 11) | ((u16)t->minute << 5) |
                     (t->second / 2));
-}
-
-/* Long-filename helpers. */
-
-static u8 lfn_checksum(const char *name) {
-  u8 sum = 0;
-  for (int i = 0; i < 11; i++)
-    sum = (u8)(((sum & 1) << 7) + (sum >> 1) + (u8)name[i]);
-  return sum;
-}
-
-static void lfn_reset(struct lfn_state *state) {
-  state->length = 0;
-  state->valid = 0;
-  state->expect = 0;
-  state->checksum = 0;
-  state->start_index = 0;
-}
-
-static void lfn_feed(struct lfn_state *state, const struct dir_entry *entry,
-                     u32 index) {
-  const u8 *raw = (const u8 *)entry;
-  u8 marker = raw[0];
-
-  if (marker == 0xE5) {
-    lfn_reset(state);
-    return;
-  }
-
-  u8 seq = marker & 0x1F;
-  int last = (marker & 0x40) != 0;
-  if (seq == 0 || seq > FAT_LFN_MAX_SLOTS) {
-    lfn_reset(state);
-    return;
-  }
-
-  if (last) {
-    lfn_reset(state);
-    state->valid = 1;
-    state->expect = seq;
-    state->checksum = raw[13];
-    state->length = (u32)seq * 13;
-    state->start_index = index;
-  } else if (!state->valid || seq != state->expect || raw[13] != state->checksum) {
-    lfn_reset(state);
-    return;
-  }
-
-  u32 base = (u32)(seq - 1) * 13;
-  for (int i = 0; i < 13; i++) {
-    u16 ch = (u16)(raw[lfn_offsets[i]] | ((u16)raw[lfn_offsets[i] + 1] << 8));
-    char out;
-    if (ch == 0x0000 || ch == 0xFFFF)
-      out = '\0';
-    else if (ch < 0x80)
-      out = (char)ch;
-    else
-      out = '_';
-    state->name[base + i] = out;
-  }
-
-  state->expect = (u8)(seq - 1);
-}
-
-static const char *lfn_take(struct lfn_state *state,
-                            const struct dir_entry *entry) {
-  if (!state->valid || state->expect != 0)
-    return 0;
-  if (lfn_checksum(entry->name) != state->checksum)
-    return 0;
-
-  u32 length = 0;
-  while (length < state->length && state->name[length] != '\0')
-    length++;
-  if (length == 0 || length > 255)
-    return 0;
-  state->name[length] = '\0';
-  return state->name;
-}
-
-static void write_lfn_slot(struct dir_entry *slot, const char *name,
-                           u32 length, u8 seq, int last, u8 checksum) {
-  u8 *raw = (u8 *)slot;
-  memset(raw, 0, sizeof(*slot));
-  raw[0] = (u8)(seq | (last ? 0x40 : 0));
-  raw[11] = FAT_ATTR_LFN;
-  raw[13] = checksum;
-
-  u32 base = (u32)(seq - 1) * 13;
-  for (int i = 0; i < 13; i++) {
-    u32 idx = base + (u32)i;
-    u16 ch;
-    if (idx < length)
-      ch = (u16)(u8)name[idx];
-    else if (idx == length)
-      ch = 0x0000;
-    else
-      ch = 0xFFFF;
-    raw[lfn_offsets[i]] = (u8)(ch & 0xFF);
-    raw[lfn_offsets[i] + 1] = (u8)(ch >> 8);
-  }
 }
 
 /* Directory-entry helpers. */
@@ -230,7 +55,7 @@ static int cursor_init(struct dir_cursor *cursor, struct fat_dir dir,
 
   if (dir_is_fixed_root(dir)) {
     cursor->slot = start_index;
-    return start_index <= root_entries ? 0 : -1;
+    return start_index <= fat_volume.root_entries ? 0 : -1;
   }
   if (!cluster_is_valid(dir.first_cluster))
     return -1;
@@ -246,7 +71,7 @@ static int cursor_init(struct dir_cursor *cursor, struct fat_dir dir,
     if (next_cluster(cursor->cluster, &next) != 0)
       return -1;
     cursor->cluster = next;
-    if (++cursor->clusters_seen >= cluster_limit)
+    if (++cursor->clusters_seen >= fat_volume.cluster_limit)
       return -1;
   }
   return 0;
@@ -257,11 +82,11 @@ static struct dir_entry *cursor_next(struct dir_cursor *cursor) {
     return 0;
 
   if (dir_is_fixed_root(cursor->dir)) {
-    if (cursor->slot >= root_entries) {
+    if (cursor->slot >= fat_volume.root_entries) {
       cursor->ended = 1;
       return 0;
     }
-    struct dir_entry *root = (struct dir_entry *)sector(root_start_sec);
+    struct dir_entry *root = (struct dir_entry *)sector(fat_volume.root_start_sector);
     cursor->index++;
     return &root[cursor->slot++];
   }
@@ -270,7 +95,7 @@ static struct dir_entry *cursor_next(struct dir_cursor *cursor) {
   if (cursor->slot >= entries_per_cluster) {
     u32 next;
     int status = next_cluster(cursor->cluster, &next);
-    if (status != 0 || ++cursor->clusters_seen >= cluster_limit) {
+    if (status != 0 || ++cursor->clusters_seen >= fat_volume.cluster_limit) {
       cursor->ended = 1;
       return 0;
     }
@@ -295,8 +120,8 @@ static int alloc_dir_slots(struct fat_dir dir, u32 count,
   u32 run_start = 0;
 
   if (dir_is_fixed_root(dir)) {
-    struct dir_entry *root = (struct dir_entry *)sector(root_start_sec);
-    for (u32 i = 0; i < root_entries; i++) {
+    struct dir_entry *root = (struct dir_entry *)sector(fat_volume.root_start_sector);
+    for (u32 i = 0; i < fat_volume.root_entries; i++) {
       if (entry_is_free(&root[i])) {
         if (run == 0)
           run_start = i;
@@ -336,7 +161,7 @@ static int alloc_dir_slots(struct fat_dir dir, u32 count,
       }
     }
 
-    if (++visited >= cluster_limit)
+    if (++visited >= fat_volume.cluster_limit)
       return -1;
 
     u32 next;
@@ -353,84 +178,7 @@ static int alloc_dir_slots(struct fat_dir dir, u32 count,
   }
 }
 
-/* Short-name helpers. */
-static int valid_short_char(char c) {
-  if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
-      (c >= '0' && c <= '9'))
-    return 1;
-  switch (c) {
-  case '$': case '%': case '\'': case '-': case '_':
-  case '@': case '~': case '`': case '!': case '(':
-  case ')': case '{': case '}': case '^': case '#': case '&':
-    return 1;
-  default:
-    return 0;
-  }
-}
-
-static char to_upper(char c) {
-  return (c >= 'a' && c <= 'z') ? (char)(c - ('a' - 'A')) : c;
-}
-
-static int is_lower(char c) { return c >= 'a' && c <= 'z'; }
-static int is_upper(char c) { return c >= 'A' && c <= 'Z'; }
-
-static void split_extension(const char *name, u32 length,
-                            u32 *base_len, u32 *ext_at, u32 *ext_len) {
-  u32 dot = length;
-  for (u32 i = length; i > 1; i--) {
-    if (name[i - 1] == '.') {
-      dot = i - 1;
-      break;
-    }
-  }
-  *base_len = dot;
-  *ext_at = dot < length ? dot + 1 : length;
-  *ext_len = length - *ext_at;
-}
-
-static int short_name_exact(const char *name, u32 length,
-                            char out[11], u8 *nt_case) {
-  if (length == 0 || length > 12 || name[length - 1] == '.')
-    return -1;
-
-  u32 base_len, ext_at, ext_len;
-  split_extension(name, length, &base_len, &ext_at, &ext_len);
-  if (base_len == 0 || base_len > 8 || ext_len > 3)
-    return -1;
-
-  int base_lower = 0, base_upper = 0, ext_lower = 0, ext_upper = 0;
-  for (u32 i = 0; i < base_len; i++) {
-    if (!valid_short_char(name[i]))
-      return -1;
-    if (is_lower(name[i])) base_lower = 1;
-    if (is_upper(name[i])) base_upper = 1;
-  }
-  for (u32 i = 0; i < ext_len; i++) {
-    char c = name[ext_at + i];
-    if (!valid_short_char(c))
-      return -1;
-    if (is_lower(c)) ext_lower = 1;
-    if (is_upper(c)) ext_upper = 1;
-  }
-  if ((base_lower && base_upper) || (ext_lower && ext_upper))
-    return -1;
-
-  memset(out, ' ', 11);
-  for (u32 i = 0; i < base_len; i++)
-    out[i] = to_upper(name[i]);
-  for (u32 i = 0; i < ext_len; i++)
-    out[8 + i] = to_upper(name[ext_at + i]);
-
-  if ((u8)out[0] == 0xE5)
-    out[0] = 0x05;
-
-  *nt_case = (u8)((base_lower ? FAT_CASE_BASE_LOWER : 0) |
-                       (ext_lower ? FAT_CASE_EXT_LOWER : 0));
-  return 0;
-}
-
-static int short_name_taken(struct fat_dir dir, const char name[11]) {
+int short_name_taken(struct fat_dir dir, const char name[11]) {
   struct dir_cursor cursor;
   if (cursor_init(&cursor, dir, 0) != 0)
     return 0;
@@ -447,90 +195,10 @@ static int short_name_taken(struct fat_dir dir, const char name[11]) {
   return 0;
 }
 
-static int short_name_alias(struct fat_dir dir, const char *name,
-                            u32 length, char out[11]) {
-  u32 base_len, ext_at, ext_len;
-  split_extension(name, length, &base_len, &ext_at, &ext_len);
-
-  char base[8];
-  u32 base_used = 0;
-  for (u32 i = 0; i < base_len && base_used < 8; i++) {
-    char c = name[i];
-    if (c == ' ' || c == '.')
-      continue;
-    base[base_used++] = valid_short_char(c) ? to_upper(c) : '_';
-  }
-  if (base_used == 0)
-    base[base_used++] = '_';
-
-  char ext[3];
-  u32 ext_used = 0;
-  for (u32 i = 0; i < ext_len && ext_used < 3; i++) {
-    char c = name[ext_at + i];
-    if (c == ' ' || c == '.')
-      continue;
-    ext[ext_used++] = valid_short_char(c) ? to_upper(c) : '_';
-  }
-
-  for (u32 n = 1; n <= 999999; n++) {
-    char suffix[7];
-    u32 suffix_len = 0;
-    for (u32 value = n; value; value /= 10)
-      suffix[suffix_len++] = (char)('0' + value % 10);
-
-    u32 stem = 8 - (suffix_len + 1);
-    if (stem > base_used)
-      stem = base_used;
-
-    memset(out, ' ', 11);
-    for (u32 i = 0; i < stem; i++)
-      out[i] = base[i];
-    out[stem] = '~';
-    for (u32 i = 0; i < suffix_len; i++)
-      out[stem + 1 + i] = suffix[suffix_len - 1 - i];
-    for (u32 i = 0; i < ext_used; i++)
-      out[8 + i] = ext[i];
-
-    if (!short_name_taken(dir, out))
-      return 0;
-  }
-  return -1;
-}
-
-static u32 entry_short_name(const struct dir_entry *entry, char *out) {
-  u32 length = 0;
-  int base_lower = (entry->nt_case & FAT_CASE_BASE_LOWER) != 0;
-  int ext_lower = (entry->nt_case & FAT_CASE_EXT_LOWER) != 0;
-
-  for (int i = 0; i < 8 && entry->name[i] != ' '; i++) {
-    char c = entry->name[i];
-    if (i == 0 && (u8)c == 0x05)
-      c = (char)0xE5;
-    out[length++] = base_lower && is_upper(c) ? (char)(c + ('a' - 'A')) : c;
-  }
-
-  int has_extension = 0;
-  for (int i = 0; i < 3; i++) {
-    if (entry->ext[i] != ' ') {
-      has_extension = 1;
-      break;
-    }
-  }
-  if (has_extension) {
-    out[length++] = '.';
-    for (int i = 0; i < 3 && entry->ext[i] != ' '; i++) {
-      char c = entry->ext[i];
-      out[length++] = ext_lower && is_upper(c) ? (char)(c + ('a' - 'A')) : c;
-    }
-  }
-  out[length] = '\0';
-  return length;
-}
-
 u32 fat_impl_entry_get_cluster(void *entry) {
   struct dir_entry *e = (struct dir_entry *)entry;
   u32 low = e->first_cluster_low;
-  if (fat_type != FAT_TYPE_32)
+  if (fat_volume.type != FAT_TYPE_32)
     return low;
   return low | ((u32)e->first_cluster_high << 16);
 }
@@ -538,7 +206,7 @@ u32 fat_impl_entry_get_cluster(void *entry) {
 void fat_impl_entry_set_cluster(void *entry, u32 cluster) {
   struct dir_entry *e = (struct dir_entry *)entry;
   e->first_cluster_low = (u16)(cluster & 0xFFFF);
-  e->first_cluster_high = fat_type == FAT_TYPE_32 ? (u16)(cluster >> 16) : 0;
+  e->first_cluster_high = fat_volume.type == FAT_TYPE_32 ? (u16)(cluster >> 16) : 0;
 }
 
 u64 fat_impl_entry_get_size(void *entry) {
@@ -567,114 +235,6 @@ void fat_impl_set_timestamp(void *entry) {
     e->create_date = date;
     e->create_time = time;
     e->create_time_tenth = 0;
-  }
-}
-
-int fat_mount_format(u8 *image, usize size, enum fat_type expected_type) {
-  if (!image || size < 512)
-    return -1;
-
-  struct bpb *b = (struct bpb *)image;
-  u32 total_sectors =
-      b->total_sectors_16 ? b->total_sectors_16 : b->total_sectors_32;
-  u32 fat_sectors =
-      b->sectors_per_fat_16 ? b->sectors_per_fat_16 : b->sectors_per_fat_32;
-
-  if (b->bytes_per_sector < 512 || b->bytes_per_sector > 4096 ||
-      (b->bytes_per_sector & (b->bytes_per_sector - 1)) != 0 ||
-      b->sectors_per_cluster == 0 || b->reserved_sectors == 0 ||
-      b->num_fats == 0 || fat_sectors == 0 || total_sectors == 0 ||
-      (u64)total_sectors * b->bytes_per_sector > size)
-    return -1;
-
-  u32 root_sectors =
-      ((u32)b->root_entries * 32 + b->bytes_per_sector - 1) /
-      b->bytes_per_sector;
-  u32 fat_start = b->reserved_sectors;
-  u32 root_start = fat_start + (u32)b->num_fats * fat_sectors;
-  u32 data_start = root_start + root_sectors;
-  if (root_start < fat_start || data_start < root_start ||
-      data_start >= total_sectors)
-    return -1;
-
-  u32 data_clusters =
-      (total_sectors - data_start) / b->sectors_per_cluster;
-
-  enum fat_type type;
-  if (data_clusters < 4085)
-    return -1;
-  else if (data_clusters < 65525)
-    type = FAT_TYPE_16;
-  else
-    type = FAT_TYPE_32;
-
-  if (type != expected_type)
-    return -1;
-
-  u32 entry_bytes = type == FAT_TYPE_32 ? 4 : 2;
-  u32 fat_entries = (u32)((u64)fat_sectors * b->bytes_per_sector / entry_bytes);
-  u32 limit = data_clusters + 2;
-  if (limit > fat_entries)
-    limit = fat_entries;
-  if (limit <= 2)
-    return -1;
-  if (type == FAT_TYPE_16 && limit >= 0xFFF0)
-    return -1;
-
-  if (type == FAT_TYPE_16) {
-    if (b->root_entries == 0 || root_sectors == 0)
-      return -1;
-  } else {
-    if (b->root_entries != 0 || root_sectors != 0)
-      return -1;
-    if (b->root_cluster < 2 || b->root_cluster >= limit)
-      return -1;
-  }
-
-  fs_image = image;
-  fs_image_size = size;
-  bytes_per_sec = b->bytes_per_sector;
-  sec_per_clus = b->sectors_per_cluster;
-  num_fats = b->num_fats;
-  sectors_per_fat = fat_sectors;
-  fat_start_sec = fat_start;
-  root_start_sec = root_start;
-  data_start_sec = data_start;
-  root_entries = b->root_entries;
-  fat_type = type;
-  cluster_limit = limit;
-  root_cluster = type == FAT_TYPE_32 ? b->root_cluster : 0;
-
-  log_write_hex("FAT: type          =", (u64)fat_type, KERNEL, LOG_INFO);
-  log_write_hex("FAT: bytes/sector  =", bytes_per_sec, KERNEL, LOG_INFO);
-  log_write_hex("FAT: sec/cluster   =", sec_per_clus, KERNEL, LOG_INFO);
-  log_write_hex("FAT: clusters      =", cluster_limit, KERNEL, LOG_INFO);
-  return 0;
-}
-
-u32 fat_impl_alloc_cluster(void) {
-  for (u32 c = 2; c < cluster_limit; c++) {
-    if (fat_get(c) == 0) {
-      fat_set(c, cluster_eoc());
-      memset(cluster_data(c), 0, cluster_bytes());
-      /* Freed clusters can contain old directory entries. Persist the clear
-       * before publishing new contents so they cannot return after reboot. */
-      fat_flush_bytes(cluster_data(c), cluster_bytes());
-      return c;
-    }
-  }
-  return 0;
-}
-
-void fat_impl_free_chain(u32 first) {
-  u32 current = first;
-  u32 visited = 0;
-  while (cluster_is_valid(current) && visited++ < cluster_limit) {
-    u32 next = fat_get(current);
-    fat_set(current, 0);
-    if (cluster_is_eoc(next) || !cluster_is_valid(next))
-      break;
-    current = next;
   }
 }
 
@@ -832,60 +392,31 @@ int fat_impl_dir_is_empty(u32 cluster) {
   return 0;
 }
 
-int fat_impl_read_dir(struct fat_dir dir, u32 *index,
-                      char *buffer, usize length) {
-  struct dir_cursor cursor;
-  if (cursor_init(&cursor, dir, *index) != 0)
-    return -1;
-
-  struct lfn_state lfn;
-  lfn_reset(&lfn);
-
+int fat_impl_read_dir(struct fat_dir dir, u32 *index, char *buffer, usize length) {
+  if (!index || !buffer || !length) return -1;
   usize written = 0;
-  struct dir_entry *entry;
-  while ((entry = cursor_next(&cursor)) != 0) {
-    if ((u8)entry->name[0] == 0x00)
-      break;
-
-    if (entry_is_lfn(entry)) {
-      lfn_feed(&lfn, entry, cursor.index - 1);
-      continue;
-    }
-    if (!entry_is_usable(entry) || is_dot_entry(entry)) {
-      lfn_reset(&lfn);
-      continue;
-    }
-
-    const char *long_name = lfn_take(&lfn, entry);
-    char name[260];
-    usize name_length;
-    if (long_name) {
-      name_length = strlen(long_name);
-      memcpy(name, long_name, name_length);
-    } else {
-      name_length = entry_short_name(entry, name);
-    }
-    if (entry->attr & FAT_ATTR_DIRECTORY)
-      name[name_length++] = '/';
-    name[name_length] = '\0';
-
-    usize required = name_length + 1;
+  for (;;) {
+    u32 before = *index;
+    char name[FAT_LFN_MAX + 1];
+    int is_directory;
+    long result = fat_impl_read_dir_one(dir, index, name, sizeof(name), &is_directory);
+    if (result <= 0) return result < 0 && !written ? -1 : (int)written;
+    usize count = (usize)result - 1;
+    usize required = count + 1 + is_directory;
     if (required > length - written) {
-      if (written == 0)
-        return -1;
-      *index = long_name ? lfn.start_index : cursor.index - 1;
-      break;
+      *index = before;
+      return written ? (int)written : -1;
     }
-    memcpy(buffer + written, name, required);
-    written += required;
-    lfn_reset(&lfn);
+    memcpy(buffer + written, name, count);
+    written += count;
+    if (is_directory) buffer[written++] = '/';
+    buffer[written++] = 0;
   }
-  *index = cursor.index;
-  return (int)written;
 }
 
 long fat_impl_read_dir_one(struct fat_dir dir, u32 *index,
                            char *buffer, usize length, int *is_dir) {
+  if (!index || !buffer || !length) return -1;
   struct dir_cursor cursor;
   if (cursor_init(&cursor, dir, *index) != 0)
     return -1;
@@ -907,19 +438,15 @@ long fat_impl_read_dir_one(struct fat_dir dir, u32 *index,
       continue;
     }
 
-    const char *long_name = lfn_take(&lfn, entry);
-    usize name_length;
-    if (long_name) {
-      name_length = strlen(long_name);
-      if (name_length + 1 > length)
-        return -1;
-      memcpy(buffer, long_name, name_length);
-    } else {
-      name_length = entry_short_name(entry, buffer);
-      if (name_length + 1 > length)
-        return -1;
+    const char *name = lfn_take(&lfn, entry);
+    char short_name[13];
+    if (!name) {
+      entry_short_name(entry, short_name);
+      name = short_name;
     }
-    buffer[name_length] = 0;
+    usize name_length = strlen(name);
+    if (name_length + 1 > length) return -1;
+    memcpy(buffer, name, name_length + 1);
     if (is_dir)
       *is_dir = (entry->attr & FAT_ATTR_DIRECTORY) ? 1 : 0;
     *index = cursor.index;

@@ -1,6 +1,7 @@
 /* Exercise TOS's ext2 backend against an image made by mke2fs. */
 #include "fs/ext2/ext2.h"
 #include "fs/vfs/vfs.h"
+#include "vfs_backend_checks.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -44,6 +45,11 @@ static int save_image(const char *path, const void *image, size_t size) {
     int result = fwrite(image, 1, size, file) == size ? 0 : -1;
     fclose(file);
     return result;
+}
+
+static int backend_check(int condition, const char *message) {
+    expect(condition, message);
+    return !condition;
 }
 
 static int packed_names_contain(const char *names, long bytes,
@@ -161,10 +167,14 @@ int main(void) {
     expect(vfs_stat("/work", &metadata) != 0,
            "removed directory is absent");
 
+    vfs_backend_checks(backend_check);
     expect(save_image(mutated, image, image_size) == 0,
            "save mutated ext2 image for e2fsck");
     free(payload);
     free(readback);
+    if (mounted_image)
+        expect(vfs_unmount("/mnt") == 0, "unmount nested ext2");
+    expect(vfs_unmount("/") == 0, "unmount ext2 before releasing image");
     free(mounted_image);
     free(image);
     if (!failed)

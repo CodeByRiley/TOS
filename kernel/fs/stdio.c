@@ -61,6 +61,7 @@ FILE *fopen(const char *name, const char *mode) {
     }
 
     if (status != 0) {
+        vfs_close(&fp->f);
         kfree(fp);
         return 0;
     }

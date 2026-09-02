@@ -7,9 +7,7 @@
  * the result against 1).
  *
  * Build:
- *   gcc -I kernel -o stdio_test tests/stdio_mode_test.c \
- *       kernel/fs/stdio.c kernel/fs/fat/fat.c kernel/fs/fat/fat_vfs.c \
- *       kernel/fs/vfs/vfs.c tests/host_kernel_stubs.c
+ *   make build/tests/stdio_mode_test.exe
  */
 #include "fs/stdio.h"
 #include "fs/fat/fat.h"
@@ -219,6 +217,7 @@ int main(void) {
     }
     expect(file_size("/NEWLOG.TXT") == 2, "created file has contents");
 
+    expect(vfs_unmount("/") == 0, "stdio releases all VFS handles");
     free(image);
     if (!failed) printf("stdio_mode_test: all checks passed\n");
     return failed;

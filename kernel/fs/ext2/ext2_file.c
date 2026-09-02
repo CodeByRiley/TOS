@@ -49,10 +49,12 @@ usize ext2_file_write(struct ext2_fs *fs, struct ext2_inode *inode,
         if (!block)
             break;
         memcpy(block + offset, in + total, chunk);
+        ext2_dirty(fs, block, fs->block_size);
         *position += chunk;
         total += chunk;
         if (*position > inode->size)
             inode->size = (u32)*position;
+        ext2_dirty(fs, inode, fs->inode_size);
     }
     return total;
 }

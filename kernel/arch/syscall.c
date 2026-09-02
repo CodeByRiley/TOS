@@ -1268,6 +1268,10 @@ static void delay_seconds(long seconds) {
 static void hw_shutdown(void) {
   log_write("powering off...", KERNEL, LOG_INFO);
   fat_flush();
+  if (vfs_sync_all()) {
+    log_write("shutdown: filesystem sync failed; refusing poweroff", KERNEL, LOG_ERROR);
+    return;
+  }
   outw(0x604, 0x2000);  /* QEMU >= 2.0 (PIIX ACPI) */
   outw(0xB004, 0x2000); /* Bochs / old QEMU */
   outw(0x4004, 0x3400); /* VirtualBox */
@@ -1280,6 +1284,11 @@ static void hw_shutdown(void) {
 /* Reboot via 8042, then ACPI reset, then triple fault. */
 static void hw_reboot(void) {
   log_write("rebooting...", KERNEL, LOG_INFO);
+  fat_flush();
+  if (vfs_sync_all()) {
+    log_write("reboot: filesystem sync failed; refusing reset", KERNEL, LOG_ERROR);
+    return;
+  }
   /* drain 8042 input buffer */
   while (inb(0x64) & 0x02) {
     (void)inb(0x60);
@@ -1312,14 +1321,14 @@ static long sys_shutdown(long time, const char *reason) {
   }
   delay_seconds(time);
   hw_shutdown();
-  return 0; /* unreachable */
+  return -5; /* EIO: sync failed, so poweroff was refused. */
 }
 
 static long sys_reboot(long time) {
   log_write_hex("reboot in (s) =", time, KERNEL, LOG_INFO);
   delay_seconds(time);
   hw_reboot();
-  return 0; /* unreachable */
+  return -5; /* EIO: sync failed, so reset was refused. */
 }
 
 static int path_is_absolute(const char *path) { return path && path[0] == '/'; }

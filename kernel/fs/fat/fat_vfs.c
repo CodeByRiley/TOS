@@ -1,228 +1,158 @@
-/* kernel/fs/fat/fat_vfs.c , FAT-to-VFS adapter.
- *
- * Translates generic VFS handles and operations to the singleton FAT image.
- */
-#include "utilities/log.h"
-#include <fs/fat/fat.h>
-#include <fs/fat/fat_vfs.h>
+/* FAT directory entries are inode identities; clusters are NOT identities
+ * (empty files have no cluster, and truncation changes their first cluster). */
+#include "fat_internal.h"
+#include "fat_vfs.h"
 #include <fs/vfs/vfs.h>
-#include <memory/heap.h>
 #include <utilities/string.h>
 
-#define S_IFREG 0100000u
-#define S_IFDIR 0040000u
-#define S_IRUSR 0000400u
-#define S_IWUSR 0000200u
-#define S_IXUSR 0000100u
-#define S_IRGRP 0000040u
-#define S_IWGRP 0000020u
-#define S_IXGRP 0000010u
-#define S_IROTH 0000004u
-#define S_IWOTH 0000002u
-#define S_IXOTH 0000001u
+static const struct vfs_inode_operations inode_ops;
+static const struct vfs_file_operations file_ops;
+static struct vfs_superblock *mounted_super;
 
-static char fat_context;
-
-static void sync_file(struct vfs_file *file, const struct fat_file *fat) {
-  file->position = fat->pos;
-  file->size = fat->size;
-  file->inode = fat->first_cluster ? fat->first_cluster : 1;
-  file->type = VFS_NODE_FILE;
+static u8 attributes(const struct vfs_inode *inode) {
+    return inode->private_data ? ((const struct dir_entry *)inode->private_data)->attr
+                               : FAT_ATTR_DIRECTORY;
 }
 
-static int fat_backend_open(void *fs, const char *path, struct vfs_file *file) {
-  (void)fs;
-  struct fat_stat metadata;
-  if (fat_stat(path, &metadata) != 0)
-    return -1;
-  if (metadata.is_dir) {
-    file->size = 0;
-    file->inode = metadata.first_cluster ? metadata.first_cluster : 1;
-    file->type = VFS_NODE_DIRECTORY;
-    file->attributes = metadata.attr;
+static u64 entry_number(const void *entry) {
+    return entry ? (u64)((const u8 *)entry - fat_volume.image) + 2 : 1;
+}
+
+static struct fat_dir directory(const struct vfs_inode *inode) {
+    if (!inode->private_data) return root_directory();
+    return (struct fat_dir){ .first_cluster = fat_impl_entry_get_cluster(inode->private_data) };
+}
+
+static struct vfs_inode *entry_inode(struct vfs_superblock *super, void *entry) {
+    u8 attr = entry ? ((struct dir_entry *)entry)->attr : FAT_ATTR_DIRECTORY;
+    return vfs_inode_get(super, entry_number(entry),
+        attr & FAT_ATTR_DIRECTORY ? VFS_NODE_DIRECTORY : VFS_NODE_FILE,
+        entry, &inode_ops, &file_ops);
+}
+
+static int lookup(struct vfs_inode *dir, const char *name, struct vfs_inode **out) {
+    struct found_entry entry;
+    if (fat_impl_find_entry(directory(dir), name, &entry)) return -1;
+    *out = entry_inode(dir->super, entry.raw);
+    return *out ? 0 : -1;
+}
+
+static int getattr(struct vfs_inode *inode, struct vfs_stat *out) {
+    u8 attr = attributes(inode);
+    u64 size = inode->private_data ? fat_impl_entry_get_size(inode->private_data) : 0;
+    u32 mode = attr & FAT_ATTR_READ_ONLY ? 0444u : 0666u;
+    mode |= inode->type == VFS_NODE_DIRECTORY ? 0040000u | 0111u : 0100000u;
+    *out = (struct vfs_stat){ .inode = inode->number, .size = size,
+        .blocks = (size + 511u) / 512u, .block_size = cluster_bytes(),
+        .mode = mode, .type = inode->type, .attributes = attr };
     return 0;
-  }
-  struct fat_file *fat = kmalloc(sizeof(*fat));
-  if (!fat)
+}
+
+static int create(struct vfs_inode *dir, const char *name, struct vfs_inode **out) {
+    struct found_entry entry;
+    struct fat_dir parent = directory(dir);
+    if (fat_create_at(parent, name, &entry)) return -1;
+    *out = entry_inode(dir->super, entry.raw);
+    if (*out) return 0;
+    fat_remove_at(parent, name, 0);
     return -1;
-  if (fat_open(path, fat) != 0) {
-    kfree(fat);
-    return -1;
-  }
-  file->private_data = fat;
-  sync_file(file, fat);
-  return 0;
 }
 
-static int fat_backend_create(void *fs, const char *path,
-                              struct vfs_file *file) {
-  (void)fs;
-  struct fat_file *fat = kmalloc(sizeof(*fat));
-  if (!fat)
-    return -1;
-  if (fat_create(path, fat) != 0) {
-    kfree(fat);
-    return -1;
-  }
-  file->private_data = fat;
-  sync_file(file, fat);
-  return 0;
+static int mkdir(struct vfs_inode *dir, const char *name) {
+    return fat_mkdir_at(directory(dir), name);
+}
+static int unlink(struct vfs_inode *dir, const char *name) {
+    return fat_remove_at(directory(dir), name, 0);
+}
+static int rmdir(struct vfs_inode *dir, const char *name) {
+    return fat_remove_at(directory(dir), name, 1);
 }
 
-static void fat_backend_close(void *fs, struct vfs_file *file) {
-  (void)fs;
-  if (file->private_data)
-    kfree(file->private_data);
-  file->private_data = 0;
+/* Rebuild the cluster cursor from current directory-entry metadata so
+ * independent opens observe writes/truncation through the same inode. */
+static int cursor(struct vfs_inode *inode, u64 position, struct fat_file *out) {
+    if (!inode->private_data || position > UINT32_MAX) return -1;
+    fat_file_from_entry(inode->private_data, out);
+    return fat_seek(out, (u32)position);
 }
 
-static usize fat_backend_read(void *fs, struct vfs_file *file, void *buffer,
-                              usize length) {
-  (void)fs;
-  struct fat_file *fat = file->private_data;
-  usize result = fat_read(fat, buffer, length);
-  sync_file(file, fat);
-  return result;
+static size_t read(struct vfs_file *file, void *buffer, size_t length) {
+    struct fat_file fat;
+    if (cursor(file->node, file->position, &fat)) return 0;
+    size_t count = fat_read(&fat, buffer, length);
+    file->position = fat.pos;
+    return count;
+}
+static size_t write(struct vfs_file *file, const void *buffer, size_t length) {
+    struct fat_file fat;
+    if ((attributes(file->node) & FAT_ATTR_READ_ONLY) ||
+        cursor(file->node, file->position, &fat)) return 0;
+    if (length > UINT32_MAX - fat.pos) length = UINT32_MAX - fat.pos;
+    size_t count = fat_write(&fat, buffer, length);
+    file->position = fat.pos;
+    return count;
+}
+static int seek(struct vfs_file *file, u64 position) {
+    struct fat_file fat;
+    if (cursor(file->node, position, &fat)) return -1;
+    file->position = fat.pos;
+    return 0;
+}
+static int truncate(struct vfs_inode *inode) {
+    struct fat_file fat;
+    if ((attributes(inode) & FAT_ATTR_READ_ONLY) || cursor(inode, 0, &fat)) return -1;
+    return fat_truncate(&fat);
+}
+static long iterate(struct vfs_inode *dir, u32 *index, struct vfs_dirent *out) {
+    int is_dir;
+    struct fat_dir parent = directory(dir);
+    long result = fat_impl_read_dir_one(parent, index, out->name, sizeof(out->name), &is_dir);
+    if (result <= 0) return result;
+    struct found_entry entry;
+    if (fat_impl_find_entry(parent, out->name, &entry)) return -1;
+    out->inode = entry_number(entry.raw);
+    out->type = is_dir ? VFS_NODE_DIRECTORY : VFS_NODE_FILE;
+    return 1;
 }
 
-static usize fat_backend_write(void *fs, struct vfs_file *file,
-                               const void *buffer, usize length) {
-  (void)fs;
-  struct fat_file *fat = file->private_data;
-  usize result = fat_write(fat, buffer, length);
-  sync_file(file, fat);
-  return result;
-}
-
-static int fat_backend_seek(void *fs, struct vfs_file *file, u64 position) {
-  (void)fs;
-  if (position > UINT32_MAX)
-    return -1;
-  struct fat_file *fat = file->private_data;
-  int result = fat_seek(fat, (u32)position);
-  sync_file(file, fat);
-  return result;
-}
-
-static int fat_backend_truncate(void *fs, struct vfs_file *file) {
-  (void)fs;
-  struct fat_file *fat = file->private_data;
-  int result = fat_truncate(fat);
-  sync_file(file, fat);
-  return result;
-}
-
-static void fat_stat_to_vfs(const struct fat_stat *fat, struct vfs_stat *out) {
-  memset(out, 0, sizeof(*out));
-  out->size = fat->size;
-  out->inode = fat->first_cluster ? fat->first_cluster : 1;
-  out->blocks = (fat->size + 511u) / 512u;
-  out->block_size = 4096;
-  out->type = fat->is_dir ? VFS_NODE_DIRECTORY : VFS_NODE_FILE;
-  out->attributes = fat->attr;
-  u32 permissions =
-      (fat->attr & 0x01)
-          ? (S_IRUSR | S_IRGRP | S_IROTH)
-          : (S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
-  if (fat->is_dir)
-    out->mode = S_IFDIR | permissions | S_IXUSR | S_IXGRP | S_IXOTH;
-  else
-    out->mode = S_IFREG | permissions;
-}
-
-static int fat_backend_stat(void *fs, const char *path, struct vfs_stat *out) {
-  (void)fs;
-  struct fat_stat fat;
-  if (fat_stat(path, &fat) != 0)
-    return -1;
-  fat_stat_to_vfs(&fat, out);
-  return 0;
-}
-
-static int fat_backend_file_stat(void *fs, struct vfs_file *file,
-                                 struct vfs_stat *out) {
-  (void)fs;
-  struct fat_file *fat = file->private_data;
-  memset(out, 0, sizeof(*out));
-  out->size = fat->size;
-  out->inode = fat->first_cluster ? fat->first_cluster : 1;
-  out->blocks = (fat->size + 511u) / 512u;
-  out->block_size = 4096;
-  out->type = VFS_NODE_FILE;
-  out->mode =
-      S_IFREG | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH;
-  return 0;
-}
-
-static int fat_backend_unlink(void *fs, const char *path) {
-  (void)fs;
-  return fat_unlink(path);
-}
-static int fat_backend_mkdir(void *fs, const char *path) {
-  (void)fs;
-  return fat_mkdir(path);
-}
-static int fat_backend_rmdir(void *fs, const char *path) {
-  (void)fs;
-  return fat_rmdir(path);
-}
-
-static long fat_backend_read_dir(void *fs, const char *path, u32 *index,
-                                 struct vfs_dirent *out) {
-  (void)fs;
-  int is_directory = 0;
-  long result = fat_read_dir_one(path, index, out->name, sizeof(out->name),
-                                 &is_directory);
-  if (result <= 0)
-    return result;
-  out->inode = *index ? *index : 1;
-  out->type = is_directory ? VFS_NODE_DIRECTORY : VFS_NODE_FILE;
-  return result;
-}
-
-static const struct vfs_operations fat_operations = {
-    .open = fat_backend_open,
-    .create = fat_backend_create,
-    .close = fat_backend_close,
-    .read = fat_backend_read,
-    .write = fat_backend_write,
-    .seek = fat_backend_seek,
-    .truncate = fat_backend_truncate,
-    .stat = fat_backend_stat,
-    .file_stat = fat_backend_file_stat,
-    .unlink = fat_backend_unlink,
-    .mkdir = fat_backend_mkdir,
-    .rmdir = fat_backend_rmdir,
-    .read_dir = fat_backend_read_dir,
+static const struct vfs_inode_operations inode_ops = {
+    .lookup = lookup, .create = create, .mkdir = mkdir, .unlink = unlink,
+    .rmdir = rmdir, .getattr = getattr, .truncate = truncate,
+};
+static const struct vfs_file_operations file_ops = {
+    .read = read, .write = write, .seek = seek, .iterate = iterate,
 };
 
-static int fat_probe(const void *image, usize size) {
-  if (!image || size < 512)
+static int probe(const void *image, size_t size) {
+    if (!image || size < 512) return 0;
+    size_t volume_size = fat_volume_size(image, 0);
+    return volume_size && volume_size <= size;
+}
+static int attach(struct vfs_superblock *super, void *context) {
+    if (mounted_super || fat_volume.type == FAT_TYPE_NONE || context != fat_volume.image) return -1;
+    super->root = entry_inode(super, 0);
+    if (!super->root) return -1;
+    mounted_super = super;
+    super->private_data = &fat_volume;
     return 0;
-  usize volume_size = fat_volume_size(image, 0);
-  return volume_size && volume_size <= size;
 }
-
-static int fat_mount_image(void *image, usize size, void **fs_out) {
-  if (fat_init(image, size) != 0)
-    return -1;
-  *fs_out = &fat_context;
-  return 0;
+static int mount(struct vfs_superblock *super, void *image, size_t size) {
+    /* The retained FAT disk engine is single-volume. Reject a second mount
+     * BEFORE fat_init can replace the state beneath existing handles. */
+    if (mounted_super || fat_init(image, size)) return -1;
+    fat_set_sector_writer(0);
+    return attach(super, image);
 }
-
+static void unmount(struct vfs_superblock *super) {
+    if (mounted_super == super) {
+        mounted_super = 0;
+        fat_set_sector_writer(0);
+    }
+}
 static const struct vfs_filesystem fat_filesystem = {
-    .name = FAT_VFS_NAME,
-    .probe = fat_probe,
-    .mount = fat_mount_image,
-    .unmount = 0,
-    .operations = &fat_operations,
+    .name = FAT_VFS_NAME, .probe = probe, .mount = mount,
+    .attach = attach, .unmount = unmount,
 };
 
-void fat_vfs_register(void) {
-  log_write("fat: initialising VFS", KERNEL, LOG_INFO);
-  vfs_register(&fat_filesystem);
-}
-
-int fat_vfs_attach(const char *mountpoint) {
-  return vfs_attach(mountpoint, FAT_VFS_NAME, &fat_context);
-}
+void fat_vfs_register(void) { vfs_register(&fat_filesystem); }
+int fat_vfs_attach(const char *path) { return vfs_attach(path, FAT_VFS_NAME, fat_volume.image); }

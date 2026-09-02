@@ -4,10 +4,8 @@
  * sectors through to a storage backend. BPB and directory-entry layouts stay
  * private so VFS and storage callers do not depend on disk-format structs.
  *
- * Implementation: kernel/fs/fat/fat.c,
- *                 kernel/fs/fat/fat16.c,
- *                 kernel/fs/fat/fat32.c,
- *                 kernel/fs/fat/fat_directory.c.
+ * Path facade: fat.c. Volume/cluster state: fat_mount.c. Byte I/O:
+ * fat_file.c. Directory entries and name encoding: fat_directory.c/fat_name.c.
  */
 #ifndef FS_FAT_H
 #define FS_FAT_H
@@ -62,6 +60,7 @@ long fat_read_root_dir(uint32_t *index, char *buffer, size_t length);
 long fat_read_dir_one(const char *path, uint32_t *index, char *buffer,
                       size_t length, int *is_dir);
 void fat_set_sector_writer(fat_sector_writer writer);
+int fat_write_through_enabled(void);
 
 /* Storage-backend helpers; neither exposes an on-disk structure. */
 size_t fat_volume_size(const void *boot_sector,

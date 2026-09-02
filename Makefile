@@ -6,7 +6,7 @@ rwildcard = $(foreach d,$(wildcard $1*),$(call rwildcard,$d/,$2) $(filter $(subs
 # offsets.c exists to be compiled with -S and scraped for NASM %defines; it
 # has no code and must never be linked into the kernel.
 asm_offsets_src := kernel/arch/offsets.c
-kernel_c_source_files := $(filter-out $(asm_offsets_src), $(call rwildcard,kernel/,*.c))
+kernel_c_source_files := $(filter-out $(asm_offsets_src) kernel/fs_old/%, $(call rwildcard,kernel/,*.c))
 kernel_c_object_files := $(patsubst kernel/%.c, build/kernel/%.o, $(kernel_c_source_files))
 
 # AP trampoline is assembled flat (org 0x8000, real-mode start) , never elf64.
@@ -193,12 +193,20 @@ HOST_TEST_DIR := build/tests
 # and leaves this out.
 HOST_KERNEL_STUBS := tests/host_kernel_stubs.c
 
+VFS_HOST_SRCS := kernel/fs/vfs/vfs.c kernel/fs/vfs/namei.c kernel/fs/vfs/file.c
+FAT_HOST_SRCS := kernel/fs/fat/fat.c kernel/fs/fat/fat_mount.c \
+		kernel/fs/fat/fat_file.c kernel/fs/fat/fat_name.c \
+		kernel/fs/fat/fat_directory.c kernel/fs/fat/fat_vfs.c
+FS_HOST_HEADERS := $(wildcard kernel/fs/vfs/*.h kernel/fs/fat/*.h kernel/fs/ext2/*.h)
+
 HOST_TEST_BINS := \
+	$(HOST_TEST_DIR)/vfs_test.exe \
 	$(HOST_TEST_DIR)/pmm_test.exe \
 	$(HOST_TEST_DIR)/vmm_test.exe \
 	$(HOST_TEST_DIR)/process_pml4_test.exe \
 	$(HOST_TEST_DIR)/fat_directory_test.exe \
 	$(HOST_TEST_DIR)/ext2_vfs_test.exe \
+	$(HOST_TEST_DIR)/ext2_device_test.exe \
 	$(HOST_TEST_DIR)/stdio_mode_test.exe \
 	$(HOST_TEST_DIR)/bmp_decode_test.exe \
 	$(HOST_TEST_DIR)/gfx_ui_test.exe \
@@ -208,6 +216,10 @@ HOST_TEST_BINS := \
 
 $(HOST_TEST_DIR):
 	mkdir -p $@
+
+$(HOST_TEST_DIR)/vfs_test.exe: tests/vfs_test.c $(VFS_HOST_SRCS) \
+		kernel/fs/vfs/vfs.h kernel/fs/vfs/internal.h | $(HOST_TEST_DIR)
+	$(HOST_CC) $(HOST_TEST_CFLAGS) -I kernel tests/vfs_test.c $(VFS_HOST_SRCS) -o $@
 
 $(HOST_TEST_DIR)/pmm_test.exe: tests/pmm_test.c kernel/memory/pmm.c \
 		kernel/memory/pmm.h | $(HOST_TEST_DIR)
@@ -227,13 +239,11 @@ $(HOST_TEST_DIR)/process_pml4_test.exe: tests/process_pml4_test.c \
 		tests/process_pml4_test.c kernel/loader/process.c -o $@
 
 $(HOST_TEST_DIR)/fat_directory_test.exe: tests/fat_directory_test.c \
-		$(HOST_KERNEL_STUBS) kernel/fs/fat/fat.c kernel/fs/fat/fat16.c \
-		kernel/fs/fat/fat32.c kernel/fs/fat/fat_directory.c \
-		kernel/fs/fat/fat.h kernel/fs/fat/fat_internal.h \
+		$(HOST_KERNEL_STUBS) $(FAT_HOST_SRCS) $(VFS_HOST_SRCS) \
+		$(FS_HOST_HEADERS) tests/vfs_backend_checks.h \
 		| $(HOST_TEST_DIR)
 	$(HOST_CC) $(HOST_TEST_CFLAGS) -I kernel \
-		tests/fat_directory_test.c kernel/fs/fat/fat.c kernel/fs/fat/fat16.c \
-		kernel/fs/fat/fat32.c kernel/fs/fat/fat_directory.c \
+		tests/fat_directory_test.c $(FAT_HOST_SRCS) $(VFS_HOST_SRCS) \
 		$(HOST_KERNEL_STUBS) -o $@
 
 $(HOST_TEST_DIR)/ext2-base.img: tools/create_ext2_test_image.sh \
@@ -241,26 +251,56 @@ $(HOST_TEST_DIR)/ext2-base.img: tools/create_ext2_test_image.sh \
 	$(call run_linux,bash tools/create_ext2_test_image.sh $@)
 
 EXT2_HOST_SRCS := kernel/fs/ext2/ext2_mount.c kernel/fs/ext2/ext2_inode.c \
+		kernel/fs/ext2/ext2_io.c \
 		kernel/fs/ext2/ext2_dir.c kernel/fs/ext2/ext2_file.c \
-		kernel/fs/ext2/ext2_vfs.c kernel/fs/vfs/vfs.c
+		kernel/fs/ext2/ext2_vfs.c $(VFS_HOST_SRCS)
 
 $(HOST_TEST_DIR)/ext2_vfs_test.exe: tests/ext2_vfs_test.c $(EXT2_HOST_SRCS) \
+		tests/vfs_backend_checks.h $(FS_HOST_HEADERS) \
 		$(HOST_KERNEL_STUBS) $(HOST_TEST_DIR)/ext2-base.img | $(HOST_TEST_DIR)
 	$(HOST_CC) $(HOST_TEST_CFLAGS) -I kernel tests/ext2_vfs_test.c \
 		$(EXT2_HOST_SRCS) $(HOST_KERNEL_STUBS) -o $@
 
 $(HOST_TEST_DIR)/stdio_mode_test.exe: tests/stdio_mode_test.c \
-		$(HOST_KERNEL_STUBS) kernel/fs/stdio.c kernel/fs/fat/fat.c \
-		kernel/fs/fat/fat16.c kernel/fs/fat/fat32.c \
-		kernel/fs/fat/fat_directory.c kernel/fs/fat/fat_vfs.c \
-		kernel/fs/vfs/vfs.c \
-		kernel/fs/stdio.h kernel/fs/fat/fat.h kernel/fs/vfs/vfs.h \
+		$(HOST_KERNEL_STUBS) kernel/fs/stdio.c $(FAT_HOST_SRCS) $(VFS_HOST_SRCS) \
+		kernel/fs/stdio.h $(FS_HOST_HEADERS) \
 		| $(HOST_TEST_DIR)
 	$(HOST_CC) $(HOST_TEST_CFLAGS) -fno-builtin -I kernel tests/stdio_mode_test.c \
-		kernel/fs/stdio.c kernel/fs/fat/fat.c kernel/fs/fat/fat16.c \
-		kernel/fs/fat/fat32.c kernel/fs/fat/fat_directory.c \
-		kernel/fs/fat/fat_vfs.c \
-		kernel/fs/vfs/vfs.c $(HOST_KERNEL_STUBS) -o $@
+		kernel/fs/stdio.c $(FAT_HOST_SRCS) $(VFS_HOST_SRCS) $(HOST_KERNEL_STUBS) -o $@
+
+$(HOST_TEST_DIR)/ext2_device_test.exe: tests/ext2_device_test.c $(EXT2_HOST_SRCS) \
+		$(FS_HOST_HEADERS) tests/vfs_backend_checks.h kernel/drivers/storage/block.h \
+		$(HOST_KERNEL_STUBS) $(HOST_TEST_DIR)/ext2-base.img | $(HOST_TEST_DIR)
+	$(HOST_CC) $(HOST_TEST_CFLAGS) -I kernel tests/ext2_device_test.c \
+		$(EXT2_HOST_SRCS) $(HOST_KERNEL_STUBS) -o $@
+
+.PHONY: test-storage test-fs
+$(HOST_TEST_DIR)/ext2-2k-base.img: tools/create_ext2_test_image.sh \
+		tests/fixtures/ext2_root/seed/hello.txt | $(HOST_TEST_DIR)
+	$(call run_linux,bash tools/create_ext2_test_image.sh $@ 2048 ^filetype)
+
+$(HOST_TEST_DIR)/ext2-4k-base.img: tools/create_ext2_test_image.sh \
+		tests/fixtures/ext2_root/seed/hello.txt | $(HOST_TEST_DIR)
+	$(call run_linux,bash tools/create_ext2_test_image.sh $@ 4096)
+
+test-storage: test-fs \
+		$(HOST_TEST_DIR)/ext2-2k-base.img $(HOST_TEST_DIR)/ext2-4k-base.img
+	$(HOST_TEST_DIR)/ext2_device_test.exe build/tests/ext2-2k-base.img build/tests/ext2-2k-device.img
+	$(HOST_TEST_DIR)/ext2_device_test.exe build/tests/ext2-4k-base.img build/tests/ext2-4k-device.img
+	$(call run_linux,e2fsck -fn build/tests/ext2-2k-device.img)
+	$(call run_linux,e2fsck -fn build/tests/ext2-4k-device.img)
+
+.PHONY: test-fs
+test-fs: $(HOST_TEST_DIR)/vfs_test.exe $(HOST_TEST_DIR)/fat_directory_test.exe \
+		$(HOST_TEST_DIR)/ext2_device_test.exe \
+		$(HOST_TEST_DIR)/ext2_vfs_test.exe $(HOST_TEST_DIR)/stdio_mode_test.exe
+	$(HOST_TEST_DIR)/vfs_test.exe
+	$(HOST_TEST_DIR)/fat_directory_test.exe
+	$(HOST_TEST_DIR)/ext2_vfs_test.exe
+	$(HOST_TEST_DIR)/ext2_device_test.exe
+	$(HOST_TEST_DIR)/stdio_mode_test.exe
+	$(call run_linux,e2fsck -fn build/tests/ext2-mutated.img)
+	$(call run_linux,e2fsck -fn build/tests/ext2-device.img)
 
 $(HOST_TEST_DIR)/bmp_decode_test.exe: tests/bmp_decode_test.c \
 		userspace/lib/bmp.c userspace/lib/bmp.h | $(HOST_TEST_DIR)

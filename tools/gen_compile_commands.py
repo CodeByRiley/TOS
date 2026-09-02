@@ -87,6 +87,8 @@ def rglob(base):
 
 # --- kernel ---------------------------------------------------------------
 for f in rglob(ROOT / "kernel"):
+    if "fs_old" in f.relative_to(ROOT / "kernel").parts:
+        continue
     add(f, ROOT, KERNEL_FLAGS)
 add(ROOT / "build/generated/symtab.c", ROOT, KERNEL_FLAGS)
 
