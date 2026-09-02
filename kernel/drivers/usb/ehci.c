@@ -8,6 +8,7 @@
 #include <devices/pit.h>
 #include <devices/usb.h>
 #include <drivers/usb/ehci.h>
+#include <drivers/usb/storage/usb_storage.h>
 #include <input/mouse.h>
 #include <interrupts/idt.h>
 #include <interrupts/pic.h>
@@ -39,6 +40,8 @@
 #define EHCI_ARENA_PERIODIC_QH  0x600
 #define EHCI_ARENA_PERIODIC_QTD 0x640
 #define EHCI_ARENA_INT_BUF      0x680
+#define EHCI_ARENA_BULK_BUF     0x800
+#define EHCI_ARENA_BULK_MAX     2048
 
 #define EHCI_INT_KIND_NONE           0
 #define EHCI_INT_KIND_HID_BOOT_MOUSE 1
@@ -63,6 +66,14 @@ struct ehci_int_ep {
   volatile u16 last_len;
 };
 
+struct ehci_hcd;
+struct ehci_storage_device {
+  struct ehci_hcd *hc;
+  u8 address, port;
+  u16 maxpacket;
+  int disconnected;
+};
+
 struct ehci_hcd {
   struct pci_addr pci_addr;
   uintptr_t mmio;
@@ -78,6 +89,9 @@ struct ehci_hcd {
   u64 arena_phys;
   u8 *arena;
   struct ehci_int_ep int_ep;
+  struct spinlock async_lock;
+  int async_failed;
+  struct ehci_storage_device storage[15];
 };
 
 struct ehci_hid_pointer {
@@ -237,8 +251,29 @@ static void ehci_qtd_init(struct ehci_qtd *qtd, u64 next_phys,
   qtd_token_write(qtd, token);
 }
 
-/* Execute one endpoint-zero transfer on the permanent asynchronous QH. */
-static int ehci_ctrl_xfer(struct ehci_hcd *hc, u8 addr, u16 maxpacket,
+/* Stop fetching before rewriting the shared QH/qTDs. If the controller cannot
+ * quiesce, keep its permanent arena pinned and refuse further async requests. */
+static int ehci_async_stop(struct ehci_hcd *hc) {
+  ehci_op_write(hc, EHCI_USBCMD, ehci_op_read(hc, EHCI_USBCMD) &
+                ~CMD_REG_ASYNC_SCHEDULE_ENABLE);
+  if (ehci_wait_clear(hc->op, EHCI_USBSTS, STS_REG_ASYNC_SCHEDULE_STATUS, 100)) {
+    hc->async_failed = 1;
+    return -1;
+  }
+  ehci_dma_barrier();
+  return 0;
+}
+static void ehci_async_start(struct ehci_hcd *hc) {
+  ehci_dma_barrier();
+  ehci_op_write(hc, EHCI_USBCMD, ehci_op_read(hc, EHCI_USBCMD) |
+                CMD_REG_ASYNC_SCHEDULE_ENABLE);
+}
+static int ehci_transfer_error(u32 token) {
+  return (token & QTD_ERROR_MASK) == QTD_STATUS_HALTED ? USB_STORAGE_STALL : -1;
+}
+
+/* Caller holds async_lock and has stopped the asynchronous schedule. */
+static int ehci_ctrl_locked(struct ehci_hcd *hc, u8 addr, u16 maxpacket,
                           const struct usb_setup_packet *setup, void *data,
                           u16 length, u32 timeout_ms) {
   if (!hc || !setup || maxpacket == 0 || length > EHCI_ARENA_DATA_MAX ||
@@ -277,14 +312,14 @@ static int ehci_ctrl_xfer(struct ehci_hcd *hc, u8 addr, u16 maxpacket,
   memset(qh->overlay.buf, 0, sizeof(qh->overlay.buf));
   ehci_dma_barrier();
   qh_next_write(qh, (u32)ehci_qtd_phys(hc, 0));
-  ehci_dma_barrier();
+  ehci_async_start(hc);
 
   int done = 0;
   int failed = 0;
   for (u64 elapsed = 0; elapsed < (u64)timeout_ms * 10; elapsed++) {
     for (int i = 0; i <= status_index; i++) {
       if (qtd_token_read(ehci_qtd_at(hc, i)) & QTD_ERROR_MASK) {
-        failed = 1;
+        failed = ehci_transfer_error(qtd_token_read(ehci_qtd_at(hc, i)));
         break;
       }
     }
@@ -309,7 +344,7 @@ static int ehci_ctrl_xfer(struct ehci_hcd *hc, u8 addr, u16 maxpacket,
     for (int i = 0; i <= status_index; i++)
       log_write_hex("EHCI:   qTD token", qtd_token_read(ehci_qtd_at(hc, i)),
                     KERNEL, LOG_ERROR);
-    return -1;
+    return failed ? failed : -1;
   }
 
   if (!length)
@@ -320,6 +355,96 @@ static int ehci_ctrl_xfer(struct ehci_hcd *hc, u8 addr, u16 maxpacket,
   if (dir_in)
     memcpy(data, data_buf, (usize)transferred);
   return transferred;
+}
+
+static int ehci_ctrl_xfer(struct ehci_hcd *hc, u8 addr, u16 maxpacket,
+                          const struct usb_setup_packet *setup, void *data,
+                          u16 length, u32 timeout_ms) {
+  if (!hc || (length && !data)) return -1;
+  spin_lock(&hc->async_lock);
+  int rc = -1;
+  if (!hc->async_failed && !ehci_async_stop(hc)) {
+    rc = ehci_ctrl_locked(hc, addr, maxpacket, setup, data, length, timeout_ms);
+    if (ehci_async_stop(hc)) rc = -1;
+  }
+  spin_unlock(&hc->async_lock);
+  return rc;
+}
+
+static int ehci_storage_connected(struct ehci_storage_device *dev) {
+  u32 status = ehci_op_read(dev->hc, EHCI_PORTSC(dev->port));
+  u32 needed = PORTSC_REG_CONNECT_STATUS | PORTSC_REG_ENABLE;
+  if ((status & needed) != needed || (status & PORTSC_REG_CONNECT_STATUS_CHANGE))
+    dev->disconnected = 1; /* never direct a stale mount at a replacement disk */
+  return !dev->disconnected;
+}
+static int ehci_storage_control(void *context,
+                                const struct usb_setup_packet *setup, void *data) {
+  struct ehci_storage_device *dev = context;
+  if (!ehci_storage_connected(dev)) return -1;
+  return ehci_ctrl_xfer(dev->hc, dev->address, dev->maxpacket, setup, data,
+                        setup->wLength, EHCI_XFER_TIMEOUT_MS);
+}
+
+static int ehci_storage_bulk(void *context, u8 endpoint, u16 packet, u8 *toggle,
+                             void *buffer, u32 length, u32 *actual) {
+  struct ehci_storage_device *dev = context;
+  struct ehci_hcd *hc = dev->hc;
+  *actual = 0;
+  if (!buffer || !length || packet != 512) return -1;
+  spin_lock(&hc->async_lock);
+  int rc = -1;
+  if (hc->async_failed || !ehci_storage_connected(dev) || ehci_async_stop(hc))
+    goto out;
+  u8 *bounce = hc->arena + EHCI_ARENA_BULK_BUF;
+  struct ehci_qh *qh = ehci_qh_at(hc, EHCI_ARENA_CONTROL_QH);
+  struct ehci_qtd *qtd = ehci_qtd_at(hc, 0);
+  int input = (endpoint & 0x80) != 0;
+  while (*actual < length) {
+    u32 chunk = length - *actual;
+    if (chunk > EHCI_ARENA_BULK_MAX) chunk = EHCI_ARENA_BULK_MAX;
+    if (!input) memcpy(bounce, (u8 *)buffer + *actual, chunk);
+    ehci_qtd_init(qtd, 0, 0, input ? QTD_PID_IN : QTD_PID_OUT, *toggle,
+                  chunk, hc->arena_phys + EHCI_ARENA_BULK_BUF, 0);
+    qh->ep_char = FIELD_PREP(QH_EPCHAR_ADDR_MASK, dev->address) |
+                  FIELD_PREP(QH_EPCHAR_EP_MASK, endpoint & 0x0f) |
+                  QH_EPCHAR_SPEED_HIGH | QH_EPCHAR_DTC |
+                  FIELD_PREP(QH_EPCHAR_MAXP_MASK, packet);
+    qh->ep_cap = QH_EPCAP_MULT_1;
+    qh->curr_qtd = 0;
+    memset(&qh->overlay, 0, sizeof(qh->overlay));
+    qh->overlay.alt_next = LINK_TERMINATE;
+    qh->overlay.next = (u32)ehci_qtd_phys(hc, 0);
+    ehci_async_start(hc);
+    u32 token = QTD_STATUS_ACTIVE;
+    for (u32 elapsed = 0; elapsed < EHCI_XFER_TIMEOUT_MS * 10; elapsed++) {
+      token = qtd_token_read(qtd);
+      if (!(token & QTD_STATUS_ACTIVE) || (token & QTD_ERROR_MASK)) break;
+      pit_delay_us(100);
+    }
+    if (ehci_async_stop(hc)) goto out;
+    token = qtd_token_read(qtd);
+    qh_next_write(qh, LINK_TERMINATE);
+    u32 remaining = FIELD_GET(QTD_TOTAL_LEN_MASK, token);
+    if (remaining > chunk) goto out;
+    u32 done = chunk - remaining;
+    if (input) memcpy((u8 *)buffer + *actual, bounce, done);
+    *actual += done;
+    if (token & QTD_ERROR_MASK) {
+      rc = ehci_transfer_error(token);
+      goto out;
+    }
+    if (token & QTD_STATUS_ACTIVE) goto out;
+    /* A short transfer ending on a packet boundary includes a zero packet. */
+    u32 packets = (done + packet - 1) / packet;
+    if (done < chunk && done % packet == 0) packets++;
+    *toggle ^= packets & 1;
+    if (done < chunk) break;
+  }
+  rc = 0;
+out:
+  spin_unlock(&hc->async_lock);
+  return rc;
 }
 
 static int ehci_get_descriptor(struct ehci_hcd *hc, u8 addr, u16 maxpacket,
@@ -658,6 +783,15 @@ static void ehci_enumerate_port(struct ehci_hcd *hc, int port) {
   }
   log_write_int("EHCI: device configured", config->bConfigurationValue,
                 KERNEL, LOG_INFO);
+  struct ehci_storage_device *disk = &hc->storage[port];
+  *disk = (struct ehci_storage_device){
+      .hc = hc, .address = address, .port = port, .maxpacket = maxpacket,
+  };
+  struct usb_storage_transport transport = {
+      .context = disk, .control = ehci_storage_control, .bulk = ehci_storage_bulk,
+  };
+  if (usb_storage_probe(&transport, ehci_config_buf, config_length) == 0)
+    log_write("USB storage: SCSI/BOT disk ready", KERNEL, LOG_INFO);
   if (!have_pointer)
     return;
   if (ehci_hid_request(hc, address, maxpacket, USB_REQ_SET_IDLE, 0,

@@ -23,6 +23,7 @@
 #include <drivers/video/virtualbox/vbox_video.h>
 #include <fs/ext2/ext2.h>
 #include <drivers/storage/ahci_block.h>
+#include <drivers/usb/storage/usb_storage.h>
 #include <fs/fat/ahci/fat_ahci.h>
 #include <fs/fat/fat_vfs.h>
 #include <fs/vfs/vfs.h>
@@ -203,6 +204,17 @@ static void filesystem_init(u64 mb2_addr) {
         log_write(fstype, FILESYS, LOG_INFO);
       fs_mounted = true;
     }
+  }
+
+  /* Transport discovery precedes VFS setup. Mount supported USB volumes only
+   * after the root exists; synthetic mountpoints need no on-disk directory. */
+  for (size_t i = 0; fs_mounted && i < usb_storage_count(); i++) {
+    char path[] = "/usb0";
+    path[4] += (char)i;
+    if (ext2_mount_device(path, usb_storage_device(i)) == 0)
+      log_write(path, FILESYS, LOG_INFO);
+    else
+      log_write("USB storage: no supported raw ext2 volume", FILESYS, LOG_WARN);
   }
 
   /* Panic only if nothing worked */

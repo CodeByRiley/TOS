@@ -207,6 +207,7 @@ HOST_TEST_BINS := \
 	$(HOST_TEST_DIR)/fat_directory_test.exe \
 	$(HOST_TEST_DIR)/ext2_vfs_test.exe \
 	$(HOST_TEST_DIR)/ext2_device_test.exe \
+	$(HOST_TEST_DIR)/usb_storage_test.exe \
 	$(HOST_TEST_DIR)/stdio_mode_test.exe \
 	$(HOST_TEST_DIR)/bmp_decode_test.exe \
 	$(HOST_TEST_DIR)/gfx_ui_test.exe \
@@ -274,6 +275,14 @@ $(HOST_TEST_DIR)/ext2_device_test.exe: tests/ext2_device_test.c $(EXT2_HOST_SRCS
 	$(HOST_CC) $(HOST_TEST_CFLAGS) -I kernel tests/ext2_device_test.c \
 		$(EXT2_HOST_SRCS) $(HOST_KERNEL_STUBS) -o $@
 
+USB_STORAGE_HOST_SRCS := kernel/drivers/usb/storage/bot.c \
+		kernel/drivers/usb/storage/scsi.c kernel/drivers/usb/storage/usb_storage.c
+$(HOST_TEST_DIR)/usb_storage_test.exe: tests/usb_storage_test.c $(USB_STORAGE_HOST_SRCS) \
+		kernel/drivers/usb/storage/usb_storage.h kernel/drivers/storage/block.h \
+		kernel/devices/usb.h kernel/sync/spinlock.h | $(HOST_TEST_DIR)
+	$(HOST_CC) $(HOST_TEST_CFLAGS) -I kernel tests/usb_storage_test.c \
+		$(USB_STORAGE_HOST_SRCS) -o $@
+
 .PHONY: test-storage test-fs
 $(HOST_TEST_DIR)/ext2-2k-base.img: tools/create_ext2_test_image.sh \
 		tests/fixtures/ext2_root/seed/hello.txt | $(HOST_TEST_DIR)
@@ -283,8 +292,9 @@ $(HOST_TEST_DIR)/ext2-4k-base.img: tools/create_ext2_test_image.sh \
 		tests/fixtures/ext2_root/seed/hello.txt | $(HOST_TEST_DIR)
 	$(call run_linux,bash tools/create_ext2_test_image.sh $@ 4096)
 
-test-storage: test-fs \
+test-storage: test-fs $(HOST_TEST_DIR)/usb_storage_test.exe \
 		$(HOST_TEST_DIR)/ext2-2k-base.img $(HOST_TEST_DIR)/ext2-4k-base.img
+	$(HOST_TEST_DIR)/usb_storage_test.exe
 	$(HOST_TEST_DIR)/ext2_device_test.exe build/tests/ext2-2k-base.img build/tests/ext2-2k-device.img
 	$(HOST_TEST_DIR)/ext2_device_test.exe build/tests/ext2-4k-base.img build/tests/ext2-4k-device.img
 	$(call run_linux,e2fsck -fn build/tests/ext2-2k-device.img)

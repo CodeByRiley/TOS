@@ -119,12 +119,43 @@ symlinks and files above 4 GiB are not supported. Unsupported inodes are
 refused rather than exposed as ordinary writable files. Use disposable images
 until wider corruption/fault and hardware testing is available.
 
+## USB mass storage
+
+The existing `drivers/usb/storage` files have separate responsibilities:
+
+- `bot.c`: CBW/data/CSW framing, tags, lengths, stalls and reset recovery.
+- `scsi.c`: inquiry, readiness, capacity, sector reads/writes and cache flush.
+- `usb_storage.c`: descriptor validation and the discovered-disk registry.
+- `usb_storage.h`: their shared types and the small control/bulk HCD contract.
+
+EHCI supplies synchronous bulk transfers using its existing DMA arena. The
+asynchronous schedule is stopped before recycling descriptors; a lock protects
+that arena. BOT separately serializes entire commands. No transfer is replayed
+automatically after a transport failure. A disconnect permanently invalidates
+that device context, preventing a stale mount from writing to a replacement.
+Cached reads can still return old data after unplugging; this is not hotplug.
+
+Boot-attached high-speed EHCI SCSI/BOT disks with 512-byte sectors are supported,
+one interface and LUN 0 per device, up to eight devices. Raw ext2 volumes mount
+at `/usb0` etc. There is no MBR/GPT partition scan, USB FAT mounting, hub support,
+hotplug enumeration, xHCI, UAS, READ CAPACITY(16), or non-512-byte sectors yet.
+Most ordinary formatted USB sticks therefore will not mount in this first pass.
+
 ## Verification and extension
 
 Run `make test-fs` for the VFS allocation-failure tests, FAT16/32 tests,
 ext2 tests, stdio tests and a read-only `e2fsck` of the mutated ext2 image.
 `tests/vfs_backend_checks.h` runs the same object/lifetime contract against
 all three disk layouts. `make kernel` checks kernel integration.
+
+`make test-storage` adds BOT/SCSI wire-protocol and error-recovery tests.
+The ext2 device test verifies persistence through fresh mounts, sparse indirect
+blocks and write/flush failures. With the ISO and fixtures built, run
+`python tests/storage_persistence_test.py --transport ahci` and repeat with
+`--transport usb`. These copy generated images to disposable `build/tests`
+disks, write a file, restart QEMU completely and read it back. Run `e2fsck -fn`
+on `build/tests/ahci-persistence.img` and `usb-persistence.img` afterward.
+`python tests/ehci_test.py` checks existing control/periodic HID transfers.
 
 To add a filesystem, implement component-based inode operations and file
 operations, supply a root inode from its mount hook, then register its type.
