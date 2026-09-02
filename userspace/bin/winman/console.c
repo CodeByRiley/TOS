@@ -84,6 +84,45 @@ int con_font_px(const struct console *c) {
   return CON_TTF_PX * scale;
 }
 
+/* Finished cell images (glyph + background) for every printable ASCII,
+ * one cache per zoom level, so drawing a cell is row memcpys -- the same
+ * shape as the font8x8 LUT. Built lazily: a console that never zooms
+ * past 1 never pays for the bigger scales. */
+static uint32_t *ttf_cell_cache[CON_SCALE_MAX + 1];
+
+static void ttf_cache_build(int scale) {
+  if (scale < CON_SCALE_MIN || scale > CON_SCALE_MAX || !con_ttf_ready)
+    return;
+  if (ttf_cell_cache[scale])
+    return;
+
+  int cw = con_cell_w_for_scale(scale);
+  int chh = con_cell_h_for_scale(scale);
+  size_t cell_px = (size_t)cw * (size_t)chh;
+  uint32_t *mem = malloc(95 * cell_px * 4);
+  if (!mem)
+    return;
+
+  for (int c = 32; c <= 126; c++) {
+    uint32_t *cell = mem + (size_t)(c - 32) * cell_px;
+    fill_dwords(cell, cell_px, CONSOLE_BG);
+    if (c == ' ')
+      continue;
+
+    /* Raster with the same math con_draw_glyph uses, at cell origin
+     * (0,0) -- translation invariance is what makes the cache valid. */
+    struct gfx_surface s;
+    gfx_surface_init(&s, cell, cw, chh, cw);
+    struct gfx_rect prev = gfx_clip_push(&s, gfx_rect_make(0, 0, cw, chh));
+    int band = (con_ttf_ascent - con_ttf_descent) * scale;
+    int baseline = (chh - band) / 2 + con_ttf_ascent * scale;
+    ttf_draw_glyph_cell(&s, &con_font, 0, baseline, cw, c,
+                        CON_TTF_PX * scale, CONSOLE_FG);
+    gfx_clip_set(&s, prev);
+  }
+  ttf_cell_cache[scale] = mem;
+}
+
 /* Consoles are addressed by handle everywhere outside this file's console
  * code, because that is what focus, z-order and hit-testing deal in. */
 int is_console_handle(int handle) {
@@ -264,14 +303,44 @@ void con_draw_glyph(struct console *con, int gx, int gy, char c) {
     return;
 
   if (con_ttf_ready) {
+    unsigned ch = (unsigned char)c;
+    int scale = con->scale;
+
+    /* Fast path. A cached cell already carries its background, so a hit
+     * is just row copies -- no fill, no raster. Guarded by an explicit
+     * range check rather than a clamped index: cell geometry is a pure
+     * function of scale, so a clamped index against unclamped geometry
+     * could mismatch the cache's cell size. con_set_scale keeps scale in
+     * range; this makes that invariant load-bearing instead of assumed. */
+    if (scale >= CON_SCALE_MIN && scale <= CON_SCALE_MAX && ch >= 32 &&
+        ch <= 126 && c != ' ') {
+      if (!ttf_cell_cache[scale])
+        ttf_cache_build(scale);
+      const uint32_t *cache = ttf_cell_cache[scale];
+      if (cache) {
+        size_t cell_px = (size_t)cell_w * (size_t)cell_h;
+        const uint32_t *src = cache + (size_t)(ch - 32) * cell_px;
+        uint32_t *dst = con->win.surface +
+                        (size_t)py * (size_t)con->win.client_w + (size_t)px;
+        for (int y = 0; y < cell_h; y++) {
+          memcpy(dst, src, (size_t)cell_w * 4);
+          dst += con->win.client_w;
+          src += cell_w;
+        }
+        return;
+      }
+    }
+
+    /* Slow path: build failed, or a blank/non-printable cell. Clear the
+     * background, then raster directly for real glyphs -- unchanged from
+     * the original, kept as a live fallback rather than deleted. */
     for (int y = 0; y < cell_h; y++) {
       uint32_t *line = con->win.surface +
                        (size_t)(py + y) * (size_t)con->win.client_w +
                        (size_t)px;
       fill_dwords(line, (size_t)cell_w, CONSOLE_BG);
     }
-
-    if ((unsigned char)c < 32 || (unsigned char)c > 126 || c == ' ')
+    if (ch < 32 || ch > 126 || c == ' ')
       return;
 
     struct gfx_surface s;
@@ -282,11 +351,11 @@ void con_draw_glyph(struct console *con, int gx, int gy, char c) {
 
     /* Sit the baseline so the ascender/descender band is centred in the cell
      * instead of guessing at 3/4 of the way down. */
-    int scale = con->scale < 1 ? 1 : con->scale;
-    int band = (con_ttf_ascent - con_ttf_descent) * scale;
-    int baseline = py + (cell_h - band) / 2 + con_ttf_ascent * scale;
+    int bscale = scale < 1 ? 1 : scale;
+    int band = (con_ttf_ascent - con_ttf_descent) * bscale;
+    int baseline = py + (cell_h - band) / 2 + con_ttf_ascent * bscale;
 
-    ttf_draw_glyph_cell(&s, &con_font, px, baseline, cell_w, (unsigned char)c,
+    ttf_draw_glyph_cell(&s, &con_font, px, baseline, cell_w, ch,
                         con_font_px(con), CONSOLE_FG);
     gfx_clip_set(&s, prev);
     return;
@@ -398,13 +467,33 @@ int con_set_scale(struct console *con, int new_scale) {
   return con->scale;
 }
 
+/* Scroll one cell row. The cells grid moves up and the pixels move with
+ * it: a cell's image depends only on its glyph and grid position, so
+ * shifting the surface up by cell_h lines reproduces exactly what a full
+ * con_redraw would paint -- without re-rasterising ~5000 glyphs. */
 void con_scroll(struct console *con) {
   if (con->rows <= 1)
     return;
+  if (!con->win.surface || !con->cells)
+    return;
+
   memmove(con->cells, con->cells + con->cols,
           (size_t)(con->rows - 1) * (size_t)con->cols);
   memset(con->cells + (con->rows - 1) * con->cols, 0, (size_t)con->cols);
-  con_redraw(con);
+
+  size_t pitch = (size_t)con->win.client_w;
+  size_t row_lines = (size_t)con_cell_h(con);
+  size_t move_lines = (size_t)(con->rows - 1) * row_lines;
+
+  memmove(con->win.surface, con->win.surface + row_lines * pitch,
+          move_lines * pitch * sizeof(uint32_t));
+  fill_dwords(con->win.surface + move_lines * pitch, pitch * row_lines,
+              CONSOLE_BG);
+
+  /* Chrome is unchanged and the backbuffer still holds valid chrome
+   * pixels, so damage only the client area that shifted. */
+  mark_dirty(con->win.x + BORDER_PX, con->win.y + TITLEBAR_PX,
+             con->win.client_w, con->win.client_h);
 }
 
 void con_newline(struct console *con) {

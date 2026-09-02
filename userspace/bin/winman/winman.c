@@ -31,7 +31,6 @@ static int last_title_click_y = 0;
 int close_pending_handle = -1;
 u32 close_pending_tick = 0;
 
-
 void reset_titlebar_click(void) {
   last_title_clicked = -1;
   last_title_click_tick = 0;
@@ -62,7 +61,6 @@ int titlebar_click_is_double(int handle, int x, int y, uint32_t now) {
   return 0;
 }
 
-
 void handle_set_status(int owner_pid, int handle, const char *text) {
   struct window *w = find_handle(handle);
   if (!w || w->owner_pid != owner_pid || !text)
@@ -84,8 +82,8 @@ void handle_set_status(int owner_pid, int handle, const char *text) {
              outer_w(w) - 2 * BORDER_PX, w->status_h);
 }
 
-void send_create_resp(int target_pid, int handle, uint64_t va,
-                             uint32_t pitch, int w, int h) {
+void send_create_resp(int target_pid, int handle, uint64_t va, uint32_t pitch,
+                      int w, int h) {
   struct ipc_msg resp;
   memset(&resp, 0, sizeof(resp));
   resp.type = IPC_WM_CREATE_RESP;
@@ -228,6 +226,13 @@ void request_window_close(int handle, u32 now) {
   ipc_send(w->owner_pid, &out);
 }
 
+// void handle_mouse_input(const struct msg* msg) {
+//   if(prompt.active) {
+//     if ()
+//   }
+// }
+//
+void handle_key() {}
 void pump_input(void) {
   struct msg m;
 
@@ -790,32 +795,38 @@ int main(int argc, char **argv) {
      * and grow/shrink our back buffer to match. */
     {
       struct fb_info cur;
-      if (fb_info(&cur) == 0 &&
-          ((int)cur.width != fb_w || (int)cur.height != fb_h ||
-           (int)(cur.pitch / 4) != fb_stride)) {
-        size_t new_bytes = cur.pitch * cur.height;
-        uint32_t *new_fb_hw = fb_hw;
+      /* Host-driven resize: kernel may have re-pointed the scanout at a
+       * different-sized backing under us. Checked on the same 1-in-64 cadence
+       * as the reaper: a host resize is a rare manual event, so a short delay
+       * in noticing costs nothing. */
+      if ((tick & 63) == 0) {
+        if (fb_info(&cur) == 0 &&
+            ((int)cur.width != fb_w || (int)cur.height != fb_h ||
+             (int)(cur.pitch / 4) != fb_stride)) {
+          size_t new_bytes = cur.pitch * cur.height;
+          uint32_t *new_fb_hw = fb_hw;
 
-        /* The physical pool is stable. Only growing beyond the prefix this
-         * process already mapped needs another fb_map syscall. */
-        if (new_bytes > fb_mapped_bytes) {
-          new_fb_hw = (uint32_t *)fb_map();
-          if (new_fb_hw)
-            fb_mapped_bytes = new_bytes;
-        }
+          /* The physical pool is stable. Only growing beyond the prefix this
+           * process already mapped needs another fb_map syscall. */
+          if (new_bytes > fb_mapped_bytes) {
+            new_fb_hw = (uint32_t *)fb_map();
+            if (new_fb_hw)
+              fb_mapped_bytes = new_bytes;
+          }
 
-        if (new_fb_hw && backbuffer_reserve(new_bytes) == 0) {
-          fb_hw = new_fb_hw;
-          fb_w = (int)cur.width;
-          fb_h = (int)cur.height;
-          fb_stride = (int)(cur.pitch / 4);
-          fb_bytes = new_bytes;
-          update_client_size_limits();
-          if (backbuffer_register() != 0)
-            printf("winman: resized back buffer registration failed\n");
-          present_full_desktop();
-          have_last = 0;
-          printf("winman: rebound fb to %dx%d\n", fb_w, fb_h);
+          if (new_fb_hw && backbuffer_reserve(new_bytes) == 0) {
+            fb_hw = new_fb_hw;
+            fb_w = (int)cur.width;
+            fb_h = (int)cur.height;
+            fb_stride = (int)(cur.pitch / 4);
+            fb_bytes = new_bytes;
+            update_client_size_limits();
+            if (backbuffer_register() != 0)
+              printf("winman: resized back buffer registration failed\n");
+            present_full_desktop();
+            have_last = 0;
+            printf("winman: rebound fb to %dx%d\n", fb_w, fb_h);
+          }
         }
       }
     }

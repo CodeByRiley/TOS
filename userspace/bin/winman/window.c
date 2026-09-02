@@ -1,7 +1,7 @@
 #define WINMAN_DECLARE_STATE
-#include "winman.h"
 #include "key_codes.h"
 #include "syscall.h"
+#include "winman.h"
 #include <display/print.h>
 #include <stdbool.h>
 #include <string.h>
@@ -41,7 +41,6 @@ void clamp_client_size(int *client_w, int *client_h) {
   if (*client_h > max_client_h)
     *client_h = max_client_h;
 }
-
 
 int win_get_rect(int handle, int *x, int *y, int *cw, int *ch) {
   if (is_console_handle(handle)) {
@@ -105,8 +104,8 @@ int status_h_of(int handle) {
 /* True iff (mx,my) lies inside titlebar button `idx_from_right` for a window
  * whose outer rect is (win_x, win_y, outer_w, _). Used by hit_test_at to
  * carve close/min/max regions out of HIT_TITLEBAR before returning. */
-int in_titlebar_btn(int win_x, int win_y, int outer_w,
-                           int idx_from_right, int mx, int my) {
+int in_titlebar_btn(int win_x, int win_y, int outer_w, int idx_from_right,
+                    int mx, int my) {
   int bx, by, bw, bh;
   titlebar_btn_rect(win_x, win_y, outer_w, idx_from_right, &bx, &by, &bw, &bh);
   return mx >= bx && mx < bx + bw && my >= by && my < by + bh;
@@ -266,7 +265,6 @@ void clamp_to_desktop(int *x, int *y, int cw, int ch) {
     *y = fb_h - TITLEBAR_PX - TASKBAR_PX;
 }
 
-
 void client_window_resize(int handle, int new_cw, int new_ch) {
   clamp_client_size(&new_cw, &new_ch);
 
@@ -352,7 +350,6 @@ void client_window_resize(int handle, int new_cw, int new_ch) {
     free(old_raw);
 }
 
-
 /* Compute the outer rect of the proposed drag target. For move drags the
  * size is fixed at the original; for resize drags the position is fixed and
  * the size grows/shrinks with the mouse delta. */
@@ -405,8 +402,8 @@ struct window *find_handle(int handle) {
 }
 
 int handle_create(int client_pid, int w, int h, const char *title,
-                         uint32_t flags, uint64_t *out_client_va,
-                         uint32_t *out_pitch, int *out_handle) {
+                  uint32_t flags, uint64_t *out_client_va, uint32_t *out_pitch,
+                  int *out_handle) {
   if (w <= 0 || h <= 0 || w > CLIENT_DIM_HARD_LIMIT ||
       h > CLIENT_DIM_HARD_LIMIT)
     return -1;
