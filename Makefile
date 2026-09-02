@@ -193,13 +193,19 @@ HOST_TEST_DIR := build/tests
 # and leaves this out.
 HOST_KERNEL_STUBS := tests/host_kernel_stubs.c
 
-VFS_HOST_SRCS := kernel/fs/vfs/vfs.c kernel/fs/vfs/namei.c kernel/fs/vfs/file.c
+VFS_HOST_SRCS := kernel/fs/vfs/vfs.c kernel/fs/vfs/namei.c kernel/fs/vfs/file.c \
+		kernel/fs/vfs/lock.c tests/vfs_lock_host.c
+VFS_HOST_TESTS := $(addprefix $(HOST_TEST_DIR)/,vfs_test.exe fat_directory_test.exe \
+		ext2_vfs_test.exe ext2_device_test.exe stdio_mode_test.exe vfs_serialization_test.exe)
+$(VFS_HOST_TESTS): HOST_TEST_CFLAGS += -DVFS_HOST_TEST -pthread
+$(VFS_HOST_TESTS): kernel/fs/vfs/lock.h kernel/sched/sched.h tests/vfs_lock_host.h
 FAT_HOST_SRCS := kernel/fs/fat/fat.c kernel/fs/fat/fat_mount.c \
 		kernel/fs/fat/fat_file.c kernel/fs/fat/fat_name.c \
 		kernel/fs/fat/fat_directory.c kernel/fs/fat/fat_vfs.c
 FS_HOST_HEADERS := $(wildcard kernel/fs/vfs/*.h kernel/fs/fat/*.h kernel/fs/ext2/*.h)
 
 HOST_TEST_BINS := \
+	$(HOST_TEST_DIR)/vfs_serialization_test.exe \
 	$(HOST_TEST_DIR)/vfs_test.exe \
 	$(HOST_TEST_DIR)/pmm_test.exe \
 	$(HOST_TEST_DIR)/vmm_test.exe \
@@ -256,6 +262,12 @@ EXT2_HOST_SRCS := kernel/fs/ext2/ext2_mount.c kernel/fs/ext2/ext2_inode.c \
 		kernel/fs/ext2/ext2_dir.c kernel/fs/ext2/ext2_file.c \
 		kernel/fs/ext2/ext2_vfs.c $(VFS_HOST_SRCS)
 
+$(HOST_TEST_DIR)/vfs_serialization_test.exe: tests/vfs_serialization_test.c \
+		$(EXT2_HOST_SRCS) $(HOST_KERNEL_STUBS) $(FS_HOST_HEADERS) \
+		$(HOST_TEST_DIR)/ext2-base.img | $(HOST_TEST_DIR)
+	$(HOST_CC) $(HOST_TEST_CFLAGS) -I kernel tests/vfs_serialization_test.c \
+		$(EXT2_HOST_SRCS) $(HOST_KERNEL_STUBS) -o $@
+
 $(HOST_TEST_DIR)/ext2_vfs_test.exe: tests/ext2_vfs_test.c $(EXT2_HOST_SRCS) \
 		tests/vfs_backend_checks.h $(FS_HOST_HEADERS) \
 		$(HOST_KERNEL_STUBS) $(HOST_TEST_DIR)/ext2-base.img | $(HOST_TEST_DIR)
@@ -302,9 +314,15 @@ test-storage: test-fs $(HOST_TEST_DIR)/usb_storage_test.exe \
 
 .PHONY: test-fs
 test-fs: $(HOST_TEST_DIR)/vfs_test.exe $(HOST_TEST_DIR)/fat_directory_test.exe \
+		$(HOST_TEST_DIR)/vfs_serialization_test.exe \
 		$(HOST_TEST_DIR)/ext2_device_test.exe \
 		$(HOST_TEST_DIR)/ext2_vfs_test.exe $(HOST_TEST_DIR)/stdio_mode_test.exe
 	$(HOST_TEST_DIR)/vfs_test.exe
+	$(HOST_TEST_DIR)/vfs_serialization_test.exe
+	@for mode in recursive helper unlock irq ap; do \
+		$(HOST_TEST_DIR)/vfs_serialization_test.exe $$mode; \
+		code=$$?; test $$code -eq 86 || exit 1; \
+	done
 	$(HOST_TEST_DIR)/fat_directory_test.exe
 	$(HOST_TEST_DIR)/ext2_vfs_test.exe
 	$(HOST_TEST_DIR)/ext2_device_test.exe

@@ -217,6 +217,17 @@ int main(void) {
     }
     expect(file_size("/NEWLOG.TXT") == 2, "created file has contents");
 
+    FILE *first = fopen("/NEWLOG.TXT", "a");
+    FILE *second = fopen("/NEWLOG.TXT", "a");
+    expect(first && second, "two independent append handles");
+    if (first && second) {
+        expect(fwrite("A", 1, 1, first) == 1, "first handle appends");
+        expect(fwrite("B", 1, 1, second) == 1, "stale second handle appends");
+        expect(file_size("/NEWLOG.TXT") == 4, "append refreshes shared inode EOF");
+    }
+    if (first) fclose(first);
+    if (second) fclose(second);
+
     expect(vfs_unmount("/") == 0, "stdio releases all VFS handles");
     free(image);
     if (!failed) printf("stdio_mode_test: all checks passed\n");

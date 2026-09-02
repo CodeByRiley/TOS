@@ -11,6 +11,7 @@
  * framebuffer probe path).
  */
 #include <arch/cpu.h>
+#include <arch/percpu.h>
 #include <devices/lapic.h>
 #include <devices/serial.h>
 #include <interrupts/idt.h>
@@ -83,6 +84,9 @@ void idt_load_this_cpu(void) {
 
 typedef void (*irq_fn)(void);
 static irq_fn irq_handlers[MAX_IRQ_HANDLERS] = {0};
+static unsigned irq_depth[MAX_CPUS];
+
+int irq_in_handler(void) { return irq_depth[percpu_current_id()] != 0; }
 
 void irq_install(u8 irq, irq_fn fn) { irq_handlers[irq] = fn; }
 
@@ -531,9 +535,12 @@ void isr_handler(struct interrupt_frame *r) {
     }
   } else if (r->int_num < 48) {
     u8 irq = r->int_num - 32;
+    int cpu = percpu_current_id();
+    irq_depth[cpu]++;
     if (irq_handlers[irq])
       irq_handlers[irq]();
     pic_send_eoi(irq);
+    irq_depth[cpu]--;
     /* EOI must precede a context switch or the PIC keeps IRQ0 in service and
      * no later timer tick can preempt the task we switch to. Restrict timer
      * preemption to interrupted ring-3 code: kernel subsystems are not built

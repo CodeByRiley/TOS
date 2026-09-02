@@ -18,6 +18,7 @@ static void pop_entry(struct vfs_path *path) {
 }
 
 void vfs_path_put(struct vfs_path *path) {
+    vfs_assert_locked();
     while (path->entry) pop_entry(path);
 }
 
@@ -33,6 +34,7 @@ static int push_entry(struct vfs_path *path, struct vfs_inode *inode,
 }
 
 int vfs_lookup(const char *path, struct vfs_path *out) {
+    vfs_assert_locked();
     memset(out, 0, sizeof(*out));
     size_t length;
     struct vfs_mount *root = vfs_find_mount("/");
@@ -80,6 +82,7 @@ fail:
 
 int vfs_lookup_parent(const char *path, struct vfs_path *parent,
                       char name[VFS_NAME_MAX + 1], int *trailing_slash) {
+    vfs_assert_locked();
     size_t length;
     memset(parent, 0, sizeof(*parent));
     if (vfs_path_length(path, &length)) return -1;
@@ -110,12 +113,14 @@ fail:
 }
 
 int vfs_getattr(struct vfs_inode *inode, struct vfs_stat *out) {
+    vfs_assert_locked();
     if (!inode || !out || !inode->operations->getattr) return -1;
     memset(out, 0, sizeof(*out));
     return inode->operations->getattr(inode, out);
 }
 
 int vfs_stat(const char *path, struct vfs_stat *out) {
+    VFS_GUARD();
     struct vfs_path found;
     if (!out || vfs_lookup(path, &found)) return -1;
     int result = vfs_getattr(found.entry->inode, out);
@@ -126,6 +131,7 @@ int vfs_stat(const char *path, struct vfs_stat *out) {
 enum name_operation { CREATE_DIRECTORY, REMOVE_FILE, REMOVE_DIRECTORY };
 
 static int change_name(const char *path, enum name_operation operation) {
+    VFS_GUARD();
     struct vfs_path parent;
     char name[VFS_NAME_MAX + 1];
     int trailing;

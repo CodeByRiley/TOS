@@ -988,14 +988,13 @@ void sleep_ms_busy(u32 ms) { pit_delay_ms(ms); }
  * we halt. */
 static void idle_thread(void) {
   for (;;) {
-    /* Opportunistic reap. Reaching idle means no task is mid-syscall on a
-     * kstack we might free , but do not rely on it: a window manager that
-     * yields instead of sleeping is always runnable, so ready_pop never
-     * falls through to here and this never runs. task_reaper_thread_entry
-     * is the reaper that does. */
-    task_reap_unclaimed();
+    /* Descriptor cleanup may sleep on the VFS gate. Leave it to the reaper
+     * thread: idle must remain available when every normal task is blocked. */
+    /* sti; hlt guarantees interrupts are enabled before halting,
+       preventing a deadlock since context_switch doesn't save RFLAGS. */
     __asm__ volatile("sti; hlt");
-    task_yield();
+    /* REMOVED: No need to call task_yield() here: if we reach here, no other
+       task woke up, so just loop back and halt again. */
   }
 }
 
@@ -1068,6 +1067,9 @@ static void mark_task_exited(struct task *task, long code) {
 
 int task_kill(int pid, long code) {
   struct task *target = task_find(pid);
+  /* A sleeping VFS owner/waiter still owns kernel-stack and FD references.
+   * Refuse this kill; callers may retry after the bounded operation returns. */
+  if (target && target->vfs_active) return -1;
   if (target && target->state == TASK_LOADING) {
     return process_cancel_async(pid, code);
   }
@@ -1100,6 +1102,9 @@ void task_exit(long code) {
 
   if (prev == idle_task)
     panic("task_exit: idle task attempted to exit");
+
+  if (prev->vfs_active)
+    panic("task_exit: active VFS operation");
 
   mark_task_exited(prev, code);
 
@@ -1146,6 +1151,8 @@ void task_exit(long code) {
 
 void task_exit_thread(void) {
   irq_save();
+  if (current->vfs_active)
+    panic("task_exit_thread: active VFS operation");
   slice_ticks = 0;
   sb16_stream_release(current->pid);
   current->state = TASK_ZOMBIE;
@@ -1226,8 +1233,12 @@ static void task_release_address_space(struct task *t) {
 }
 
 void task_reap(struct task *t) {
-  if (!t || t->state != TASK_ZOMBIE)
+  if (!t || t->state != TASK_ZOMBIE || t->vfs_active)
     return;
+
+  /* close can now sleep on the VFS. Claim the victim before yielding so a
+   * second reaper cannot close/free the same descriptor table and stack. */
+  t->state = TASK_DEAD;
 
   task_close_fds(t);
 

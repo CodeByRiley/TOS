@@ -36,7 +36,7 @@ struct vfs_inode_operations {
     int (*getattr)(struct vfs_inode *inode, struct vfs_stat *out);
     int (*truncate)(struct vfs_inode *inode);
 };
-/* release must tolerate a partially failed open. iterate returns 1 for an
+/* release must tolerate a partially failed open. iterate returns >0 for an
  * entry, 0 at EOF, -1 on failure; index is a backend-owned cookie. */
 struct vfs_file_operations {
     int (*open)(struct vfs_file *file);
@@ -83,14 +83,18 @@ struct vfs_file {
     uint64_t size, inode;
     uint8_t type, attributes;
 };
+/* Backend-only reference helpers: caller must already hold the VFS gate. */
 struct vfs_inode *vfs_inode_get(struct vfs_superblock *super, uint64_t number,
     uint8_t type, void *private_data, const struct vfs_inode_operations *operations,
     const struct vfs_file_operations *file_operations);
 struct vfs_inode *vfs_inode_ref(struct vfs_inode *inode);
 void vfs_inode_put(struct vfs_inode *inode);
 
-/* Init is boot-time only. Unmount before releasing a mounted image.
- * Like the original implementation, filesystem calls require serialization. */
+/* Public operations serialize internally and may sleep. BSP task context only
+ * (bootstrap allowed); never call from an IRQ, AP, or backend callback.
+ * Init is boot-time only. Unmount before releasing a mounted image.
+ * Callers own handle/buffer storage and must keep it alive until calls return;
+ * separate calls (e.g. seek + write) are not one atomic operation. */
 void vfs_init(void);
 int vfs_register(const struct vfs_filesystem *filesystem);
 int vfs_mount_image(const char *mountpoint, const char *filesystem,
@@ -106,6 +110,8 @@ int vfs_create(const char *path, struct vfs_file *file);
 void vfs_close(struct vfs_file *file);
 size_t vfs_read(struct vfs_file *file, void *buffer, size_t length);
 size_t vfs_write(struct vfs_file *file, const void *buffer, size_t length);
+/* Refresh EOF, seek and write under one lock; ignores a stale size snapshot. */
+size_t vfs_append(struct vfs_file *file, const void *buffer, size_t length);
 int vfs_seek(struct vfs_file *file, uint64_t position);
 int vfs_truncate(struct vfs_file *file);
 int vfs_stat(const char *path, struct vfs_stat *out);

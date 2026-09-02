@@ -109,11 +109,9 @@ usize fwrite(const void *buf, usize size, usize count, FILE *fp) {
 
     /* Append means every write lands at EOF, not just the first one after
      * open , an intervening fseek must not move where data goes. */
-    if (fp->append)
-        vfs_seek(&fp->f, fp->f.size);
-
     /* Return the number of complete items written. */
-    return vfs_write(&fp->f, buf, size * count) / size;
+    return (fp->append ? vfs_append(&fp->f, buf, size * count)
+                       : vfs_write(&fp->f, buf, size * count)) / size;
 }
 
 int fseek(FILE *fp, long off, int whence) {

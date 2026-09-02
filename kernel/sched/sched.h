@@ -234,6 +234,8 @@ struct task {
 
   // Futex state.
   u64 futex_addr;
+  /* Active or queued VFS operation: its kernel stack/FDs must stay alive. */
+  unsigned vfs_active;
 };
 
 

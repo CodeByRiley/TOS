@@ -8,6 +8,7 @@
 #include "memory/vmm.h"
 #include <fs/fat/fat.h>
 #include <fs/fat/ahci/fat_ahci.h>
+#include <fs/vfs/lock.h>
 #include <utilities/log.h>
 #include <utilities/string.h>
 
@@ -124,6 +125,7 @@ int fat_mount_from_ahci(struct AHCI_DEVICE_DATA *ahci_dev, int port) {
 }
 
 void fat_flush(void) {
+    VFS_GUARD();
     usize image_size = 0;
     u32 bytes_per_sector = 0;
     u8 *image = fat_image_base(&image_size, &bytes_per_sector);

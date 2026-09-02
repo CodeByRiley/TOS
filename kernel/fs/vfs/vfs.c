@@ -5,6 +5,7 @@ static const struct vfs_filesystem *filesystems[VFS_MAX_FILESYSTEMS];
 static struct vfs_mount mounts[VFS_MAX_MOUNTS];
 
 void vfs_init(void) {
+    VFS_GUARD();
     /* Reinitialization must not invalidate live handles. */
     for (size_t i = 0; i < VFS_MAX_MOUNTS; i++)
         if (mounts[i].super.filesystem) return;
@@ -21,6 +22,7 @@ static const struct vfs_filesystem *find_type(const char *name) {
 }
 
 int vfs_register(const struct vfs_filesystem *type) {
+    VFS_GUARD();
     if (!type || !type->name || !*type->name || !type->mount || find_type(type->name))
         return -1;
     for (size_t i = 0; i < VFS_MAX_FILESYSTEMS; i++) {
@@ -33,6 +35,7 @@ int vfs_register(const struct vfs_filesystem *type) {
 }
 
 struct vfs_mount *vfs_find_mount(const char *path) {
+    vfs_assert_locked();
     for (size_t i = 0; i < VFS_MAX_MOUNTS; i++)
         if (mounts[i].super.filesystem && !strcmp(mounts[i].path, path))
             return &mounts[i];
@@ -41,6 +44,7 @@ struct vfs_mount *vfs_find_mount(const char *path) {
 
 /* True for a mountpoint or an ancestor containing a mount. */
 int vfs_mount_contains(const char *path) {
+    vfs_assert_locked();
     size_t length = strlen(path);
     for (size_t i = 0; i < VFS_MAX_MOUNTS; i++) {
         const char *mounted = mounts[i].path;
@@ -105,14 +109,17 @@ static int mount_type(const char *path, const struct vfs_filesystem *type,
 }
 
 int vfs_mount_image(const char *path, const char *type, void *image, size_t size) {
+    VFS_GUARD();
     return mount_type(path, find_type(type), image, size, 0);
 }
 
 int vfs_attach(const char *path, const char *type, void *context) {
+    VFS_GUARD();
     return mount_type(path, find_type(type), context, 0, 1);
 }
 
 int vfs_mount_auto(const char *path, void *image, size_t size, const char **type) {
+    VFS_GUARD();
     if (type) *type = 0;
     for (size_t i = 0; i < VFS_MAX_FILESYSTEMS; i++) {
         if (filesystems[i] && !mount_type(path, filesystems[i], image, size, 0)) {
@@ -124,6 +131,7 @@ int vfs_mount_auto(const char *path, void *image, size_t size, const char **type
 }
 
 int vfs_unmount(const char *path) {
+    VFS_GUARD();
     char name[VFS_PATH_MAX];
     if (mount_name(path, name)) return -1;
     struct vfs_mount *mount = vfs_find_mount(name);
@@ -144,11 +152,13 @@ int vfs_unmount(const char *path) {
 }
 
 struct vfs_inode *vfs_inode_ref(struct vfs_inode *inode) {
+    vfs_assert_locked();
     if (inode) inode->references++;
     return inode;
 }
 
 int vfs_sync_all(void) {
+    VFS_GUARD();
     int result = 0;
     for (size_t i = 0; i < VFS_MAX_MOUNTS; i++) {
         struct vfs_superblock *super = &mounts[i].super;
@@ -159,6 +169,7 @@ int vfs_sync_all(void) {
 }
 
 int vfs_file_sync(struct vfs_file *file) {
+    VFS_GUARD();
     if (!file || !file->node) return -1;
     struct vfs_superblock *super = file->node->super;
     return super->filesystem->sync ? super->filesystem->sync(super) : 0;
@@ -167,6 +178,7 @@ int vfs_file_sync(struct vfs_file *file) {
 struct vfs_inode *vfs_inode_get(struct vfs_superblock *super, uint64_t number,
     uint8_t type, void *data, const struct vfs_inode_operations *ops,
     const struct vfs_file_operations *file_ops) {
+    vfs_assert_locked();
     for (struct vfs_inode *inode = super->inodes; inode; inode = inode->next)
         if (inode->number == number) return vfs_inode_ref(inode);
     struct vfs_inode *inode = kmalloc(sizeof(*inode));
@@ -179,6 +191,7 @@ struct vfs_inode *vfs_inode_get(struct vfs_superblock *super, uint64_t number,
 }
 
 void vfs_inode_put(struct vfs_inode *inode) {
+    vfs_assert_locked();
     if (!inode || --inode->references) return;
     struct vfs_inode **link = &inode->super->inodes;
     while (*link != inode) link = &(*link)->next;

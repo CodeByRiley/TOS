@@ -1,7 +1,9 @@
 /* Open-file lifetime, byte transfers and directory enumeration. */
 #include "internal.h"
 
-int vfs_file_stat(struct vfs_file *file, struct vfs_stat *out) {
+static void close_locked(struct vfs_file *file);
+
+static int file_stat_locked(struct vfs_file *file, struct vfs_stat *out) {
     if (!file || vfs_getattr(file->node, out)) return -1;
     file->size = out->size;
     file->inode = out->inode;
@@ -12,7 +14,12 @@ int vfs_file_stat(struct vfs_file *file, struct vfs_stat *out) {
 
 static void refresh_file(struct vfs_file *file) {
     struct vfs_stat metadata;
-    vfs_file_stat(file, &metadata);
+    file_stat_locked(file, &metadata);
+}
+
+int vfs_file_stat(struct vfs_file *file, struct vfs_stat *out) {
+    VFS_GUARD();
+    return file_stat_locked(file, out);
 }
 
 /* Consumes an inode reference, including on a failed open. */
@@ -23,14 +30,15 @@ static int open_inode(struct vfs_inode *inode, const struct vfs_mount *mount,
     inode->super->open_files++;
     const struct vfs_file_operations *ops = inode->file_operations;
     struct vfs_stat metadata;
-    if ((ops && ops->open && ops->open(file)) || vfs_file_stat(file, &metadata)) {
-        vfs_close(file);
+    if ((ops && ops->open && ops->open(file)) || file_stat_locked(file, &metadata)) {
+        close_locked(file);
         return -1;
     }
     return 0;
 }
 
 int vfs_open(const char *path, struct vfs_file *file) {
+    VFS_GUARD();
     if (!file) return -1;
     memset(file, 0, sizeof(*file));
     struct vfs_path found;
@@ -41,6 +49,7 @@ int vfs_open(const char *path, struct vfs_file *file) {
 }
 
 int vfs_create(const char *path, struct vfs_file *file) {
+    VFS_GUARD();
     if (!file) return -1;
     memset(file, 0, sizeof(*file));
     struct vfs_path parent;
@@ -60,7 +69,7 @@ int vfs_create(const char *path, struct vfs_file *file) {
     return result;
 }
 
-void vfs_close(struct vfs_file *file) {
+static void close_locked(struct vfs_file *file) {
     if (!file) return;
     if (file->node) {
         const struct vfs_file_operations *ops = file->node->file_operations;
@@ -71,12 +80,18 @@ void vfs_close(struct vfs_file *file) {
     memset(file, 0, sizeof(*file));
 }
 
+void vfs_close(struct vfs_file *file) {
+    VFS_GUARD();
+    close_locked(file);
+}
+
 static const struct vfs_file_operations *regular_ops(struct vfs_file *file) {
     return file && file->node && file->node->type == VFS_NODE_FILE
         ? file->node->file_operations : 0;
 }
 
 size_t vfs_read(struct vfs_file *file, void *buffer, size_t length) {
+    VFS_GUARD();
     const struct vfs_file_operations *ops = regular_ops(file);
     if (!ops || !ops->read || !buffer || !length) return 0;
     size_t result = ops->read(file, buffer, length);
@@ -84,7 +99,7 @@ size_t vfs_read(struct vfs_file *file, void *buffer, size_t length) {
     return result;
 }
 
-size_t vfs_write(struct vfs_file *file, const void *buffer, size_t length) {
+static size_t write_locked(struct vfs_file *file, const void *buffer, size_t length) {
     const struct vfs_file_operations *ops = regular_ops(file);
     if (!ops || !ops->write || !buffer || !length) return 0;
     size_t result = ops->write(file, buffer, length);
@@ -92,7 +107,22 @@ size_t vfs_write(struct vfs_file *file, const void *buffer, size_t length) {
     return result;
 }
 
+size_t vfs_write(struct vfs_file *file, const void *buffer, size_t length) {
+    VFS_GUARD();
+    return write_locked(file, buffer, length);
+}
+
+size_t vfs_append(struct vfs_file *file, const void *buffer, size_t length) {
+    VFS_GUARD();
+    const struct vfs_file_operations *ops = regular_ops(file);
+    struct vfs_stat metadata;
+    if (!buffer || !length || !ops || !ops->write || !ops->seek ||
+        file_stat_locked(file, &metadata) || ops->seek(file, metadata.size)) return 0;
+    return write_locked(file, buffer, length);
+}
+
 int vfs_seek(struct vfs_file *file, uint64_t position) {
+    VFS_GUARD();
     const struct vfs_file_operations *ops = regular_ops(file);
     if (!ops || !ops->seek) return -1;
     int result = ops->seek(file, position);
@@ -101,6 +131,7 @@ int vfs_seek(struct vfs_file *file, uint64_t position) {
 }
 
 int vfs_truncate(struct vfs_file *file) {
+    VFS_GUARD();
     if (!regular_ops(file) || !file->node->operations->truncate) return -1;
     int result = file->node->operations->truncate(file->node);
     if (!result) file->position = 0;
@@ -116,6 +147,7 @@ static long iterate(struct vfs_inode *dir, uint32_t *index, struct vfs_dirent *o
 }
 
 long vfs_read_dir_one(const char *path, uint32_t *index, struct vfs_dirent *out) {
+    VFS_GUARD();
     struct vfs_path found;
     if (!index || !out || vfs_lookup(path, &found)) return -1;
     uint32_t before = *index;
@@ -126,6 +158,7 @@ long vfs_read_dir_one(const char *path, uint32_t *index, struct vfs_dirent *out)
 }
 
 long vfs_read_dir(const char *path, uint32_t *index, char *buffer, size_t length) {
+    VFS_GUARD();
     struct vfs_path found;
     if (!index || !buffer || !length || vfs_lookup(path, &found)) return -1;
     size_t written = 0;

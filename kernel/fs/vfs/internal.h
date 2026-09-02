@@ -2,6 +2,7 @@
 #ifndef VFS_INTERNAL_H
 #define VFS_INTERNAL_H
 #include "vfs.h"
+#include "lock.h"
 #include <memory/heap.h>
 #include <utilities/string.h>
 

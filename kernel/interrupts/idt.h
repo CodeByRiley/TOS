@@ -85,6 +85,8 @@ void idt_load_this_cpu(void);
 /* Register a handler for IRQ `irq` (after PIC remap, IRQs are vectors
  * 0x20+). */
 void irq_install(u8 irq, void (*fn)(void));
+/* True only while dispatching an IRQ callback, not while scheduling its tail. */
+int irq_in_handler(void);
 
 /* setjmp-style exception trap. Returns 0 on first call; if any exception
  * fires before exception_recovery_clear(), the handler longjmps back and

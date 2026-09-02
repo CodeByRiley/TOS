@@ -13,6 +13,7 @@ without importing its caches, locking machinery or full POSIX feature set.
 | `vfs/vfs.c` | Filesystem registration, mounts and live inode references |
 | `vfs/namei.c` | Component lookup, parent traversal, stat and name mutations |
 | `vfs/file.c` | Open/close, byte I/O and directory enumeration |
+| `vfs/lock.c`, `vfs/lock.h` | Sleeping FIFO gate and shared scope guard |
 | `stdio.c` | Kernel `FILE *` API over the VFS |
 | `fat/fat.c` | Legacy FAT path API and shared component mutations |
 | `fat/fat_mount.c` | Volume validation, geometry, cluster chains and persistence |
@@ -32,7 +33,7 @@ without importing its caches, locking machinery or full POSIX feature set.
 FAT16 and FAT32 use the same directory algorithms. Their differences are
 geometry and cluster encoding, so there are no duplicated format operation
 tables or one-function selector files. Shared logic uses ordinary functions;
-macros are reserved for constants and on-disk layout declarations.
+macros cover constants, on-disk layouts and the VFS scope guard.
 
 ## Objects and ownership
 
@@ -62,11 +63,43 @@ ownership. `open` may allocate per-open state; `release` must accept partial
 initialization. Failed mount setup calls `unmount`, which must likewise
 accept partial state. Unmount releases the root before backend state.
 
+## Serialization
+
+Every public VFS operation takes one non-recursive sleeping gate. It covers
+mount publication, lookup, inode references, file offsets, backend mutations,
+sync, close and unmount. Backend callbacks and inode-reference helpers run
+with the gate already held; they must not re-enter the public API. Private
+`*_locked` helpers handle nested work. `VFS_GUARD()` releases on every return,
+including allocation and I/O errors.
+
+This gate targets the existing **BSP-only, cooperative kernel scheduler**.
+Bootstrap calls are allowed; IRQ callbacks and AP calls panic. Contenders
+park on a FIFO queue and ownership is handed directly to the next task.
+Only queue changes briefly disable interrupts; disk operations retain the
+caller's interrupt state. This is not an SMP mutex or kernel-preemption support.
+
+Lock order is VFS, then backend, then transport. Never enter the VFS while
+holding a transport lock or another lock needed by the current VFS owner.
+One slow operation blocks all filesystem callers, including other mounts;
+there is no priority inheritance. Per-volume/inode locks can come later,
+once their lifetime and lock-order rules are justified by workloads.
+
+A task is marked `vfs_active` before it queues, until it unlocks. Killing
+such a task returns failure (retry later), protecting its stack, descriptors
+and buffers. Reaping claims a zombie before closing its descriptors because
+close may now sleep; the idle task never performs this blocking cleanup.
+
+Callers must still own their handle/buffer storage until calls return. Do
+not free a shared `FILE *` while another task uses it. Separate seek/write
+calls are not atomic; `vfs_append` refreshes EOF and writes under one gate,
+and kernel stdio append uses it. Directory iteration across several calls
+is not a snapshot of concurrent namespace changes.
+
 ## Scope and deliberate limits
 
 - Public syscall/stdio entry points and return conventions are unchanged:
   integer operations return `0/-1`, transfers return bytes, directory
-  iteration returns `1/0/-1`. Paths are absolute, slash-separated and bounded
+  iteration returns positive/zero/negative. Paths are absolute, slash-separated and bounded
   by `VFS_PATH_MAX`. FAT's legacy direct API retains DOS path parsing for
   its existing tests; the VFS does not use that parser.
 - Mount names are case-sensitive, even on FAT. Repeated/trailing slashes
@@ -83,8 +116,8 @@ accept partial state. Unmount releases the root before backend state.
 - Removing an open file/directory is rejected; Linux-style deferred deletion
   needs orphan-storage support first. Unmount rejects live handles and child
   mounts. Close/unmount before freeing images.
-- The original serialization requirement remains: this is not a concurrent
-  VFS. There is no dentry cache, page cache, symlink/rename API, new permission
+- Calls are serialized, not parallel across mounts. There is no dentry cache,
+  page cache, symlink/rename API, new permission
   enforcement. FAT seek still clamps at EOF; ext2 supports sparse seeks.
 
 ## Persistent storage
@@ -144,7 +177,15 @@ Most ordinary formatted USB sticks therefore will not mount in this first pass.
 ## Verification and extension
 
 Run `make test-fs` for the VFS allocation-failure tests, FAT16/32 tests,
-ext2 tests, stdio tests and a read-only `e2fsck` of the mutated ext2 image.
+ext2 tests, stdio tests, serialization tests and a read-only `e2fsck` of the
+mutated ext2 image. Host filesystem tests require pthreads. The serialization
+test runs the real gate and ext2 with a pthread IRQ/scheduler adapter: eight
+workers mutate namespaces, append through independent handles and write a
+shared cursor. A deterministic queue checks read/close/unmount ordering;
+subprocess checks require recursion, unlocked helpers and IRQ/AP entry to
+panic. The adapter asserts waiter pinning and bounds waits to ten seconds.
+These host tests do not emulate kernel context switches or kill/reap races;
+QEMU persistence/system-stress tests provide complementary integration checks.
 `tests/vfs_backend_checks.h` runs the same object/lifetime contract against
 all three disk layouts. `make kernel` checks kernel integration.
 
