@@ -28,16 +28,16 @@ MSR_GS_BASE equ 0xC0000101
 %macro ISR_NOERR 1
 global isr%1
 isr%1:
-    push 0          ; dummy error code
-    push %1         ; vector number
-    jmp isr_common
+  push 0          ; dummy error code
+  push %1         ; vector number
+  jmp isr_common
 %endmacro
 
 %macro ISR_ERR 1
 global isr%1
 isr%1:
-    push %1         ; CPU already pushed err code
-    jmp isr_common
+  push %1         ; CPU already pushed err code
+  jmp isr_common
 %endmacro
 
 ; NMI, #DF and #MC are delivered asynchronously or after the state that would
@@ -46,16 +46,16 @@ isr%1:
 %macro ISR_NOERR_PARANOID 1
 global isr%1
 isr%1:
-    push 0
-    push %1
-    jmp isr_paranoid_common
+  push 0
+  push %1
+  jmp isr_paranoid_common
 %endmacro
 
 %macro ISR_ERR_PARANOID 1
 global isr%1
 isr%1:
-    push %1
-    jmp isr_paranoid_common
+  push %1
+  jmp isr_paranoid_common
 %endmacro
 
 ISR_NOERR 0
@@ -228,6 +228,7 @@ isr_paranoid_common:
   iretq
 
 ; expose stub addresses as a C-visible table
+; Append the non-contiguous vectors explicitly:
 global isr_stub_table
 isr_stub_table:
 %assign i 0
@@ -235,3 +236,8 @@ isr_stub_table:
   dq isr %+ i
 %assign i i+1
 %endrep
+  ; Pad or handle specialized high vectors
+  times (240 - 48) dq 0
+  dq isr240
+  times (255 - 241) dq 0
+  dq isr255

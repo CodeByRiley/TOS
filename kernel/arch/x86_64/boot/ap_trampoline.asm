@@ -7,14 +7,9 @@
 ; the end of this blob. That handoff switches to the final kernel CR3 before
 ; installing the AP's heap-backed stack and entering C.
 ;
-; Page tables: we use the *existing* kernel PML4 (its physical address is
-; patched in below) because boot identity-maps the low 1 GiB, which covers
-; this trampoline itself, and also has every kernel virtual mapping we'll
-; need once we land in C.
-;
 ; Patch layout (offsets from 0x8000):
-;   ap_pml4_phys  : dword , kernel PML4 physical address (32-bit fits, we're
-;                            below 4 GiB at this point in boot)
+;   ap_pml4_phys  : dword , bootstrap PML4 physical address (< 4 GiB)
+;   ap_cpu_id     : dword , CPU ID number
 ;   ap_stack_top  : qword , ABI-adjusted AP kernel stack
 ;   ap_handoff    : qword , virtual address of ap_long_mode_handoff()
 ;   ap_target_cr3 : qword , final kernel PML4 physical address
@@ -25,114 +20,109 @@
 org 0x8000
 
 ap_trampoline_start:
-    cli
-    cld
-    xor ax, ax
-    mov ds, ax
-    mov es, ax
-    mov ss, ax
+  cli
+  cld
+  xor ax, ax
+  mov ds, ax
+  mov es, ax
+  mov ss, ax
 
-    lgdt [ap_gdt32_ptr]
+  lgdt [ap_gdt32_ptr]
 
-    mov eax, cr0
-    or  eax, 1                  ; CR0.PE
-    mov cr0, eax
+  mov eax, cr0
+  or  eax, 1                  ; CR0.PE
+  mov cr0, eax
 
-    jmp dword 0x08:ap_pmode_start
+  jmp dword 0x08:ap_pmode_start
 
 [bits 32]
 ap_pmode_start:
-    mov ax, 0x10
-    mov ds, ax
-    mov es, ax
-    mov fs, ax
-    mov gs, ax
-    mov ss, ax
+  mov ax, 0x10
+  mov ds, ax
+  mov es, ax
+  mov fs, ax
+  mov gs, ax
+  mov ss, ax
 
-    ; Every AP must establish the x87/SSE state assumed by the x86-64 ABI.
-    mov eax, cr0
-    and eax, ~(1 << 2)           ; clear CR0.EM
-    and eax, ~(1 << 3)           ; clear CR0.TS
-    or  eax, 1 << 1              ; CR0.MP
-    mov cr0, eax
+  ; Establish x87/SSE state assumed by the x86-64 ABI
+  mov eax, cr0
+  and eax, ~(1 << 2)          ; clear CR0.EM
+  and eax, ~(1 << 3)          ; clear CR0.TS
+  or  eax, 1 << 1             ; CR0.MP
+  mov cr0, eax
 
-    mov eax, cr4
-    or  eax, (1 << 5) | (1 << 9) | (1 << 10) ; PAE | OSFXSR | OSXMMEXCPT
-    mov cr4, eax
+  mov eax, cr4
+  or  eax, (1 << 5) | (1 << 9) | (1 << 10) ; PAE | OSFXSR | OSXMMEXCPT
+  mov cr4, eax
 
-    fninit
-    ldmxcsr [ap_mxcsr_default]
+  fninit
+  ldmxcsr [ap_mxcsr_default]
 
-    mov eax, [ap_pml4_phys]
-    mov cr3, eax
+  mov eax, [ap_pml4_phys]
+  mov cr3, eax
 
-    mov ecx, 0xC0000080         ; IA32_EFER MSR
-    rdmsr
-    or  eax, 1 << 8             ; EFER.LME (long mode enable)
-    or  eax, 1 << 11            ; EFER.NXE (no-execute enable, must match BSP)
-    wrmsr
+  mov ecx, 0xC0000080         ; IA32_EFER MSR
+  rdmsr
+  or  eax, 1 << 8             ; EFER.LME (long mode enable)
+  or  eax, 1 << 11            ; EFER.NXE (no-execute enable, must match BSP)
+  wrmsr
 
-    mov eax, cr0
-    or  eax, 1 << 31            ; CR0.PG
-    mov cr0, eax
+  mov eax, cr0
+  or  eax, 1 << 31            ; CR0.PG
+  mov cr0, eax
 
-    lgdt [ap_gdt64_ptr]
-    jmp 0x08:ap_lmode_start
+  lgdt [ap_gdt64_ptr]
+  jmp 0x08:ap_lmode_start
 
 [bits 64]
 default abs
 ap_lmode_start:
-    mov ax, 0x10
-    mov ds, ax
-    mov es, ax
-    mov fs, ax
-    mov gs, ax
-    mov ss, ax
+  xor eax, eax
+  mov ds, ax
+  mov es, ax
+  mov ss, ax
+  mov fs, ax
+  mov gs, ax
 
-    ; Keep all handoff state in registers. The linked higher-half stub changes
-    ; CR3 before loading RSP, so the bootstrap root need not map the AP stack.
-    mov rsi, [ap_target_cr3]
-    mov rdx, [ap_stack_top]
-    mov rax, [ap_handoff]
-    mov edi, [ap_cpu_id]
-    jmp rax
+  ; Keep all handoff state in registers. The linked higher-half stub changes
+  ; CR3 before loading RSP, so the bootstrap root need not map the AP stack.
+  mov rsi, [ap_target_cr3]
+  mov rdx, [ap_stack_top]
+  mov rax, [ap_handoff]
+  mov edi, [ap_cpu_id]
+  jmp rax
 
 align 4
 ap_mxcsr_default: dd 0x1F80
 
-; ---------------------------------------------------------------- GDTs
+; ------------------------------ GDTs
 
 align 8
 ap_gdt32:
-    dq 0
-    dq 0x00CF9A000000FFFF       ; 32-bit code, ring 0, exec, 4 GiB
-    dq 0x00CF92000000FFFF       ; 32-bit data, ring 0, write, 4 GiB
+  dq 0
+  dq 0x00CF9A000000FFFF       ; 32-bit code, ring 0, exec, 4 GiB
+  dq 0x00CF92000000FFFF       ; 32-bit data, ring 0, write, 4 GiB
 ap_gdt32_end:
 ap_gdt32_ptr:
-    dw ap_gdt32_end - ap_gdt32 - 1
-    dd ap_gdt32
+  dw ap_gdt32_end - ap_gdt32 - 1
+  dd ap_gdt32
 
 align 8
 ap_gdt64:
-    dq 0
-    dq 0x00AF9A000000FFFF       ; 64-bit code, ring 0, exec
-    dq 0x00AF92000000FFFF       ; 64-bit data, ring 0, write
+  dq 0
+  dq 0x00AF9A000000FFFF       ; 64-bit code, ring 0, exec
+  dq 0x00CF92000000FFFF       ; 64-bit data, ring 0, write (L bit = 0)
 ap_gdt64_end:
 ap_gdt64_ptr:
-    dw ap_gdt64_end - ap_gdt64 - 1
-    dq ap_gdt64
+  dw ap_gdt64_end - ap_gdt64 - 1
+  dq ap_gdt64
 
-; ---------------------------------------------------------------- patch slots
+; ------------------------------ patch slots
 align 8
 ap_pml4_phys:   dd 0
 ap_cpu_id:      dd 0
 ap_stack_top:   dq 0
 ap_handoff:     dq 0
 ap_target_cr3:  dq 0
-
-; Export the patch-slot offsets so C can poke them via well-known constants.
-; nasm doesn't expose these names to ld in -f bin, so we publish them via
-; equate comments , the C side hardcodes the same offsets, computed from
-; this file's layout. See `smp.c` and `AP_TRAMPOLINE_*_OFF`.
 
 ap_trampoline_end:

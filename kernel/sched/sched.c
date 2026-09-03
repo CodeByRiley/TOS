@@ -101,12 +101,12 @@ void task_inherit_tty(struct task *child, struct task *parent) {
 extern void context_switch(u64 *old_rsp_ptr, u64 new_rsp, u64 new_cr3,
                            void *old_fxstate, void *new_fxstate);
 
-/* Capture the CPU's current x87/SSE state into `buf`. Used at task creation
- * so a fresh task's first context_switch fxrstors from a valid snapshot
- * instead of zeroed memory (which fxrstor would treat as a reserved-bits
- * fault). */
+/* Capture the CPU's current x87/SSE state into `buf`. Match the FXSAVE64
+ * layout restored by context_switch, including the full x87 pointers.
+ * A fresh task's first context_switch restores a valid snapshot rather
+ * than relying on zeroed task storage for its FPU environment. */
 static void fxstate_init(void *buf) {
-  __asm__ volatile("fxsave (%0)" ::"r"(buf) : "memory");
+  __asm__ volatile("fxsave64 (%0)" ::"r"(buf) : "memory");
 }
 extern u64 *kernel_pml4;
 

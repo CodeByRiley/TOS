@@ -18,9 +18,9 @@
  * trade-off is "trusted enough to not crash the kernel"; a real OS would
  * do per-page copy-in/copy-out into kernel buffers.
  */
-#include <arch/syscall.h>
 #include <arch/gdt.h>
 #include <arch/percpu.h>
+#include <arch/syscall.h>
 #include <devices/io.h>
 #include <devices/pit.h>
 #include <devices/rtc.h>
@@ -42,11 +42,10 @@
 #include <net/ksocket.h>
 #include <net/netmon.h>
 #include <sched/sched.h>
-#include <utilities/log.h>
-#include <utilities/string.h>
 #include <stddef.h>
 #include <stdint.h>
-
+#include <utilities/log.h>
+#include <utilities/string.h>
 
 /* User VA boundaries (USER_FB_BASE, USER_MMAP_BASE, USER_MMAP_LIMIT,
  * USER_VA_MIN/MAX, stack) all come from loader/process.h. */
@@ -55,34 +54,34 @@
 #define MSR_LSTAR 0xC0000082
 #define MSR_FMASK 0xC0000084
 
-#define RFLAGS_CF  (1ULL << 0)
+#define RFLAGS_CF (1ULL << 0)
 #define RFLAGS_FIXED (1ULL << 1)
-#define RFLAGS_PF  (1ULL << 2)
-#define RFLAGS_AF  (1ULL << 4)
-#define RFLAGS_ZF  (1ULL << 6)
-#define RFLAGS_SF  (1ULL << 7)
-#define RFLAGS_TF  (1ULL << 8)
-#define RFLAGS_IF  (1ULL << 9)
-#define RFLAGS_DF  (1ULL << 10)
-#define RFLAGS_OF  (1ULL << 11)
-#define RFLAGS_NT  (1ULL << 14)
-#define RFLAGS_AC  (1ULL << 18)
-#define RFLAGS_ID  (1ULL << 21)
+#define RFLAGS_PF (1ULL << 2)
+#define RFLAGS_AF (1ULL << 4)
+#define RFLAGS_ZF (1ULL << 6)
+#define RFLAGS_SF (1ULL << 7)
+#define RFLAGS_TF (1ULL << 8)
+#define RFLAGS_IF (1ULL << 9)
+#define RFLAGS_DF (1ULL << 10)
+#define RFLAGS_OF (1ULL << 11)
+#define RFLAGS_NT (1ULL << 14)
+#define RFLAGS_AC (1ULL << 18)
+#define RFLAGS_ID (1ULL << 21)
 
 /* Flags that must never remain active while the SYSCALL entry stub executes.
  * R11 still retains the userspace image, which the return validator sanitizes
  * independently before iretq. */
-#define SYSCALL_ENTRY_RFLAGS_MASK \
+#define SYSCALL_ENTRY_RFLAGS_MASK                                              \
   (RFLAGS_TF | RFLAGS_IF | RFLAGS_DF | RFLAGS_NT | RFLAGS_AC)
 
 /* Arithmetic/debug state belongs to userspace. Privileged and virtual-8086
  * controls are deliberately absent, reserved bits are cleared, and IF plus
  * the architecturally fixed bit are restored below. */
-#define USER_RETURN_RFLAGS_ALLOWED \
-  (RFLAGS_CF | RFLAGS_PF | RFLAGS_AF | RFLAGS_ZF | RFLAGS_SF | RFLAGS_TF | \
+#define USER_RETURN_RFLAGS_ALLOWED                                             \
+  (RFLAGS_CF | RFLAGS_PF | RFLAGS_AF | RFLAGS_ZF | RFLAGS_SF | RFLAGS_TF |     \
    RFLAGS_IF | RFLAGS_DF | RFLAGS_OF | RFLAGS_ID)
 
-#define GDT_RPL_USER     3
+#define GDT_RPL_USER 3
 #define SYSRET_STAR_BASE ((GDT_USER_CODE | GDT_RPL_USER) - 16)
 
 _Static_assert(SYSRET_STAR_BASE + 8 == (GDT_USER_DATA | GDT_RPL_USER),
@@ -93,11 +92,11 @@ _Static_assert(SYSRET_STAR_BASE + 16 == (GDT_USER_CODE | GDT_RPL_USER),
 #define MAX_SHMEM_PAGES 4096 /* per-call cap; 16 MiB */
 #define AUDIO_WRITE_MAX (1024 * 1024)
 
-#define O_CREAT     0x40
-#define O_TRUNC     0x200
+#define O_CREAT 0x40
+#define O_TRUNC 0x200
 #define O_DIRECTORY 0200000
 
-#define AT_FDCWD      (-100)
+#define AT_FDCWD (-100)
 #define AT_EMPTY_PATH 0x1000
 
 #define S_IFREG 0100000
@@ -115,25 +114,25 @@ _Static_assert(SYSRET_STAR_BASE + 16 == (GDT_USER_CODE | GDT_RPL_USER),
 #define DT_DIR 4
 #define DT_REG 8
 
-#define F_DUPFD  0
-#define F_GETFD  1
-#define F_SETFD  2
-#define F_GETFL  3
-#define F_SETFL  4
+#define F_DUPFD 0
+#define F_GETFD 1
+#define F_SETFD 2
+#define F_GETFL 3
+#define F_SETFL 4
 
 #define TIOCGWINSZ 0x5413
-#define TCGETS     0x5401
-#define TCSETS     0x5402
-#define TCSETSW    0x5403
-#define TCSETSF    0x5404
+#define TCGETS 0x5401
+#define TCSETS 0x5402
+#define TCSETSW 0x5403
+#define TCSETSF 0x5404
 
 #define FUTEX_WAIT 0
 #define FUTEX_WAKE 1
 #define FUTEX_CMD_MASK 0x7f
 
-#define POLLIN   0x0001
-#define POLLOUT  0x0004
-#define POLLERR  0x0008
+#define POLLIN 0x0001
+#define POLLOUT 0x0004
+#define POLLERR 0x0008
 #define POLLNVAL 0x0020
 
 struct fb_info {
@@ -317,7 +316,8 @@ static long sys_fb_map(void) {
   /* Framebuffer mappings form a prefix at USER_FB_BASE. Find the first page
      that is absent or points at stale backing, then map only that suffix.
      This remains correct across process_exec (the first probe misses) while
-     making a resize that merely exposes more rows proportional to the growth. */
+     making a resize that merely exposes more rows proportional to the growth.
+   */
   u32 pages = framebuffer_num_pages();
   u32 first_missing = 0;
   if (task_pml4(t)) {
@@ -352,8 +352,8 @@ static long sys_fb_map(void) {
 static int fb_source_span(u64 source_pitch, u64 *source_bytes) {
   u64 width = framebuffer_width();
   u64 height = framebuffer_height();
-  if (!source_bytes || width == 0 || height == 0 ||
-      source_pitch > UINT32_MAX || source_pitch < width * 4ULL) {
+  if (!source_bytes || width == 0 || height == 0 || source_pitch > UINT32_MAX ||
+      source_pitch < width * 4ULL) {
     return -1;
   }
 
@@ -374,8 +374,8 @@ static long sys_fb_register(const void *pixels, u64 source_pitch) {
   }
 
   return framebuffer_register_user(task->vm->user_pml4, task->pid,
-                                   (u64)(uintptr_t)pixels,
-                                   (u32)source_pitch, source_bytes);
+                                   (u64)(uintptr_t)pixels, (u32)source_pitch,
+                                   source_bytes);
 }
 
 static long sys_fb_unregister(void) {
@@ -386,8 +386,7 @@ static long sys_fb_unregister(void) {
 }
 
 static long sys_fb_present(const void *pixels, u64 source_pitch,
-                           const struct fb_rect *user_rects,
-                           u64 rect_count) {
+                           const struct fb_rect *user_rects, u64 rect_count) {
   struct task *task = task_current();
   u64 source_bytes;
   if (!task_pml4(task) || msg_input_owner() != task->pid || !pixels ||
@@ -397,8 +396,8 @@ static long sys_fb_present(const void *pixels, u64 source_pitch,
   }
 
   int registered = framebuffer_user_buffer_registered(
-      task->vm->user_pml4, task->pid, (u64)(uintptr_t)pixels,
-      (u32)source_pitch, source_bytes);
+      task->vm->user_pml4, task->pid, (u64)(uintptr_t)pixels, (u32)source_pitch,
+      source_bytes);
   if ((!registered && !user_buffer_ok(pixels, source_bytes, 0)) ||
       !user_buffer_ok(user_rects, rect_count * sizeof(*user_rects), 0)) {
     return -1;
@@ -410,9 +409,8 @@ static long sys_fb_present(const void *pixels, u64 source_pitch,
   struct fb_rect rects[FB_PRESENT_MAX_RECTS];
   memcpy(rects, user_rects, rect_count * sizeof(*user_rects));
   return framebuffer_present_user(task->vm->user_pml4, task->pid,
-                                  (u64)(uintptr_t)pixels,
-                                  (u32)source_pitch, rects,
-                                  (u32)rect_count);
+                                  (u64)(uintptr_t)pixels, (u32)source_pitch,
+                                  rects, (u32)rect_count);
 }
 
 /* Translate PROT_* into PTE bits. Returns 0 for a protection this VMM
@@ -424,7 +422,7 @@ static u64 prot_to_pte(int prot) {
   if (prot & ~(PROT_READ | PROT_WRITE | PROT_EXEC))
     return 0;
   if (!(prot & PROT_READ))
-    return 0;                       /* x86 has no write-only or exec-only  */
+    return 0; /* x86 has no write-only or exec-only  */
 
   u64 flags = VMM_PRESENT | VMM_USER;
   if (prot & PROT_WRITE)
@@ -603,8 +601,7 @@ static u64 arena_alloc(struct task *t, u64 bytes) {
 /* Drop `start..end` from the VMA table. A hole wholly inside one mapping
  * needs one additional record for its right-hand side; reserve that slot
  * before changing anything so munmap remains all-or-nothing for metadata. */
-static int user_vma_remove_range(struct task *task, u64 start,
-                                 u64 end) {
+static int user_vma_remove_range(struct task *task, u64 start, u64 end) {
   if (!task || !task->vm)
     return -1;
   struct user_vma *split = 0;
@@ -672,13 +669,17 @@ static long sys_mmap(u64 addr, long len, int prot, int flags) {
 
   u64 base;
   if (flags & MAP_FIXED) {
-    if (addr & 4095) return -1;
-    if (!user_range_ok(addr, bytes)) return -1;
-    if (!range_is_unmapped(t, addr, bytes)) return -1;
+    if (addr & 4095)
+      return -1;
+    if (!user_range_ok(addr, bytes))
+      return -1;
+    if (!range_is_unmapped(t, addr, bytes))
+      return -1;
     base = addr;
   } else {
     base = arena_alloc(t, bytes);
-    if (!base) return -1;
+    if (!base)
+      return -1;
   }
 
   *vma = (struct user_vma){
@@ -697,17 +698,22 @@ static long sys_mmap(u64 addr, long len, int prot, int flags) {
  * are committed during validation; after that every page has a PTE whose
  * permissions can be changed without relying on VMA metadata. */
 static long sys_mprotect(u64 addr, long len, int prot) {
-  if (len <= 0 || (addr & 4095)) return -1;
+  if (len <= 0 || (addr & 4095))
+    return -1;
 
   struct task *t = task_current();
-  if (!task_pml4(t)) return -1;
+  if (!task_pml4(t))
+    return -1;
 
   u64 pte_flags = prot_to_pte(prot);
-  if (!pte_flags) return -1;
+  if (!pte_flags)
+    return -1;
 
   u64 bytes = ((u64)len + 4095) & ~4095ULL;
-  if (bytes < (u64)len || !user_range_ok(addr, bytes)) return -1;
-  if (framebuffer_registered_range_overlaps(t->vm->user_pml4, addr, bytes)) return -1;
+  if (bytes < (u64)len || !user_range_ok(addr, bytes))
+    return -1;
+  if (framebuffer_registered_range_overlaps(t->vm->user_pml4, addr, bytes))
+    return -1;
 
   for (u64 off = 0; off < bytes; off += 4096) {
     if (!user_page_prepare(t, addr + off, 0))
@@ -807,8 +813,7 @@ void syscall_init_this_cpu(u64 kernel_stack_top) {
   /* SYSRET forms SS as STAR[63:48] + 8 and CS as STAR[63:48] + 16.
    * Keep RPL=3 in the base itself: VirtualBox preserves those selector bits,
    * and a later interrupt return rejects an SS selector with RPL=0. */
-  wrmsr(MSR_STAR, ((u64)SYSRET_STAR_BASE << 48) |
-                  ((u64)GDT_KERNEL_CODE << 32));
+  wrmsr(MSR_STAR, ((u64)SYSRET_STAR_BASE << 48) | ((u64)GDT_KERNEL_CODE << 32));
   wrmsr(MSR_LSTAR, (u64)syscall_entry);
   wrmsr(MSR_FMASK, SYSCALL_ENTRY_RFLAGS_MASK);
 
@@ -835,8 +840,7 @@ int syscall_prepare_return(struct syscall_frame *f) {
     return -1;
   if (f->cs != user_cs || f->ss != user_ss)
     return -1;
-  if (!user_return_address_ok(f->rip, 0) ||
-      !user_return_address_ok(f->rsp, 1))
+  if (!user_return_address_ok(f->rip, 0) || !user_return_address_ok(f->rsp, 1))
     return -1;
 
   u64 rip_entry = vmm_entry_in(task->vm->user_pml4, f->rip);
@@ -872,7 +876,8 @@ static long sys_write(long fd, const void *buf, long n) {
   }
 
   struct task *t = task_current();
-  if (!t || fd < 3 || fd >= TASK_MAX_FDS || !task_fd_file(t, fd) || task_fd_is_dir(t, fd))
+  if (!t || fd < 3 || fd >= TASK_MAX_FDS || !task_fd_file(t, fd) ||
+      task_fd_is_dir(t, fd))
     return -1;
 
   return (long)vfs_write(task_fd_file(t, fd), buf, (usize)n);
@@ -986,8 +991,8 @@ static int audio_caller_pid(void) {
 }
 
 static long sys_audio_open(long sample_rate, long channels, long format) {
-  return sb16_stream_open(audio_caller_pid(), (u32)sample_rate,
-                          (u32)channels, (u32)format);
+  return sb16_stream_open(audio_caller_pid(), (u32)sample_rate, (u32)channels,
+                          (u32)format);
 }
 
 static long sys_audio_write(const void *pcm, long bytes) {
@@ -1087,6 +1092,9 @@ static long sys_shmem_share(long target_pid, u64 in_va, long npages,
 
   struct task *target = task_find((int)target_pid);
   if (!task_pml4(target))
+    return -1;
+  /* Validate the result slot before creating mappings or changing accounting. */
+  if (!user_buffer_ok(out_target_va, sizeof(*out_target_va), 1))
     return -1;
   if (target->vm->shmem_next_va == 0)
     target->vm->shmem_next_va = 0x0000000080000000ULL; /* defensive */
@@ -1269,7 +1277,8 @@ static void hw_shutdown(void) {
   log_write("powering off...", KERNEL, LOG_INFO);
   fat_flush();
   if (vfs_sync_all()) {
-    log_write("shutdown: filesystem sync failed; refusing poweroff", KERNEL, LOG_ERROR);
+    log_write("shutdown: filesystem sync failed; refusing poweroff", KERNEL,
+              LOG_ERROR);
     return;
   }
   outw(0x604, 0x2000);  /* QEMU >= 2.0 (PIIX ACPI) */
@@ -1286,7 +1295,8 @@ static void hw_reboot(void) {
   log_write("rebooting...", KERNEL, LOG_INFO);
   fat_flush();
   if (vfs_sync_all()) {
-    log_write("reboot: filesystem sync failed; refusing reset", KERNEL, LOG_ERROR);
+    log_write("reboot: filesystem sync failed; refusing reset", KERNEL,
+              LOG_ERROR);
     return;
   }
   /* drain 8042 input buffer */
@@ -1507,13 +1517,13 @@ static long sys_read(int fd, void *buf, usize n) {
   }
 
   /* Handle normal files (fd >= 3) */
-  if (!t || fd < 3 || fd >= TASK_MAX_FDS || !task_fd_file(t, fd) || task_fd_is_dir(t, fd))
+  if (!t || fd < 3 || fd >= TASK_MAX_FDS || !task_fd_file(t, fd) ||
+      task_fd_is_dir(t, fd))
     return -1;
 
   struct vfs_file *file = task_fd_file(t, fd);
-  usize available = file->position < file->size
-                         ? (usize)(file->size - file->position)
-                         : 0;
+  usize available =
+      file->position < file->size ? (usize)(file->size - file->position) : 0;
   usize transfer = n < available ? n : available;
   if (!user_buffer_ok(buf, transfer, 1))
     return -1;
@@ -1522,7 +1532,8 @@ static long sys_read(int fd, void *buf, usize n) {
 
 // static long sys_read(int fd, void *buf, usize n) {
 //   struct task *t = task_current();
-//   if (!t || fd < 3 || fd >= TASK_MAX_FDS || !task_fd_file(t, fd) || task_fd_is_dir(t, fd))
+//   if (!t || fd < 3 || fd >= TASK_MAX_FDS || !task_fd_file(t, fd) ||
+//   task_fd_is_dir(t, fd))
 //     return -1;
 
 //   struct fat_file *file = task_fd_file(t, fd);
@@ -1628,7 +1639,8 @@ static long sys_fstat(int fd, struct linux_kstat *out) {
 
 static long sys_lseek(int fd, long off, int whence) {
   struct task *t = task_current();
-  if (!t || fd < 3 || fd >= TASK_MAX_FDS || !task_fd_file(t, fd) || task_fd_is_dir(t, fd))
+  if (!t || fd < 3 || fd >= TASK_MAX_FDS || !task_fd_file(t, fd) ||
+      task_fd_is_dir(t, fd))
     return -1;
   struct vfs_file *f = task_fd_file(t, fd);
   u64 base;
@@ -1690,8 +1702,7 @@ static long sys_readdir(u32 *index, char *buf, usize n) {
   return vfs_read_dir(t->files->cwd, index, buf, n);
 }
 
-static long sys_readdir_path(const char *path, u32 *index, char *buf,
-                             usize n) {
+static long sys_readdir_path(const char *path, u32 *index, char *buf, usize n) {
   char resolved[TASK_CWD_MAX];
   if (resolve_path(path, resolved, sizeof(resolved)) != 0)
     return -1;
@@ -1723,8 +1734,8 @@ static long sys_getdents64(int fd, void *user_buf, usize len) {
       return written ? (long)written : -1;
 
     usize name_len = strlen(entry.name);
-    usize reclen = align_up_size(offsetof(struct linux_dirent64, d_name) +
-                                  name_len + 1, 8);
+    usize reclen = align_up_size(
+        offsetof(struct linux_dirent64, d_name) + name_len + 1, 8);
     if (reclen > len - written) {
       task_fd_slot(t, fd)->dir_index = before;
       break;
@@ -2072,7 +2083,6 @@ static long sys_getcwd(char *buf, usize size) {
   return (long)(uintptr_t)buf;
 }
 
-
 /* Userspace-visible proc_info layout. MUST match struct proc_info in
  * userspace/lib/syscall.h byte-for-byte. */
 struct proc_info_user {
@@ -2243,8 +2253,7 @@ static long sys_sendto(int fd, const void *buf, usize len, int flags,
   struct socket *sock = sock_from_fd(t, fd);
   if (!sock || !buf || !dest || addrlen < sizeof(*dest))
     return -1;
-  if (!user_buffer_ok(buf, len, 0) ||
-      !user_buffer_ok(dest, sizeof(*dest), 0))
+  if (!user_buffer_ok(buf, len, 0) || !user_buffer_ok(dest, sizeof(*dest), 0))
     return -1;
 
   struct sockaddr_in remote;
@@ -2297,8 +2306,8 @@ static long sys_net_ping(struct net_ping_user *req) {
     return -1;
 
   u32 rtt_ms = 0;
-  long rc = icmp_ping(local.dst, local.ident, local.seq, local.timeout_ms,
-                      &rtt_ms);
+  long rc =
+      icmp_ping(local.dst, local.ident, local.seq, local.timeout_ms, &rtt_ms);
   if (rc == 0)
     req->rtt_ms = rtt_ms;
   return rc;
@@ -2321,46 +2330,50 @@ static long sys_arch_prctl(long code, u64 addr) {
 }
 
 static long sys_thread_create(u64 entry, u64 user_stack, u64 u_arg) {
-    struct task *t = task_spawn_thread(entry, user_stack);
-    if (!t) return -1;
-    t->context->user_arg = u_arg;
-    return t->pid;
+  struct task *t = task_spawn_thread(entry, user_stack);
+  if (!t)
+    return -1;
+  t->context->user_arg = u_arg;
+  return t->pid;
 }
 
 static long sys_thread_exit(void) {
-    struct task *t = task_current();
-    if (!t || !t->vm || !t->vm->pml4_ref_count) return -1;
+  struct task *t = task_current();
+  if (!t || !t->vm || !t->vm->pml4_ref_count)
+    return -1;
 
-    /* Threads share one PML4, so the last one out frees it. The decrement
-     * must be atomic: two threads exiting concurrently would otherwise both
-     * read the same count and either double-free or leak the address space. */
-    int new_count = __atomic_sub_fetch(t->vm->pml4_ref_count, 1, __ATOMIC_ACQ_REL);
+  /* Threads share one PML4, so the last one out frees it. The decrement
+   * must be atomic: two threads exiting concurrently would otherwise both
+   * read the same count and either double-free or leak the address space. */
+  int new_count =
+      __atomic_sub_fetch(t->vm->pml4_ref_count, 1, __ATOMIC_ACQ_REL);
 
-    if (new_count <= 0) {
-        kfree(t->vm->pml4_ref_count);
-        t->vm->pml4_ref_count = 0;
-        task_exit(0);            /* tears down the address space too */
-    } else {
-        /* Detach from the shared PML4 first , task_exit_thread must not
-         * reap an address space its siblings are still running on. */
-        t->vm->user_pml4 = 0;
-        t->vm->pml4_ref_count = 0;
-        task_exit_thread();
-    }
+  if (new_count <= 0) {
+    kfree(t->vm->pml4_ref_count);
+    t->vm->pml4_ref_count = 0;
+    task_exit(0); /* tears down the address space too */
+  } else {
+    /* Detach from the shared PML4 first , task_exit_thread must not
+     * reap an address space its siblings are still running on. */
+    t->vm->user_pml4 = 0;
+    t->vm->pml4_ref_count = 0;
+    task_exit_thread();
+  }
 
-    return 0;
+  return 0;
 }
 
 static long sys_thread_join(long tid) {
-    struct task *target = task_find((int)tid);
-    if (!target) return -1;
+  struct task *target = task_find((int)tid);
+  if (!target)
+    return -1;
 
-    if (target->state == TASK_ZOMBIE) {
-        return 0;
-    }
-
-    task_block((int)tid);
+  if (target->state == TASK_ZOMBIE) {
     return 0;
+  }
+
+  task_block((int)tid);
+  return 0;
 }
 
 /* Block until *addr changes away from `expected`.
@@ -2369,38 +2382,45 @@ static long sys_thread_join(long tid) {
  * changed between the caller's own check and ours, returning immediately is
  * what stops the caller sleeping through a wake it already missed. */
 static long sys_futex_wait(u32 *addr, u32 expected) {
-    struct task *t = task_current();
-    if (!task_pml4(t)) return -1;
-    if (!addr) return -1;
+  struct task *t = task_current();
+  if (!task_pml4(t))
+    return -1;
+  if (!addr)
+    return -1;
 
-    if ((u64)addr >= USER_VA_MAX) return -1;
+  if ((u64)addr >= USER_VA_MAX)
+    return -1;
 
-    /* Futexes key on the physical frame, so two tasks with the same page
-     * mapped at different VAs still queue on the same futex. */
-    u64 phys = vmm_translate_in(t->vm->user_pml4, (u64)addr);
-    if (!phys) return -1;
-    phys &= VMM_ADDR_MASK;
+  /* Futexes key on the physical frame, so two tasks with the same page
+   * mapped at different VAs still queue on the same futex. */
+  u64 phys = vmm_translate_in(t->vm->user_pml4, (u64)addr);
+  if (!phys)
+    return -1;
+  phys &= VMM_ADDR_MASK;
 
-    if (*addr != expected) {
-        return -1;
-    }
+  if (*addr != expected) {
+    return -1;
+  }
 
-    t->futex_addr = phys;
-    task_block(0); /* 0 = indefinite; only a futex wake releases us */
-    return 0;
+  t->futex_addr = phys;
+  task_block(0); /* 0 = indefinite; only a futex wake releases us */
+  return 0;
 }
 
 /* Wake exactly one waiter. Callers needing wake-all must loop. */
 static long sys_futex_wake(u32 *addr) {
-    struct task *me = task_current();
-    if (!task_pml4(me)) return -1;
-    if (!addr) return -1;
+  struct task *me = task_current();
+  if (!task_pml4(me))
+    return -1;
+  if (!addr)
+    return -1;
 
-    u64 phys = vmm_translate_in(me->vm->user_pml4, (u64)addr);
-    if (!phys) return -1;
-    phys &= VMM_ADDR_MASK;
+  u64 phys = vmm_translate_in(me->vm->user_pml4, (u64)addr);
+  if (!phys)
+    return -1;
+  phys &= VMM_ADDR_MASK;
 
-    return task_wake_futex(phys);
+  return task_wake_futex(phys);
 }
 
 long syscall_dispatch(struct syscall_frame *f) {
@@ -2455,10 +2475,9 @@ long syscall_dispatch(struct syscall_frame *f) {
     ret = sys_brk((u64)(uintptr_t)a1);
     break;
   case SYS_RT_SIGACTION:
-    ret = sys_rt_sigaction((int)a1,
-                           (const struct task_signal_action *)(uintptr_t)a2,
-                           (struct task_signal_action *)(uintptr_t)a3,
-                           (usize)a4);
+    ret = sys_rt_sigaction(
+        (int)a1, (const struct task_signal_action *)(uintptr_t)a2,
+        (struct task_signal_action *)(uintptr_t)a3, (usize)a4);
     break;
   case SYS_STAT:
     ret = sys_stat((const char *)(uintptr_t)a1,
@@ -2490,14 +2509,12 @@ long syscall_dispatch(struct syscall_frame *f) {
     ret = sys_readdir((u32 *)(uintptr_t)a1, (char *)(uintptr_t)a2, a3);
     break;
   case SYS_READDIR_PATH:
-    ret =
-        sys_readdir_path((const char *)(uintptr_t)a1, (u32 *)(uintptr_t)a2,
-                         (char *)(uintptr_t)a3, (usize)a4);
+    ret = sys_readdir_path((const char *)(uintptr_t)a1, (u32 *)(uintptr_t)a2,
+                           (char *)(uintptr_t)a3, (usize)a4);
     break;
   case SYS_SET_TID_ADDRESS:
     if ((u64)a2 >= USER_VA_MIN && (u64)a3 >= USER_VA_MIN && a4 > 0) {
-      ret = sys_readdir_path((const char *)(uintptr_t)a1,
-                             (u32 *)(uintptr_t)a2,
+      ret = sys_readdir_path((const char *)(uintptr_t)a1, (u32 *)(uintptr_t)a2,
                              (char *)(uintptr_t)a3, (usize)a4);
     } else {
       ret = sys_set_tid_address((u64)(uintptr_t)a1);
@@ -2640,8 +2657,7 @@ long syscall_dispatch(struct syscall_frame *f) {
     ret = sys_fb_map();
     break;
   case SYS_FB_DAMAGE:
-    framebuffer_mark_damage((u32)a1, (u32)a2, (u32)a3,
-                            (u32)a4);
+    framebuffer_mark_damage((u32)a1, (u32)a2, (u32)a3, (u32)a4);
     ret = 0;
     break;
   case SYS_FB_PRESENT:
@@ -2704,8 +2720,7 @@ long syscall_dispatch(struct syscall_frame *f) {
     break;
   case SYS_THREAD_JOIN:
     if ((u64)a1 >= USER_VA_MIN) {
-      ret = sys_linux_futex((u32 *)(uintptr_t)a1, (int)a2,
-                            (u32)a3,
+      ret = sys_linux_futex((u32 *)(uintptr_t)a1, (int)a2, (u32)a3,
                             (const struct linux_timespec *)(uintptr_t)a4);
     } else {
       ret = sys_thread_join((uintptr_t)a1);
@@ -2731,18 +2746,16 @@ long syscall_dispatch(struct syscall_frame *f) {
     ret = sys_socket((int)a1, (int)a2, (int)a3);
     break;
   case SYS_BIND:
-    ret = sys_bind((int)a1, (const struct sockaddr_in *)(uintptr_t)a2,
-                   (u32)a3);
+    ret = sys_bind((int)a1, (const struct sockaddr_in *)(uintptr_t)a2, (u32)a3);
     break;
   case SYS_SENDTO:
-    ret = sys_sendto((int)a1, (const void *)(uintptr_t)a2, (usize)a3,
-                     (int)a4, (const struct sockaddr_in *)(uintptr_t)a5,
-                     (u32)a6);
+    ret = sys_sendto((int)a1, (const void *)(uintptr_t)a2, (usize)a3, (int)a4,
+                     (const struct sockaddr_in *)(uintptr_t)a5, (u32)a6);
     break;
   case SYS_RECVFROM:
-    ret = sys_recvfrom((int)a1, (void *)(uintptr_t)a2, (usize)a3, (int)a4,
-                       (struct sockaddr_in *)(uintptr_t)a5,
-                       (u32 *)(uintptr_t)a6);
+    ret =
+        sys_recvfrom((int)a1, (void *)(uintptr_t)a2, (usize)a3, (int)a4,
+                     (struct sockaddr_in *)(uintptr_t)a5, (u32 *)(uintptr_t)a6);
     break;
   default:
     log_write_hex("unknown syscall =", num, KERNEL, LOG_ERROR);

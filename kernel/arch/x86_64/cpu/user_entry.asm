@@ -1,29 +1,13 @@
-; kernel/arch/x86_64/cpu/user_entry.asm , first entry into ring 3.
-;
-; A task that has never run userspace has no syscall frame to return through,
-; so the very first transition has to be built by hand. This is the only place
-; that does it. It is one-way: there is no saved kernel context, no nesting
-; counter and no way back except a fault, an interrupt or a syscall, each of
-; which has its own entry path.
+; kernel/arch/x86_64/cpu/user_entry.asm - First entry into ring 3.
 ;
 ; void arch_enter_user(u64 entry, u64 user_rsp, u64 arg);
-;   rdi = entry, rsi = user_rsp, rdx = arg (delivered to userspace in RDI)
-;
-; FS and GS *selectors* are deliberately left alone. Their bases are kernel
-; state now , FS_BASE is staged per task by the scheduler and GS is swapped
-; below , and loading a selector into FS or GS can clear or leave undefined
-; the hidden base the MSR just set. Long mode ignores DS/ES for addressing,
-; but they are still loaded so a ring-3 `mov` from them sees a user selector
-; rather than whatever the kernel was using.
-;
-; Selector values come from kernel/arch/offsets.c.
+;    rdi = entry, rsi = user_rsp, rdx = arg (delivered to userspace in RDI)
 
 %include "asm_offsets.inc"
 
 global arch_enter_user
 
-; Bit 1 is architecturally always set; bit 9 is IF. Userspace starts with
-; interrupts on and nothing else: DF, TF, NT and AC clear, IOPL 0.
+; Bit 1 is architecturally always set; bit 9 is IF.
 USER_INITIAL_RFLAGS equ (1 << 1) | (1 << 9)
 
 section .text
@@ -32,18 +16,16 @@ bits 64
 arch_enter_user:
   cli
 
-  ; Park the two values needed after the scrub below.
-  mov rax, rdi                       ; user RIP
-  mov r9,  rsi                       ; user RSP
-  mov rdi, rdx                       ; userspace argument
+  ; Park values needed after scrubbing
+  mov rax, rdi                        ; user RIP
+  mov r9,  rsi                        ; user RSP
+  mov rdi, rdx                        ; userspace argument (arg0)
 
   mov cx, GDT_USER_DATA_RPL3
   mov ds, cx
   mov es, cx
 
-  ; Nothing else crosses the boundary. Every register ring 3 can read that
-  ; is not part of the contract starts at zero rather than leaking whatever
-  ; the kernel happened to leave there.
+  ; Scrub general-purpose registers to prevent kernel leaks
   xor ecx, ecx
   xor edx, edx
   xor esi, esi
@@ -57,18 +39,34 @@ arch_enter_user:
   xor r14d, r14d
   xor r15d, r15d
 
-  ; iretq pops RIP, CS, RFLAGS, RSP, SS from low address up.
+  ; Scrub SSE/Vector registers (xmm0-xmm15) to prevent kernel leaks
+  xorps xmm0,  xmm0
+  xorps xmm1,  xmm1
+  xorps xmm2,  xmm2
+  xorps xmm3,  xmm3
+  xorps xmm4,  xmm4
+  xorps xmm5,  xmm5
+  xorps xmm6,  xmm6
+  xorps xmm7,  xmm7
+  xorps xmm8,  xmm8
+  xorps xmm9,  xmm9
+  xorps xmm10, xmm10
+  xorps xmm11, xmm11
+  xorps xmm12, xmm12
+  xorps xmm13, xmm13
+  xorps xmm14, xmm14
+  xorps xmm15, xmm15
+
+  ; Final iretq stack frame, low to high: RIP, CS, RFLAGS, RSP, SS
   push qword GDT_USER_DATA_RPL3      ; SS
-  push r9                            ; RSP
-  push qword USER_INITIAL_RFLAGS
+  push r9                             ; RSP
+  push qword USER_INITIAL_RFLAGS      ; RFLAGS
   push qword GDT_USER_CODE_RPL3      ; CS
-  push rax                           ; RIP
+  push rax                            ; RIP
 
   xor eax, eax
   xor r9d, r9d
 
-  ; GS is the last kernel-visible thing to go, and it goes immediately before
-  ; the privilege change: between these two instructions CPL is still 0 while
-  ; GS already holds the user value, which is why NMI runs on its own IST.
+  ; Switch GS base to user before crossing privilege boundary
   swapgs
   iretq
