@@ -156,7 +156,7 @@ isr_common:
 
   ; RSP is now the base of struct interrupt_frame. CS.RPL of 3 means we came
   ; from ring 3, so GS still holds the user value.
-  test qword [rsp + INTERRUPT_FRAME_CS_OFF], 3
+  test byte [rsp + INTERRUPT_FRAME_CS_OFF], 3
   jz .kernel_gs_ready
   swapgs
 .kernel_gs_ready:
@@ -174,7 +174,7 @@ isr_common:
 
   ; Same test against the CS the CPU will actually consume. The handler is
   ; allowed to have rewritten RIP (exception recovery does), but never CS.
-  test qword [rsp + INTERRUPT_IRETQ_CS_OFF], 3
+  test byte [rsp + INTERRUPT_IRETQ_CS_OFF], 3
   jz .keep_kernel_gs
   swapgs
 .keep_kernel_gs:
@@ -197,8 +197,8 @@ isr_paranoid_common:
   mov ecx, MSR_GS_BASE
   rdmsr                          ; edx:eax = GS base, GPRs already saved
   xor r11d, r11d                 ; 0 = GS was already kernel
-  test edx, 0x80000000           ; bit 63 of the base: high half => kernel
-  jnz .gs_is_kernel
+  test edx, edx                 ; sign bit is bit 63 of GS.base
+  js .gs_is_kernel              ; high half => kernel
   swapgs
   mov r11d, 1                    ; remember to undo it
 .gs_is_kernel:

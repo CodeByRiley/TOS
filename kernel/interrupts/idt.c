@@ -535,7 +535,9 @@ void isr_handler(struct interrupt_frame *r) {
     }
   } else if (r->int_num < 48) {
     u8 irq = r->int_num - 32;
-    int cpu = percpu_current_id();
+    /* IRQ entry has already installed kernel GS. Reserve the MSR-based
+     * lookup for paths such as panic reporting where GS may be unarmed. */
+    int cpu = percpu_this()->cpu_id;
     irq_depth[cpu]++;
     if (irq_handlers[irq])
       irq_handlers[irq]();

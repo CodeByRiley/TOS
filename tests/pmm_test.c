@@ -101,10 +101,49 @@ static void test_exhaustion_and_invalid_free(void) {
     expect(pmm_used_frames() == used - 1, "double free cannot underflow accounting");
 }
 
+static void test_bitmap_boundaries(void) {
+    /* Deliberately clear padding bits: they must never become real frames. */
+    pmm_test_reset(bitmap, 259);
+    pmm_test_mark_free(256 * FRAME_SIZE, 3 * FRAME_SIZE);
+    bitmap[32] &= 0x07;
+    for (uint64_t f = 256; f < 259; f++)
+        expect(pmm_alloc_frame() == f * FRAME_SIZE,
+               "partial final byte allocates only real frames in order");
+    expect(pmm_alloc_frame() == 0, "padding bits are not physical frames");
+    expect(pmm_used_frames() == 259, "padding does not affect accounting");
+
+    pmm_test_reset(bitmap, 259);
+    pmm_test_mark_free(257 * FRAME_SIZE, FRAME_SIZE);
+    expect(pmm_alloc_frame_below(258 * FRAME_SIZE - 1) == 0,
+           "limit excludes a frame that is not entirely below it");
+    expect(pmm_alloc_frame_below(258 * FRAME_SIZE) == 257 * FRAME_SIZE,
+           "limit admits the final whole frame in a partial byte");
+
+    pmm_test_reset(bitmap, TEST_FRAMES);
+    pmm_test_mark_free(300 * FRAME_SIZE, FRAME_SIZE);
+    pmm_test_mark_free(305 * FRAME_SIZE, FRAME_SIZE);
+    expect(pmm_alloc_frame() == 300 * FRAME_SIZE,
+           "scan skips fully occupied bitmap bytes");
+    /* The test setup frees memory without moving the next-fit cursor. */
+    pmm_test_mark_free(299 * FRAME_SIZE, FRAME_SIZE);
+    expect(pmm_alloc_frame() == 305 * FRAME_SIZE,
+           "partial starting byte does not allocate below the cursor");
+    expect(pmm_alloc_frame() == 299 * FRAME_SIZE,
+           "wraparound finds a free bit below the original cursor");
+    expect(pmm_alloc_frame() == 0, "wraparound does not reallocate taken bits");
+
+    pmm_test_reset(bitmap, 255);
+    pmm_test_mark_free(16 * FRAME_SIZE, FRAME_SIZE);
+    expect(pmm_alloc_frame() == 0, "small memory map preserves the DMA pool");
+    expect(pmm_alloc_frame_below(0x100000) == 16 * FRAME_SIZE,
+           "small memory map still permits an explicit DMA allocation");
+}
+
 int main(void) {
     test_general_allocation();
     test_limits_and_contiguous();
     test_exhaustion_and_invalid_free();
+    test_bitmap_boundaries();
     if (failures)
         return 1;
     puts("pmm_test: all checks passed");

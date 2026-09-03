@@ -55,6 +55,23 @@ static int bitmap_test(u64t frame) {
   return bitmap[frame / 8] & (1 << (frame % 8));
 }
 
+/* First free frame in [first, end), or bitmap_frames if none exists.
+ * Skip a fully occupied byte at a time while preserving allocation order.
+ * Mask the initial partial byte and reject bits beyond the requested end;
+ * the bitmap's final byte may contain padding outside physical memory. */
+static u64t find_free_frame(u64t first, u64t end) {
+  while (first < end) {
+    unsigned free_bits = (unsigned)(u8t)~bitmap[first / 8];
+    free_bits &= 0xFFu << (first % 8);
+    if (free_bits) {
+      u64t frame = (first & ~7ULL) + (unsigned)__builtin_ctz(free_bits);
+      return frame < end ? frame : bitmap_frames;
+    }
+    first = (first | 7ULL) + 1;
+  }
+  return bitmap_frames;
+}
+
 #ifndef PMM_HOST_TEST
 static u64t align_up(u64t value, u64t align) {
   return (value + align - 1) & ~(align - 1);
@@ -301,10 +318,13 @@ u64t pmm_alloc_frame(void) {
   if (start < first || start >= bitmap_frames)
     start = first;
 
-  for (u64t f = start; f < bitmap_frames; f++)
+  /* Sequential allocations usually hit the hint immediately. Keep that
+   * path to one bit test; scan bytes only when the hinted frame is taken. */
+  for (u64t f = start; f < bitmap_frames;
+       f = find_free_frame(f + 1, bitmap_frames))
     if (!bitmap_test(f))
       return allocate_frame_at(f);
-  for (u64t f = first; f < start; f++)
+  for (u64t f = first; f < start; f = find_free_frame(f + 1, start))
     if (!bitmap_test(f))
       return allocate_frame_at(f);
 
@@ -321,17 +341,16 @@ u64t pmm_alloc_frame_below(u64t limit) {
   if (limit > PMM_GENERAL_ALLOC_BASE)
     first_frame = PMM_GENERAL_ALLOC_BASE / FRAME_SIZE;
 
-  for (u64t f = first_frame; f < frames; f++) {
-    if (!bitmap_test(f)) {
-      bitmap_set(f);
-      used_frames++;
-      if (f >= PMM_GENERAL_ALLOC_BASE / FRAME_SIZE) {
-        next_free_frame = f + 1;
-        if (next_free_frame >= bitmap_frames)
-          next_free_frame = PMM_GENERAL_ALLOC_BASE / FRAME_SIZE;
-      }
-      return f * FRAME_SIZE;
+  u64t f = find_free_frame(first_frame, frames);
+  if (f < frames) {
+    bitmap_set(f);
+    used_frames++;
+    if (f >= PMM_GENERAL_ALLOC_BASE / FRAME_SIZE) {
+      next_free_frame = f + 1;
+      if (next_free_frame >= bitmap_frames)
+        next_free_frame = PMM_GENERAL_ALLOC_BASE / FRAME_SIZE;
     }
+    return f * FRAME_SIZE;
   }
 
   log_write("PMM: no free frame below limit", KERNEL, LOG_ERROR);

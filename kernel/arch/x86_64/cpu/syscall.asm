@@ -38,8 +38,8 @@ syscall_entry:
   mov rsp, [gs:CPU_LOCAL_KERNEL_RSP_TOP_OFF]
 
   ; iretq consumes RIP, CS, RFLAGS, RSP, SS in that order from low address up,
-  ; so push them in reverse. SYSCALL masked RFLAGS through SFMASK before R11
-  ; was handed to us; syscall_prepare_return() sanitises this copy again.
+  ; so push them in reverse. R11 holds the original user RFLAGS; FMASK clears
+  ; active kernel flags. syscall_prepare_return() sanitises the saved copy.
   push qword GDT_USER_DATA_RPL3      ; SS
   push qword [gs:CPU_LOCAL_USER_RSP_SAVE_OFF]
   push r11                           ; user RFLAGS
@@ -67,7 +67,7 @@ syscall_entry:
   ; SYSCALL_FRAME_SIZE is a multiple of 16 and the stack top is 16-aligned, so
   ; RSP is already where SysV wants it before a call. No padding.
   mov rdi, rsp                       ; struct syscall_frame *
-  cld                                ; SysV requires DF clear on entry to C
+  ; FMASK already cleared DF; syscall.c asserts that entry contract.
   call syscall_dispatch
 
   pop r15

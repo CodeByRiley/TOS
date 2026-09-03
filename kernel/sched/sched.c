@@ -100,6 +100,8 @@ void task_inherit_tty(struct task *child, struct task *parent) {
 
 extern void context_switch(u64 *old_rsp_ptr, u64 new_rsp, u64 new_cr3,
                            void *old_fxstate, void *new_fxstate);
+extern void context_enter(u64 new_rsp, u64 new_cr3, void *new_fxstate)
+    __attribute__((noreturn));
 
 /* Capture the CPU's current x87/SSE state into `buf`. Match the FXSAVE64
  * layout restored by context_switch, including the full x87 pointers.
@@ -782,25 +784,27 @@ struct task *task_spawn_thread(u64 entry, u64 user_stack) {
   return t;
 }
 
-/* Stage CPU-local privilege-entry state immediately before the stack swap.
- * A syscall frame owns its saved user RSP once entry is complete, so only the
- * next kernel stack and TSS RSP0 need to follow the scheduled task. */
-static void stage_for(struct task *next) {
+/* Stage CPU-local state immediately before the stack swap. A resumable
+ * outgoing task supplies `prev`; exit passes NULL because no state is saved.
+ * Read its actual FS base here: userspace can change segment state without
+ * going through task_set_fs_base, so the stored task value is not a cache. */
+static void stage_for(struct task *next, struct task *prev) {
   struct cpu_local *cpu = percpu_this();
   cpu->kernel_rsp_top = next->syscall_kstack_top;
   cpu->current = next;
-  sched_wrmsr(MSR_FS_BASE, next->context ? next->context->fs_base : 0);
+  u64 next_fs = next->context->fs_base;
+  if (prev) {
+    u64 active_fs = sched_rdmsr(MSR_FS_BASE);
+    prev->context->fs_base = active_fs;
+    if (active_fs != next_fs)
+      sched_wrmsr(MSR_FS_BASE, next_fs);
+  } else {
+    sched_wrmsr(MSR_FS_BASE, next_fs);
+  }
   /* Address this CPU's TSS explicitly. The legacy tss_set_rsp0() writes CPU 0
    * unconditionally, which is only harmless while userspace never leaves the
    * BSP. */
   tss_set_rsp0_for(cpu->cpu_id, next->syscall_kstack_top);
-}
-
-/* FS is task state rather than entry scratch, so preserve it across switches.
- */
-static void capture_from(struct task *prev) {
-  if (prev->context)
-    prev->context->fs_base = sched_rdmsr(MSR_FS_BASE);
 }
 
 void task_yield(void) {
@@ -820,11 +824,9 @@ void task_yield(void) {
   if (prev != idle_task)
     ready_push(prev);
 
-  capture_from(prev);
-
   next->state = TASK_RUNNING;
   current = next;
-  stage_for(next);
+  stage_for(next, prev);
 
   context_switch(&prev->saved_rsp, next->saved_rsp, next->cr3,
                  prev->context->fxstate, next->context->fxstate);
@@ -865,11 +867,9 @@ void task_block(int waiting_for_pid) {
   prev->state = TASK_BLOCKED;
   prev->waiting_for_pid = waiting_for_pid;
 
-  capture_from(prev);
-
   next->state = TASK_RUNNING;
   current = next;
-  stage_for(next);
+  stage_for(next, prev);
 
   context_switch(&prev->saved_rsp, next->saved_rsp, next->cr3,
                  prev->context->fxstate, next->context->fxstate);
@@ -916,11 +916,10 @@ void task_sleep_ticks(u64 ticks) {
    */
 
   struct task *prev = current;
-  capture_from(prev);
 
   next->state = TASK_RUNNING;
   current = next;
-  stage_for(next);
+  stage_for(next, prev);
 
   context_switch(&prev->saved_rsp, next->saved_rsp, next->cr3,
                  prev->context->fxstate, next->context->fxstate);
@@ -1135,18 +1134,11 @@ void task_exit(long code) {
   log_write_hex("exit next state =", (u64)next->state, KERNEL, LOG_INFO);
 
   percpu_this()->current = next;
-  stage_for(next);
+  stage_for(next, NULL);
 
-  /*
-   * This function must never return to prev.
-   * prev's stack and address space are reaped later.
-   */
-  u64 throwaway;
-
-  context_switch(&throwaway, next->saved_rsp, next->cr3, prev->context->fxstate,
-                 next->context->fxstate);
-
-  __builtin_unreachable();
+  /* The exited task never resumes; its stack and address space are reaped
+   * later, so only the incoming context needs to be restored. */
+  context_enter(next->saved_rsp, next->cr3, next->context->fxstate);
 }
 
 void task_exit_thread(void) {
@@ -1175,15 +1167,11 @@ void task_exit_thread(void) {
       __asm__ volatile("cli; hlt");
   }
 
-  struct task *prev = current;
   next->state = TASK_RUNNING;
   current = next;
-  stage_for(next);
+  stage_for(next, NULL);
 
-  u64 throwaway;
-  context_switch(&throwaway, next->saved_rsp, next->cr3, prev->context->fxstate,
-                 next->context->fxstate);
-  __builtin_unreachable();
+  context_enter(next->saved_rsp, next->cr3, next->context->fxstate);
 }
 
 /* fd 0-2 are the standard streams and were never backed by an allocation.

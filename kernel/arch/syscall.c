@@ -74,6 +74,9 @@
 #define SYSCALL_ENTRY_RFLAGS_MASK                                              \
   (RFLAGS_TF | RFLAGS_IF | RFLAGS_DF | RFLAGS_NT | RFLAGS_AC)
 
+_Static_assert((SYSCALL_ENTRY_RFLAGS_MASK & RFLAGS_DF) != 0,
+               "SYSCALL assembly relies on FMASK to clear DF before C entry");
+
 /* Arithmetic/debug state belongs to userspace. Privileged and virtual-8086
  * controls are deliberately absent, reserved bits are cleared, and IF plus
  * the architecturally fixed bit are restored below. */
