@@ -149,10 +149,12 @@ int build_taskbar_entries(struct tb_entry *out, int max) {
 
 int taskbar_y(void) { return fb_h - TASKBAR_PX; }
 
-/* Rightmost x a taskbar button may occupy. Without this the button strip
- * grows under the clock and paints over it. */
+/* Drawing and hit testing stop before the visible tray items. */
 int taskbar_btn_limit(void) {
-  return fb_w - CLOCK_W - CLOCK_PAD_R - TASKBAR_BTN_GAP;
+  int x, y, w, h;
+  if (network_rect(&x, &y, &w, &h) || clock_rect(&x, &y, &w, &h))
+    return x - TASKBAR_BTN_GAP;
+  return fb_w;
 }
 
 /* Returns 1 + writes *out_handle when the click landed on a taskbar button,

@@ -749,13 +749,14 @@ int main(int argc, char **argv) {
   printf("winman: back buffer @%p bytes=%d\n", (void *)fb, (int)fb_capacity);
 
   cursor_load();
-  tb_load_start_icon();
+  tb_load_icons();
   desktop_load();
   /* After fb_h is known , the menu's capacity depends on the screen height. */
   build_start_menu_entries();
   /* Populate before the first compose so the taskbar paints a real time
    * instead of a blank strip that fills in a second later. */
   clock_format();
+  network_tick();
 
   memset(windows, 0, sizeof(windows));
   focused_handle = 0;
@@ -876,6 +877,9 @@ int main(int argc, char **argv) {
      * stays idle for the 59 seconds when nothing has changed. */
     if ((uint32_t)tick % CLOCK_POLL_TICKS == 0)
       clock_tick();
+    /* Repaint the network slot only when the reported link state changes. */
+    if ((uint32_t)tick % NETWORK_POLL_TICKS == 0)
+      network_tick();
 
     int32_t mx, my;
     uint8_t btns;

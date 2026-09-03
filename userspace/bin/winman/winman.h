@@ -259,6 +259,9 @@ extern const uint8_t fallback_cursor_mask[CURSOR_H][CURSOR_W];
 #define CON_TTF_PATH "/system/fonts/sansdisplayvariable.ttf"
 #define CON_TTF_PX 16
 
+/* Internet icon slot beside the taskbar clock. */
+#define TB_INTERNET_SIZE 24
+
 /* Hit-test region codes returned by hit_test_at. */
 #define HIT_NONE 0
 #define HIT_TITLEBAR 1
@@ -288,9 +291,18 @@ extern const uint8_t fallback_cursor_mask[CURSOR_H][CURSOR_W];
 /* Taskbar start button artwork. The image is scaled to fit the button, so
  * the source does not have to be TASKBAR_START_W square , but reject
  * anything absurd so a mis-sized file can't turn into a huge rescale. */
-#define TB_START_ICON_PATH "/system/icons/icon.bmp"
+#define TB_START_ICON_PATH "/system/icons/start_icon.bmp"
 #define TB_START_ICON_MAX_DIM 256
 #define TB_START_ICON_PAD 2
+
+#define TB_NETWORK_CONNECTED_ICON_PATH "/system/icons/connected.bmp"
+#define TB_NETWORK_DISCONNECTED_ICON_PATH "/system/icons/disconnected.bmp"
+#define TB_NETWORK_CONNECTED_FG 0x00FFFFFFu
+#define TB_NETWORK_DISCONNECTED_FG 0x00D0D0D0u
+/* Match the clock's polling cadence in event-loop iterations. */
+#define NETWORK_POLL_TICKS 100u
+#define TB_INTERNET_ICON_MAX_DIM 256
+#define TB_INTERNET_ICON_PAD 2
 
 #ifndef WINMAN_DECLARE_STATE
 const uint8_t fallback_taskbar_start_mask[24][24] = {
@@ -364,6 +376,35 @@ const uint8_t fallback_btn_hide_mask[TB_BTN_SIZE][TB_BTN_SIZE] = {
 extern const uint8_t fallback_btn_hide_mask[TB_BTN_SIZE][TB_BTN_SIZE];
 #endif
 
+#ifndef WINMAN_DECLARE_STATE
+const uint8_t fallback_internet_mask[TB_INTERNET_SIZE][TB_INTERNET_SIZE] = {
+    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+    {0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0},
+    {0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0},
+    {0, 0, 0, 0, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 0, 0, 0, 0},
+    {0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 1, 1, 0, 0, 0},
+    {0, 0, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 0, 0},
+    {0, 0, 1, 1, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0},
+    {0, 0, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 0, 0},
+    {0, 1, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 1, 0},
+    {0, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 0},
+    {0, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 0},
+    {0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0},
+    {0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0},
+    {0, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 0},
+    {0, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 0},
+    {0, 1, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 1, 0},
+    {0, 0, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 0, 0},
+    {0, 0, 1, 1, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0},
+    {0, 0, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 0, 0},
+    {0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 1, 1, 0, 0, 0},
+    {0, 0, 0, 0, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 0, 0, 0, 0},
+    {0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0},
+    {0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0},
+    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}};
+#else
+extern const uint8_t fallback_internet_mask[TB_INTERNET_SIZE][TB_INTERNET_SIZE];
+#endif
 /* Handles reserved for the built-in consoles. Real client window handles are
  * derived from their slot index: handle = (slot_index + 1), so they always
  * live in 1..MAX_WINDOWS and get reused as soon as the slot is freed. No
