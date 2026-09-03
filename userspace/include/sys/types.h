@@ -86,7 +86,8 @@ typedef long time_t;
 #define _TIME_T_DEFINED
 #endif
 #ifndef OFF_T
-typedef long          off_t;
+typedef int64_t       off_t;
+#define OFF_T
 #endif
 typedef int           pid_t;
 typedef unsigned int  mode_t;
@@ -99,7 +100,6 @@ typedef void (*func_ptr)(void);
 typedef int pid_t;       /* Process ID */
 typedef int dev_t;       /* Device ID */
 typedef int fd_t;        /* File Descriptor */
-typedef int64_t off_t;   /* File offset */
 typedef u64 tick_t; /* System timer ticks */
 
 

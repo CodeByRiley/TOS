@@ -345,9 +345,11 @@ $(HOST_TEST_DIR)/gfx_ui_test.exe: tests/gfx_ui_test.c userspace/lib/gfx.c \
 $(HOST_TEST_DIR)/userspace_runtime_test.exe: tests/userspace_runtime_test.c \
 		userspace/lib/event.c userspace/lib/wm.c userspace/lib/app.c \
 		userspace/lib/process.c | $(HOST_TEST_DIR)
+	# The host linker has no user.ld; represent an empty app-info section.
 	$(HOST_CC) $(HOST_TEST_CFLAGS) -I userspace -I userspace/lib \
 		tests/userspace_runtime_test.c userspace/lib/event.c userspace/lib/wm.c \
-		userspace/lib/app.c userspace/lib/process.c -o $@
+		userspace/lib/app.c userspace/lib/process.c \
+		-Wl,--defsym=__appinfo_start=0,--defsym=__appinfo_end=0 -o $@
 
 $(HOST_TEST_DIR)/fb_damage_test.exe: tests/fb_damage_test.c | $(HOST_TEST_DIR)
 	$(HOST_CC) $(HOST_TEST_CFLAGS) $< -o $@
@@ -355,13 +357,16 @@ $(HOST_TEST_DIR)/fb_damage_test.exe: tests/fb_damage_test.c | $(HOST_TEST_DIR)
 $(HOST_TEST_DIR)/holyd_compiler_test.exe: tests/holyd_compiler_test.c \
 		userspace/bin/holyd/src/compiler.c userspace/bin/holyd/src/compiler.h \
 		userspace/bin/holyd/src/eval.c userspace/bin/holyd/src/eval.h \
+		userspace/bin/holyd/src/runtime.c userspace/bin/holyd/src/runtime.h \
 		userspace/bin/holyd/src/lexer/lexer.c userspace/bin/holyd/src/lexer/lexer.h \
 		userspace/bin/holyd/src/parser/parser.c userspace/bin/holyd/src/parser/parser.h \
 		userspace/bin/holyd/src/ast/ast.c userspace/bin/holyd/src/ast/ast.h \
+		userspace/bin/holyd/src/ast/type_syntax.c userspace/bin/holyd/src/ast/type_syntax.h \
 		tests/holyd_ffi_stub.c userspace/bin/holyd/src/ffi.h \
 		| $(HOST_TEST_DIR)
 	$(HOST_CC) $(HOST_TEST_CFLAGS) -I userspace -I userspace/bin/holyd/src \
 		tests/holyd_compiler_test.c userspace/bin/holyd/src/compiler.c \
+		userspace/bin/holyd/src/runtime.c userspace/bin/holyd/src/ast/type_syntax.c \
 		userspace/bin/holyd/src/eval.c userspace/bin/holyd/src/lexer/lexer.c \
 		userspace/bin/holyd/src/parser/parser.c userspace/bin/holyd/src/ast/ast.c \
 		tests/holyd_ffi_stub.c \
