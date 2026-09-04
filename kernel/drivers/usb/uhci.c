@@ -1,4 +1,5 @@
 #include <drivers/usb/uhci.h>
+#include <drivers/usb/usb_device.h>
 #include <devices/io.h>
 #include <utilities/log.h>
 #include <utilities/types.h>
@@ -54,10 +55,6 @@
 
 /* Every device must accept 8 until it reports its real ep0 packet size. */
 #define UHCI_EP0_DEFAULT_MAXPACKET 8
-
-#define UHCI_INT_KIND_NONE           0
-#define UHCI_INT_KIND_HID_BOOT_MOUSE 1
-#define UHCI_INT_KIND_HID_TABLET     2
 
 /* Hardware contract: a packing surprise would misalign the TD pool and look
  * like a device fault at runtime. Fail the build instead. */
@@ -317,68 +314,10 @@ static int uhci_control(struct uhci_hc *hc, u8 addr, int low_speed,
   return transferred;
 }
 
-static int uhci_get_descriptor(struct uhci_hc *hc, u8 addr, int low_speed,
-                               u8 maxpacket, u8 type, u8 index, void *out,
-                               u16 len) {
-  struct usb_setup_packet setup = {
-      .bmRequestType = USB_REQTYPE_IN_STD_DEVICE,
-      .bRequest = USB_REQ_GET_DESCRIPTOR,
-      .wValue = (u16)((type << 8) | index),
-      .wIndex = 0,
-      .wLength = len,
-  };
-  return uhci_control(hc, addr, low_speed, maxpacket, &setup, out, len, 1);
-}
 
-static int uhci_set_address(struct uhci_hc *hc, int low_speed, u8 maxpacket,
-                            u8 new_addr) {
-  struct usb_setup_packet setup = {
-      .bmRequestType = USB_REQTYPE_OUT_STD_DEVICE,
-      .bRequest = USB_REQ_SET_ADDRESS,
-      .wValue = new_addr,
-      .wIndex = 0,
-      .wLength = 0,
-  };
-  /* Sent to address 0: the device adopts new_addr only once status completes. */
-  return uhci_control(hc, 0, low_speed, maxpacket, &setup, 0, 0, 0);
-}
 
-static int uhci_set_configuration(struct uhci_hc *hc, u8 addr, int low_speed,
-                                  u8 maxpacket, u8 config) {
-  struct usb_setup_packet setup = {
-      .bmRequestType = USB_REQTYPE_OUT_STD_DEVICE,
-      .bRequest = USB_REQ_SET_CONFIGURATION,
-      .wValue = config,
-      .wIndex = 0,
-      .wLength = 0,
-  };
-  return uhci_control(hc, addr, low_speed, maxpacket, &setup, 0, 0, 0);
-}
 
-static int uhci_hid_set_idle(struct uhci_hc *hc, u8 addr, int low_speed,
-                             u8 maxpacket, u8 interface) {
-  struct usb_setup_packet setup = {
-      .bmRequestType = USB_REQTYPE_OUT_CLASS_INTERFACE,
-      .bRequest = USB_REQ_SET_IDLE,
-      .wValue = 0,
-      .wIndex = interface,
-      .wLength = 0,
-  };
-  return uhci_control(hc, addr, low_speed, maxpacket, &setup, 0, 0, 0);
-}
 
-static int uhci_hid_set_boot_protocol(struct uhci_hc *hc, u8 addr,
-                                      int low_speed, u8 maxpacket,
-                                      u8 interface) {
-  struct usb_setup_packet setup = {
-      .bmRequestType = USB_REQTYPE_OUT_CLASS_INTERFACE,
-      .bRequest = USB_REQ_SET_PROTOCOL,
-      .wValue = 0, /* boot protocol */
-      .wIndex = interface,
-      .wLength = 0,
-  };
-  return uhci_control(hc, addr, low_speed, maxpacket, &setup, 0, 0, 0);
-}
 
 // #endregion CONTROL TRANSFERS
 
@@ -497,9 +436,9 @@ static void uhci_int_complete(struct uhci_int_ep *ep) {
     ep->last_len = (u16)UHCI_TD_ACTLEN(sts);
     ep->toggle ^= 1;
 
-    if (ep->kind == UHCI_INT_KIND_HID_BOOT_MOUSE)
+    if (ep->kind == USB_INT_KIND_HID_BOOT_MOUSE)
       mouse_hid_report(ep->buf, ep->last_len);
-    else if (ep->kind == UHCI_INT_KIND_HID_TABLET)
+    else if (ep->kind == USB_INT_KIND_HID_TABLET)
       mouse_hid_tablet_report(ep->buf, ep->last_len);
 
     /* Bounded: IRQ context writing to a polled UART. Enough to prove reports
@@ -573,44 +512,6 @@ static int uhci_port_reset(struct uhci_hc *hc, u16 reg) {
  * device may claim several hundred bytes. Boot path is single-threaded. */
 static u8 uhci_config_buf[UHCI_CONFIG_BUF_MAX];
 
-/* Read configuration `config_index` into uhci_config_buf. Returns its length,
- * or -1. Two requests by necessity: wTotalLength is only known after the
- * 9-byte header, and over-asking is not allowed to work. */
-static int uhci_read_config(struct uhci_hc *hc, u8 addr, int low_speed,
-                            u8 maxpacket, u8 config_index) {
-  struct usb_config_descriptor head;
-
-  memset(&head, 0, sizeof(head));
-  if (uhci_get_descriptor(hc, addr, low_speed, maxpacket,
-                          USB_DESC_CONFIGURATION, config_index, &head,
-                          sizeof(head)) < (int)sizeof(head)) {
-    log_write("UHCI: config header read failed", KERNEL, LOG_ERROR);
-    return -1;
-  }
-
-  u16 total = head.wTotalLength;
-  if (total < sizeof(head)) {
-    log_write_int("UHCI: config wTotalLength nonsensical", total, KERNEL,
-                  LOG_ERROR);
-    return -1;
-  }
-  if (total > UHCI_CONFIG_BUF_MAX) {
-    log_write_int("UHCI: config block too large, truncating", total, KERNEL,
-                  LOG_WARN);
-    total = UHCI_CONFIG_BUF_MAX;
-  }
-
-  memset(uhci_config_buf, 0, sizeof(uhci_config_buf));
-  int got = uhci_get_descriptor(hc, addr, low_speed, maxpacket,
-                                USB_DESC_CONFIGURATION, config_index,
-                                uhci_config_buf, total);
-  if (got < (int)sizeof(head)) {
-    log_write_int("UHCI: config block read failed, got", got, KERNEL,
-                  LOG_ERROR);
-    return -1;
-  }
-  return got;
-}
 
 /* Find the first HID pointer interrupt IN endpoint, logging interfaces and
  * endpoints on the way past. Returns 1 and fills *out if one exists.
@@ -619,93 +520,15 @@ static int uhci_read_config(struct uhci_hc *hc, u8 addr, int low_speed,
  * bDescriptorType}. Stepping by bLength rather than assuming fixed sizes is
  * what skips class-specific descriptors we do not parse , a HID report
  * descriptor sits between the interface and its endpoints. */
-struct uhci_hid_pointer {
-  u8 interface_number;
-  u8 kind;
-  struct usb_endpoint_descriptor endpoint;
-};
 
-static int uhci_find_hid_pointer(const u8 *buf, int len,
-                                 struct uhci_hid_pointer *out) {
-  int found = 0;
-  int current_hid_interface = 0;
-  u8 current_kind = UHCI_INT_KIND_NONE;
-  u8 current_interface = 0;
-  int offset = 0;
-
-  while (offset + 2 <= len) {
-    u8 blen = buf[offset];
-    u8 btype = buf[offset + 1];
-
-    /* blen 0 would spin forever; overrunning means the device lied about
-     * wTotalLength. Stop either way. */
-    if (blen < 2 || offset + blen > len)
-      break;
-
-    if (btype == USB_DESC_INTERFACE &&
-        blen >= sizeof(struct usb_interface_descriptor)) {
-      const struct usb_interface_descriptor *ifd =
-          (const struct usb_interface_descriptor *)(buf + offset);
-      log_write_int("UHCI:   interface", ifd->bInterfaceNumber, KERNEL,
-                    LOG_INFO);
-      log_write_hex("UHCI:     class", ifd->bInterfaceClass, KERNEL, LOG_INFO);
-      log_write_hex("UHCI:     subclass", ifd->bInterfaceSubClass, KERNEL,
-                    LOG_INFO);
-      log_write_hex("UHCI:     protocol", ifd->bInterfaceProtocol, KERNEL,
-                    LOG_INFO);
-      log_write_int("UHCI:     endpoints", ifd->bNumEndpoints, KERNEL,
-                    LOG_INFO);
-      current_interface = ifd->bInterfaceNumber;
-      current_hid_interface = ifd->bInterfaceClass == USB_CLASS_HID;
-      current_kind = UHCI_INT_KIND_NONE;
-      if (current_hid_interface &&
-          ifd->bInterfaceSubClass == USB_HID_SUBCLASS_BOOT &&
-          ifd->bInterfaceProtocol == USB_HID_PROTOCOL_MOUSE) {
-        current_kind = UHCI_INT_KIND_HID_BOOT_MOUSE;
-      }
-    } else if (btype == USB_DESC_HID && blen >= 9) {
-      u16 report_len = (u16)buf[offset + 7] | ((u16)buf[offset + 8] << 8);
-      log_write_int("UHCI:   HID report length", report_len, KERNEL,
-                    LOG_INFO);
-
-      /* QEMU usb-tablet is a HID pointer with protocol 0 and a 74-byte report
-       * descriptor. We do not have a full HID report parser yet, so keep this
-       * match deliberately narrow instead of treating every vendor HID as a
-       * mouse. */
-      if (current_hid_interface && current_kind == UHCI_INT_KIND_NONE &&
-          report_len == 74) {
-        current_kind = UHCI_INT_KIND_HID_TABLET;
-      }
-    } else if (btype == USB_DESC_ENDPOINT &&
-               blen >= sizeof(struct usb_endpoint_descriptor)) {
-      const struct usb_endpoint_descriptor *epd =
-          (const struct usb_endpoint_descriptor *)(buf + offset);
-      log_write_hex("UHCI:   endpoint addr", epd->bEndpointAddress, KERNEL,
-                    LOG_INFO);
-      log_write_hex("UHCI:     attributes", epd->bmAttributes, KERNEL,
-                    LOG_INFO);
-      log_write_int("UHCI:     max packet", epd->wMaxPacketSize, KERNEL,
-                    LOG_INFO);
-      log_write_int("UHCI:     interval", epd->bInterval, KERNEL, LOG_INFO);
-
-      u16 max_packet = epd->wMaxPacketSize & 0x07FF;
-      int packet_fits_kind =
-          current_kind != UHCI_INT_KIND_HID_TABLET || max_packet >= 5;
-      if (!found && current_kind != UHCI_INT_KIND_NONE && packet_fits_kind &&
-          (epd->bmAttributes & USB_EP_XFER_MASK) == USB_EP_XFER_INTERRUPT &&
-          (epd->bEndpointAddress & USB_EP_ADDR_DIR_IN)) {
-        out->interface_number = current_interface;
-        out->kind = current_kind;
-        out->endpoint = *epd;
-        out->endpoint.wMaxPacketSize = max_packet;
-        found = 1;
-      }
-    }
-
-    offset += blen;
-  }
-
-  return found;
+/* UHCI's half of the shared device model: everything above a control
+ * transfer is in drivers/usb/usb_device.c. Low speed rides in the pipe
+ * because it belongs in every TD this controller builds. */
+static int uhci_pipe_control(const struct usb_pipe *pipe,
+                             const struct usb_setup_packet *setup, void *data,
+                             u16 length, int in) {
+  return uhci_control(pipe->hc, pipe->address, pipe->low_speed,
+                      (u8)pipe->maxpacket, setup, data, length, in);
 }
 
 static void uhci_enumerate_port(struct uhci_hc *hc, int port, u16 reg,
@@ -718,21 +541,28 @@ static void uhci_enumerate_port(struct uhci_hc *hc, int port, u16 reg,
   }
   log_write_int("UHCI: port enabled, port", port, KERNEL, LOG_INFO);
 
+  struct usb_pipe pipe = {
+      .hc = hc,
+      .control = uhci_pipe_control,
+      .address = 0,
+      .maxpacket = UHCI_EP0_DEFAULT_MAXPACKET,
+      .low_speed = low_speed,
+      .tag = "UHCI",
+  };
+
   /* Chicken and egg: the descriptor names ep0's packet size, but reading it
    * needs one. Every device accepts 8 and bMaxPacketSize0 is byte 7, so an
    * 8-byte read always reaches it. */
   memset(&desc, 0, sizeof(desc));
-  if (uhci_get_descriptor(hc, 0, low_speed, UHCI_EP0_DEFAULT_MAXPACKET,
-                          USB_DESC_DEVICE, 0, &desc, 8) < 8) {
+  if (usb_get_descriptor(&pipe, USB_DESC_DEVICE, 0, &desc, 8) < 8) {
     log_write_int("UHCI: initial GET_DESCRIPTOR failed, port", port, KERNEL,
                   LOG_ERROR);
     return;
   }
 
-  u8 maxpacket = desc.bMaxPacketSize0;
-  if (maxpacket == 0)
-    maxpacket = UHCI_EP0_DEFAULT_MAXPACKET;
-  log_write_int("UHCI: ep0 max packet", maxpacket, KERNEL, LOG_INFO);
+  if (desc.bMaxPacketSize0)
+    pipe.maxpacket = desc.bMaxPacketSize0;
+  log_write_int("UHCI: ep0 max packet", pipe.maxpacket, KERNEL, LOG_INFO);
 
   /* Devices may expect a reset between the probe read and SET_ADDRESS, and
    * many real ones require it. */
@@ -743,18 +573,19 @@ static void uhci_enumerate_port(struct uhci_hc *hc, int port, u16 reg,
   }
 
   u8 addr = hc->next_addr;
-  if (uhci_set_address(hc, low_speed, maxpacket, addr) < 0) {
+  if (usb_set_address(&pipe, addr) < 0) {
     log_write_int("UHCI: SET_ADDRESS failed, port", port, KERNEL, LOG_ERROR);
     return;
   }
   hc->next_addr++;
+  pipe.address = addr;
 
   pit_delay_ms(2); /* SetAddress recovery: 2 ms before it must answer */
   log_write_int("UHCI: device addressed", addr, KERNEL, LOG_INFO);
 
   memset(&desc, 0, sizeof(desc));
-  if (uhci_get_descriptor(hc, addr, low_speed, maxpacket, USB_DESC_DEVICE, 0,
-                          &desc, sizeof(desc)) < (int)sizeof(desc)) {
+  if (usb_get_descriptor(&pipe, USB_DESC_DEVICE, 0, &desc, sizeof(desc)) <
+      (int)sizeof(desc)) {
     log_write_int("UHCI: full GET_DESCRIPTOR failed, addr", addr, KERNEL,
                   LOG_ERROR);
     return;
@@ -772,7 +603,7 @@ static void uhci_enumerate_port(struct uhci_hc *hc, int port, u16 reg,
     return;
   }
 
-  int cfg_len = uhci_read_config(hc, addr, low_speed, maxpacket, 0);
+  int cfg_len = usb_read_config(&pipe, 0, uhci_config_buf, UHCI_CONFIG_BUF_MAX);
   if (cfg_len < 0)
     return;
 
@@ -782,15 +613,15 @@ static void uhci_enumerate_port(struct uhci_hc *hc, int port, u16 reg,
                 LOG_INFO);
   log_write_int("UHCI:   interfaces", cfg->bNumInterfaces, KERNEL, LOG_INFO);
 
-  struct uhci_hid_pointer hid_pointer;
+  struct usb_hid_pointer hid_pointer;
   memset(&hid_pointer, 0, sizeof(hid_pointer));
-  int have_hid_pointer = uhci_find_hid_pointer(uhci_config_buf, cfg_len,
-                                               &hid_pointer);
+  /* No limit: UHCI sizes its interrupt buffer from the endpoint it finds. */
+  int have_hid_pointer = usb_find_hid_pointer(uhci_config_buf, cfg_len, 0,
+                                              "UHCI", &hid_pointer);
 
   /* Until this lands the device answers only standard requests on ep0 , its
    * other endpoints do not exist, so configure before scheduling anything. */
-  if (uhci_set_configuration(hc, addr, low_speed, maxpacket,
-                             cfg->bConfigurationValue) < 0) {
+  if (usb_set_configuration(&pipe, cfg->bConfigurationValue) < 0) {
     log_write_int("UHCI: SET_CONFIGURATION failed, addr", addr, KERNEL,
                   LOG_ERROR);
     return;
@@ -804,17 +635,12 @@ static void uhci_enumerate_port(struct uhci_hc *hc, int port, u16 reg,
     return;
   }
 
-  if (uhci_hid_set_idle(hc, addr, low_speed, maxpacket,
-                        hid_pointer.interface_number) < 0) {
+  if (usb_hid_set_idle(&pipe, hid_pointer.interface_number) < 0)
     log_write("UHCI: HID SET_IDLE failed, continuing", KERNEL, LOG_WARN);
-  }
-  if (hid_pointer.kind == UHCI_INT_KIND_HID_BOOT_MOUSE) {
-    if (uhci_hid_set_boot_protocol(hc, addr, low_speed, maxpacket,
-                                   hid_pointer.interface_number) < 0) {
-      log_write("UHCI: HID SET_PROTOCOL boot failed, continuing", KERNEL,
-                LOG_WARN);
-    }
-  }
+  if (hid_pointer.kind == USB_INT_KIND_HID_BOOT_MOUSE &&
+      usb_hid_set_boot_protocol(&pipe, hid_pointer.interface_number) < 0)
+    log_write("UHCI: HID SET_PROTOCOL boot failed, continuing", KERNEL,
+              LOG_WARN);
 
   struct usb_endpoint_descriptor *int_ep = &hid_pointer.endpoint;
   u8 ep_num = int_ep->bEndpointAddress & USB_EP_ADDR_NUM_MASK;

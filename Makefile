@@ -218,6 +218,7 @@ HOST_TEST_BINS := \
 	$(HOST_TEST_DIR)/ext2_vfs_test.exe \
 	$(HOST_TEST_DIR)/ext2_device_test.exe \
 	$(HOST_TEST_DIR)/usb_storage_test.exe \
+	$(HOST_TEST_DIR)/usb_device_test.exe \
 	$(HOST_TEST_DIR)/stdio_mode_test.exe \
 	$(HOST_TEST_DIR)/bmp_decode_test.exe \
 	$(HOST_TEST_DIR)/gfx_ui_test.exe \
@@ -304,6 +305,12 @@ $(HOST_TEST_DIR)/ext2_device_test.exe: tests/ext2_device_test.c $(EXT2_HOST_SRCS
 		$(HOST_KERNEL_STUBS) $(HOST_TEST_DIR)/ext2-base.img | $(HOST_TEST_DIR)
 	$(HOST_CC) $(HOST_TEST_CFLAGS) -I kernel tests/ext2_device_test.c \
 		$(EXT2_HOST_SRCS) $(HOST_KERNEL_STUBS) -o $@
+
+$(HOST_TEST_DIR)/usb_device_test.exe: tests/usb_device_test.c \
+		kernel/drivers/usb/usb_device.c kernel/drivers/usb/usb_device.h \
+		kernel/devices/usb.h | $(HOST_TEST_DIR)
+	$(HOST_CC) $(HOST_TEST_CFLAGS) -I kernel \
+		tests/usb_device_test.c kernel/drivers/usb/usb_device.c -o $@
 
 USB_STORAGE_HOST_SRCS := kernel/drivers/usb/storage/bot.c \
 		kernel/drivers/usb/storage/scsi.c kernel/drivers/usb/storage/usb_storage.c
@@ -430,6 +437,7 @@ test-qemu-heavy: build-x86_64
 		python3 tests/winman_titlebar_double_click_test.py --timeout 90 && \
 		python3 tests/path_lookup_test.py --timeout 90 && \
 		python3 tests/ehci_test.py && \
+		python3 tests/uhci_test.py && \
 		python3 tests/kernel_panic_test.py --timeout 90"
 
 test-heavy: test-host test-qemu-heavy

@@ -1,4 +1,8 @@
-/* USB core types. */
+/* USB core types: the setup packet, the standard descriptors, and the request
+ * and class constants enumeration issues. Shared by every host controller.
+ *
+ * The device model built on top of these , addressing, configuration, HID
+ * pointer discovery , lives in drivers/usb/usb_device.h. */
 
 #ifndef USB_H
 #define USB_H
@@ -6,26 +10,6 @@
 #include <devices/io.h>
 #include <utilities/stdlib.h>
 #include <utilities/types.h>
-
-enum usb_speed {
-    USB_LOW_SPEED,   // 1.5 Mbps
-    USB_FULL_SPEED,  // 12 Mbps (USB 1.1)
-    USB_HIGH_SPEED,  // 480 Mbps (USB 2.0)
-    USB_SUPER_SPEED  // 5 Gbps+ (USB 3.0+)
-};
-
-/* Host-controller interface. */
-struct hcd {
-    char *name;
-    u32 base_address;
-
-    int  (*init)(struct hcd *hcd);
-    int  (*detect_port)(struct hcd *hcd, u8 port);
-    void (*reset_port)(struct hcd *hcd, u8 port);
-    int  (*control_transfer)(struct hcd *hcd, u8 device_addr,
-                             u8 endpoint, void *setup,
-                             void *buffer, u16 length);
-};
 
 /* Setup packet , the 8 bytes opening every control transfer. USB is
  * little-endian like x86, so this maps straight onto the wire. */
@@ -154,23 +138,6 @@ struct usb_endpoint_descriptor {
 	u8  bInterval;
 } PACKED;
 
-struct usb_device {
-	struct usb_descriptor desc;
-	enum usb_speed speed;
-	u8 addr;
-	u8 port;
-	struct hcd *hcd;
-};
-
 void usb_init(void);
-
-/* Register a device found by a host controller. */
-void usb_register_device(struct hcd *hcd, u8 port);
-
-/* Assign an address and configure a device. */
-int usb_enumerate_device(struct usb_device *dev);
-
-/* Send a control transfer. */
-int usb_control_transfer(struct usb_device *dev, void *setup_packet, void *buffer, u16 length);
 
 #endif /* USB_H */

@@ -38,6 +38,23 @@ be read from any transport.
 **Transport** , what carries sectors to a device (AHCI, USB BOT/SCSI). Distinct
 from the filesystem that interprets them.
 
+## USB
+
+**Host controller** , the hardware that drives a USB bus: UHCI (full speed),
+EHCI (high speed), xHCI (a stub). Each owns its own registers, descriptor
+rings and interrupt handling, and nothing else.
+
+**Pipe** , `struct usb_pipe` in `kernel/drivers/usb/usb_device.h`: a device
+addressed on some controller, plus the one primitive the shared code needs, a
+control transfer. Everything above that , reading descriptors, assigning an
+address, choosing a configuration, finding a HID pointer , is written once in
+`usb_device.c` and works on any controller.
+
+**HID pointer** , an interrupt-IN endpoint the kernel polls for mouse input.
+Recognised either from a boot-protocol mouse interface, or from a HID report
+descriptor exactly 74 bytes long, which is what QEMU's usb-tablet reports.
+The match is deliberately narrow because there is no HID report parser.
+
 **Root search** , the boot-time pairing of transports with filesystems in
 `kernel/fs/rootfs.c`. Not a fixed order of special cases: it walks the devices
 the drivers found and offers each to every registered filesystem until one
