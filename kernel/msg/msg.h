@@ -52,12 +52,6 @@ _Static_assert(offsetof(struct msg, when) == 8,
  * by pid; kernel deep-copies the struct into the recipient's per-task
  * ring on SYS_IPC_SEND. */
 
-#define IPC_WM_CREATE_REQ      0x100   /* client -> wm: a=w b=h, str=title    */
-#define IPC_WM_CREATE_RESP     0x101   /* wm -> client: a=handle va=surface_va pitch=pitch (a<0 on fail) */
-#define IPC_WM_DESTROY_REQ     0x102   /* client -> wm: a=handle             */
-#define IPC_WM_INVALIDATE_REQ  0x103   /* client -> wm: a=handle             */
-#define IPC_WM_SET_TITLE_REQ   0x104   /* client -> wm: a=handle, str=title  */
-#define IPC_WM_INPUT           0x110   /* wm -> client: forwarded input (a=msg_type, b=param, c=x, d=y) */
 #define IPC_PEER_EXITED        0x180   /* kernel -> any: a=pid_that_exited   */
 #define IPC_USER_FIRST         0x200   /* userspace-defined ids start here   */
 

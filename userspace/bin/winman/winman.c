@@ -232,7 +232,6 @@ void request_window_close(int handle, u32 now) {
 //   }
 // }
 //
-void handle_key() {}
 void pump_input(void) {
   struct msg m;
 

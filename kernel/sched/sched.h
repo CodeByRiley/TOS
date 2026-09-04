@@ -19,6 +19,7 @@
 #define SCHED_H
 
 #include <utilities/types.h>
+#include <memory/uvm.h>
 #include <msg/msg.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -36,17 +37,17 @@
 #define SCHED_PRIO_HIGH 1
 #define SCHED_PRIO_LEVELS 2
 
-/* BSP scheduler with a fixed 16-slot task table and a singly-linked ready
+/* BSP scheduler with a fixed-size task table and a singly-linked ready
  * queue. APs service the separate SMP-safe kernel work queue; userspace stays
  * on the BSP until scheduler state is made per-CPU. */
 #define MAX_TASKS 32
 #define KSTACK_BYTES (16 * 1024)
 #define TASK_MAX_FDS 32
 #define TASK_CWD_MAX 256
-#define TASK_MMAP_HOLES 16
-#define MAX_USER_VMAS 64
 
-/* Arena bases come from loader/process.h , see the user address-space map. */
+/* The user address space , struct task_vm and its reservation table , lives
+ * in memory/uvm.h. Arena bases come from loader/process.h, see the user
+ * address-space map. */
 #define INPUT_RING_SIZE_LOCAL 64
 #define IPC_RING_SIZE_LOCAL 16
 
@@ -64,38 +65,6 @@ enum task_state {
   TASK_SLEEPING,
   TASK_LOADING,
 };
-
-struct vm_hole {
-  u64 base;
-  u64 len; /* zero means unused */
-};
-
-struct user_vma {
-  u64 start;
-  u64 end;
-  u64 pte_flags;
-  u32 used;
-};
-
-/*
- * Address-space state.
- *
- * NULL for kernel-only tasks. May be shared by multiple threads if threading
- * is added later.
- */
-struct task_vm {
-  u64 *user_pml4;
-  int *pml4_ref_count;
-
-  u64 shmem_next_va;
-  u64 mmap_next_va;
-
-  struct vm_hole mmap_holes[TASK_MMAP_HOLES];
-  struct user_vma vmas[MAX_USER_VMAS];
-
-  int shmem_shared_out;
-};
-
 
 /* File descriptor state */
 enum task_fd_type {

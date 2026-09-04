@@ -655,14 +655,9 @@ static int sb16_probe(struct device *device) {
     return -1;
 }
 
-static struct driver sb16_driver = {
+const struct driver sb16_driver = {
     .name = "SoundBlaster 16",
     .bus = DEVICE_BUS_ISA,
     .match = sb16_match,
     .probe = sb16_probe
 };
-
-void sb16_driver_init(void) {
-    log_write("SB16: initialising", KERNEL, LOG_INFO);
-    driver_register(&sb16_driver);
-}

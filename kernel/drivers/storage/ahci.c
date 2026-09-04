@@ -406,8 +406,3 @@ const struct driver ahci_driver = {
     .probe = ahci_probe,
     .poll = 0,
 };
-
-void ahci_init(void) {
-  log_write("AHCI: Initializing...", KERNEL, LOG_INFO);
-  driver_register(&ahci_driver);
-}

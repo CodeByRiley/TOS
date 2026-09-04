@@ -196,12 +196,14 @@ HOST_KERNEL_STUBS := tests/host_kernel_stubs.c
 VFS_HOST_SRCS := kernel/fs/vfs/vfs.c kernel/fs/vfs/namei.c kernel/fs/vfs/file.c \
 		kernel/fs/vfs/lock.c tests/vfs_lock_host.c
 VFS_HOST_TESTS := $(addprefix $(HOST_TEST_DIR)/,vfs_test.exe fat_directory_test.exe \
-		ext2_vfs_test.exe ext2_device_test.exe stdio_mode_test.exe vfs_serialization_test.exe)
+		fat_device_test.exe ext2_vfs_test.exe ext2_device_test.exe stdio_mode_test.exe \
+		vfs_serialization_test.exe)
 $(VFS_HOST_TESTS): HOST_TEST_CFLAGS += -DVFS_HOST_TEST -pthread
 $(VFS_HOST_TESTS): kernel/fs/vfs/lock.h kernel/sched/sched.h tests/vfs_lock_host.h
 FAT_HOST_SRCS := kernel/fs/fat/fat.c kernel/fs/fat/fat_mount.c \
 		kernel/fs/fat/fat_file.c kernel/fs/fat/fat_name.c \
-		kernel/fs/fat/fat_directory.c kernel/fs/fat/fat_vfs.c
+		kernel/fs/fat/fat_directory.c kernel/fs/fat/fat_vfs.c \
+		kernel/fs/fat/fat_block.c
 FS_HOST_HEADERS := $(wildcard kernel/fs/vfs/*.h kernel/fs/fat/*.h kernel/fs/ext2/*.h)
 
 HOST_TEST_BINS := \
@@ -209,11 +211,14 @@ HOST_TEST_BINS := \
 	$(HOST_TEST_DIR)/vfs_test.exe \
 	$(HOST_TEST_DIR)/pmm_test.exe \
 	$(HOST_TEST_DIR)/vmm_test.exe \
+	$(HOST_TEST_DIR)/uvm_test.exe \
 	$(HOST_TEST_DIR)/process_pml4_test.exe \
 	$(HOST_TEST_DIR)/fat_directory_test.exe \
+	$(HOST_TEST_DIR)/fat_device_test.exe \
 	$(HOST_TEST_DIR)/ext2_vfs_test.exe \
 	$(HOST_TEST_DIR)/ext2_device_test.exe \
 	$(HOST_TEST_DIR)/usb_storage_test.exe \
+	$(HOST_TEST_DIR)/usb_device_test.exe \
 	$(HOST_TEST_DIR)/stdio_mode_test.exe \
 	$(HOST_TEST_DIR)/bmp_decode_test.exe \
 	$(HOST_TEST_DIR)/gfx_ui_test.exe \
@@ -238,6 +243,12 @@ $(HOST_TEST_DIR)/vmm_test.exe: tests/vmm_test.c kernel/memory/vmm.c \
 	$(HOST_CC) $(HOST_TEST_CFLAGS) -DHHDM_HOST_TEST -DVMM_HOST_TEST \
 		-I kernel tests/vmm_test.c kernel/memory/vmm.c -o $@
 
+$(HOST_TEST_DIR)/uvm_test.exe: tests/uvm_test.c kernel/memory/uvm.c \
+		kernel/memory/uvm.h kernel/memory/vmm.h kernel/memory/hhdm.h \
+		kernel/loader/process.h | $(HOST_TEST_DIR)
+	$(HOST_CC) $(HOST_TEST_CFLAGS) -DHHDM_HOST_TEST -I kernel \
+		tests/uvm_test.c kernel/memory/uvm.c -o $@
+
 $(HOST_TEST_DIR)/process_pml4_test.exe: tests/process_pml4_test.c \
 		kernel/loader/process.c kernel/memory/vmm.h kernel/memory/hhdm.h \
 		| $(HOST_TEST_DIR)
@@ -251,6 +262,14 @@ $(HOST_TEST_DIR)/fat_directory_test.exe: tests/fat_directory_test.c \
 		| $(HOST_TEST_DIR)
 	$(HOST_CC) $(HOST_TEST_CFLAGS) -I kernel \
 		tests/fat_directory_test.c $(FAT_HOST_SRCS) $(VFS_HOST_SRCS) \
+		$(HOST_KERNEL_STUBS) -o $@
+
+$(HOST_TEST_DIR)/fat_device_test.exe: tests/fat_device_test.c \
+		$(HOST_KERNEL_STUBS) $(FAT_HOST_SRCS) $(VFS_HOST_SRCS) \
+		$(FS_HOST_HEADERS) tests/vfs_backend_checks.h \
+		kernel/drivers/storage/block.h | $(HOST_TEST_DIR)
+	$(HOST_CC) $(HOST_TEST_CFLAGS) -I kernel \
+		tests/fat_device_test.c $(FAT_HOST_SRCS) $(VFS_HOST_SRCS) \
 		$(HOST_KERNEL_STUBS) -o $@
 
 $(HOST_TEST_DIR)/ext2-base.img: tools/create_ext2_test_image.sh \
@@ -286,6 +305,12 @@ $(HOST_TEST_DIR)/ext2_device_test.exe: tests/ext2_device_test.c $(EXT2_HOST_SRCS
 		$(HOST_KERNEL_STUBS) $(HOST_TEST_DIR)/ext2-base.img | $(HOST_TEST_DIR)
 	$(HOST_CC) $(HOST_TEST_CFLAGS) -I kernel tests/ext2_device_test.c \
 		$(EXT2_HOST_SRCS) $(HOST_KERNEL_STUBS) -o $@
+
+$(HOST_TEST_DIR)/usb_device_test.exe: tests/usb_device_test.c \
+		kernel/drivers/usb/usb_device.c kernel/drivers/usb/usb_device.h \
+		kernel/devices/usb.h | $(HOST_TEST_DIR)
+	$(HOST_CC) $(HOST_TEST_CFLAGS) -I kernel \
+		tests/usb_device_test.c kernel/drivers/usb/usb_device.c -o $@
 
 USB_STORAGE_HOST_SRCS := kernel/drivers/usb/storage/bot.c \
 		kernel/drivers/usb/storage/scsi.c kernel/drivers/usb/storage/usb_storage.c
@@ -412,6 +437,7 @@ test-qemu-heavy: build-x86_64
 		python3 tests/winman_titlebar_double_click_test.py --timeout 90 && \
 		python3 tests/path_lookup_test.py --timeout 90 && \
 		python3 tests/ehci_test.py && \
+		python3 tests/uhci_test.py && \
 		python3 tests/kernel_panic_test.py --timeout 90"
 
 test-heavy: test-host test-qemu-heavy

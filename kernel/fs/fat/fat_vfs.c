@@ -128,31 +128,33 @@ static int probe(const void *image, size_t size) {
     size_t volume_size = fat_volume_size(image, 0);
     return volume_size && volume_size <= size;
 }
-static int attach(struct vfs_superblock *super, void *context) {
-    if (mounted_super || fat_volume.type == FAT_TYPE_NONE || context != fat_volume.image) return -1;
+static int publish_root(struct vfs_superblock *super) {
+    if (mounted_super || fat_volume.type == FAT_TYPE_NONE) return -1;
     super->root = entry_inode(super, 0);
     if (!super->root) return -1;
     mounted_super = super;
     super->private_data = &fat_volume;
     return 0;
 }
-static int mount(struct vfs_superblock *super, void *image, size_t size) {
+/* Mount a volume already sitting in memory. The caller owns that memory; a
+ * plain image has nowhere to write back to, so write-through stays off. */
+int fat_vfs_mount_image(struct vfs_superblock *super, void *image, usize size) {
     /* The retained FAT disk engine is single-volume. Reject a second mount
      * BEFORE fat_init can replace the state beneath existing handles. */
     if (mounted_super || fat_init(image, size)) return -1;
     fat_set_sector_writer(0);
-    return attach(super, image);
+    return publish_root(super);
 }
 static void unmount(struct vfs_superblock *super) {
     if (mounted_super == super) {
         mounted_super = 0;
         fat_set_sector_writer(0);
+        fat_block_release();
     }
 }
 static const struct vfs_filesystem fat_filesystem = {
-    .name = FAT_VFS_NAME, .probe = probe, .mount = mount,
-    .attach = attach, .unmount = unmount,
+    .name = FAT_VFS_NAME, .probe = probe, .mount = fat_vfs_mount_image,
+    .attach = fat_mount_block, .sync = fat_block_sync, .unmount = unmount,
 };
 
 void fat_vfs_register(void) { vfs_register(&fat_filesystem); }
-int fat_vfs_attach(const char *path) { return vfs_attach(path, FAT_VFS_NAME, fat_volume.image); }

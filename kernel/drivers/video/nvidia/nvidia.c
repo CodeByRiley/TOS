@@ -281,17 +281,12 @@ static int nvidia_probe(struct device *device) {
 }
 
 
-static const struct driver nvidia_driver = {
+const struct driver nvidia_driver = {
     .name = "nvidia-video",
     .bus = DEVICE_BUS_PCI,
     .match = nvidia_match,
     .probe = nvidia_probe,
 };
-
-int nvidia_driver_register(void) {
-    _nvidia_device_count = 0;
-    return driver_register(&nvidia_driver);
-}
 
 void nvidia_driver_late_init(void) {
     for (u32 i = 0; i < _nvidia_device_count; i++) {

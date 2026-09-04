@@ -163,6 +163,7 @@ struct e1000_tx_desc {
   volatile u16 special;   // 14: Special / VLAN tag (usually 0)
 } PACKED;
 
-void e1000_driver_init(void);
+struct driver;
+extern const struct driver e1000_driver;
 
 #endif // E1000_H

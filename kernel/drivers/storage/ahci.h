@@ -246,7 +246,13 @@ struct AHCI_DEVICE_DATA {
     struct AHCI_PORT ports[AHCI_MAX_PORTS]; // Array of port states
 };
 
-void ahci_init(void);
+struct driver;
+extern const struct driver ahci_driver;
+
+/* The controller ahci_init bound, or NULL when there is none. One controller
+ * is supported. Declared here because callers used to re-extern it for
+ * themselves, which meant nothing checked that they agreed on the type. */
+extern struct AHCI_DEVICE_DATA *g_ahci_dev;
 
 /* Read `count` 512-byte sectors starting at `lba` into the physical buffer
  * `buf_phys`. Returns 0 on success, -1 on error or timeout. */

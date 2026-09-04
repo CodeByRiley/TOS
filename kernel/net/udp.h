@@ -22,8 +22,4 @@ struct udp_packet {
   u8 data[];
 } PACKED;
 
-
-int udp_send(struct ipv4_addr *src, struct ipv4_addr *dst, u16 src_port, u16 dst_port, u8 *data, u16 len);
-int udp_recv(struct packet_queue *queue, struct ipv4_addr *src, struct ipv4_addr *dst, u16 src_port, u16 dst_port, u8 *data, u16 len);
-
 #endif

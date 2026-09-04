@@ -9,6 +9,7 @@
 #include <devices/usb.h>
 #include <drivers/usb/ehci.h>
 #include <drivers/usb/storage/usb_storage.h>
+#include <drivers/usb/usb_device.h>
 #include <input/mouse.h>
 #include <interrupts/idt.h>
 #include <interrupts/pic.h>
@@ -42,10 +43,6 @@
 #define EHCI_ARENA_INT_BUF      0x680
 #define EHCI_ARENA_BULK_BUF     0x800
 #define EHCI_ARENA_BULK_MAX     2048
-
-#define EHCI_INT_KIND_NONE           0
-#define EHCI_INT_KIND_HID_BOOT_MOUSE 1
-#define EHCI_INT_KIND_HID_TABLET     2
 
 struct ehci_int_ep {
   int active;
@@ -92,12 +89,6 @@ struct ehci_hcd {
   struct spinlock async_lock;
   int async_failed;
   struct ehci_storage_device storage[15];
-};
-
-struct ehci_hid_pointer {
-  u8 interface_number;
-  u8 kind;
-  struct usb_endpoint_descriptor endpoint;
 };
 
 static struct ehci_hcd ehci_controllers[EHCI_MAX_CONTROLLERS];
@@ -447,131 +438,8 @@ out:
   return rc;
 }
 
-static int ehci_get_descriptor(struct ehci_hcd *hc, u8 addr, u16 maxpacket,
-                               u8 type, u8 index, void *out, u16 length) {
-  struct usb_setup_packet setup = {
-      .bmRequestType = USB_REQTYPE_IN_STD_DEVICE,
-      .bRequest = USB_REQ_GET_DESCRIPTOR,
-      .wValue = (u16)((type << 8) | index),
-      .wIndex = 0,
-      .wLength = length,
-  };
-  return ehci_ctrl_xfer(hc, addr, maxpacket, &setup, out, length,
-                        EHCI_XFER_TIMEOUT_MS);
-}
-static int ehci_set_address(struct ehci_hcd *hc, u16 maxpacket, u8 address) {
-  struct usb_setup_packet setup = {
-      .bmRequestType = USB_REQTYPE_OUT_STD_DEVICE,
-      .bRequest = USB_REQ_SET_ADDRESS,
-      .wValue = address,
-      .wLength = 0,
-  };
-  return ehci_ctrl_xfer(hc, 0, maxpacket, &setup, 0, 0,
-                        EHCI_XFER_TIMEOUT_MS);
-}
-static int ehci_set_configuration(struct ehci_hcd *hc, u8 addr,
-                                  u16 maxpacket, u8 configuration) {
-  struct usb_setup_packet setup = {
-      .bmRequestType = USB_REQTYPE_OUT_STD_DEVICE,
-      .bRequest = USB_REQ_SET_CONFIGURATION,
-      .wValue = configuration,
-      .wLength = 0,
-  };
-  return ehci_ctrl_xfer(hc, addr, maxpacket, &setup, 0, 0,
-                        EHCI_XFER_TIMEOUT_MS);
-}
-static int ehci_hid_request(struct ehci_hcd *hc, u8 addr, u16 maxpacket,
-                            u8 request, u16 value, u8 interface) {
-  struct usb_setup_packet setup = {
-      .bmRequestType = USB_REQTYPE_OUT_CLASS_INTERFACE,
-      .bRequest = request,
-      .wValue = value,
-      .wIndex = interface,
-      .wLength = 0,
-  };
-  return ehci_ctrl_xfer(hc, addr, maxpacket, &setup, 0, 0,
-                        EHCI_XFER_TIMEOUT_MS);
-}
 
-static int ehci_read_config(struct ehci_hcd *hc, u8 addr, u16 maxpacket,
-                            u8 index) {
-  struct usb_config_descriptor head;
-  memset(&head, 0, sizeof(head));
-  if (ehci_get_descriptor(hc, addr, maxpacket, USB_DESC_CONFIGURATION, index,
-                          &head, sizeof(head)) < (int)sizeof(head))
-    return -1;
-  u16 total = head.wTotalLength;
-  if (total < sizeof(head))
-    return -1;
-  if (total > EHCI_CONFIG_BUF_MAX) {
-    log_write_int("EHCI: configuration too large, truncating", total, KERNEL,
-                  LOG_WARN);
-    total = EHCI_CONFIG_BUF_MAX;
-  }
-  memset(ehci_config_buf, 0, sizeof(ehci_config_buf));
-  int got = ehci_get_descriptor(hc, addr, maxpacket, USB_DESC_CONFIGURATION,
-                                index, ehci_config_buf, total);
-  return got >= (int)sizeof(head) ? got : -1;
-}
 
-static int ehci_find_hid_pointer(const u8 *buf, int length,
-                                 struct ehci_hid_pointer *out) {
-  int found = 0;
-  int hid_interface = 0;
-  u8 current_interface = 0;
-  u8 current_kind = EHCI_INT_KIND_NONE;
-  for (int offset = 0; offset + 2 <= length;) {
-    u8 descriptor_length = buf[offset];
-    u8 descriptor_type = buf[offset + 1];
-    if (descriptor_length < 2 || offset + descriptor_length > length)
-      break;
-    if (descriptor_type == USB_DESC_INTERFACE &&
-        descriptor_length >= sizeof(struct usb_interface_descriptor)) {
-      const struct usb_interface_descriptor *interface =
-          (const struct usb_interface_descriptor *)(const void *)(buf + offset);
-      current_interface = interface->bInterfaceNumber;
-      hid_interface = interface->bInterfaceClass == USB_CLASS_HID;
-      current_kind = EHCI_INT_KIND_NONE;
-      if (hid_interface &&
-          interface->bInterfaceSubClass == USB_HID_SUBCLASS_BOOT &&
-          interface->bInterfaceProtocol == USB_HID_PROTOCOL_MOUSE)
-        current_kind = EHCI_INT_KIND_HID_BOOT_MOUSE;
-      log_write_int("EHCI:   interface", current_interface, KERNEL, LOG_INFO);
-      log_write_hex("EHCI:     class", interface->bInterfaceClass, KERNEL,
-                    LOG_INFO);
-      log_write_hex("EHCI:     protocol", interface->bInterfaceProtocol,
-                    KERNEL, LOG_INFO);
-    } else if (descriptor_type == USB_DESC_HID && descriptor_length >= 9) {
-      u16 report_length = (u16)buf[offset + 7] |
-                          ((u16)buf[offset + 8] << 8);
-      if (hid_interface && current_kind == EHCI_INT_KIND_NONE &&
-          report_length == 74)
-        current_kind = EHCI_INT_KIND_HID_TABLET;
-    } else if (descriptor_type == USB_DESC_ENDPOINT &&
-               descriptor_length >= sizeof(struct usb_endpoint_descriptor)) {
-      const struct usb_endpoint_descriptor *endpoint =
-          (const struct usb_endpoint_descriptor *)(const void *)(buf + offset);
-      u16 maxpacket = endpoint->wMaxPacketSize & 0x07FF;
-      log_write_hex("EHCI:   endpoint", endpoint->bEndpointAddress, KERNEL,
-                    LOG_INFO);
-      log_write_int("EHCI:     max packet", maxpacket, KERNEL, LOG_INFO);
-      int size_ok = current_kind != EHCI_INT_KIND_HID_TABLET || maxpacket >= 5;
-      if (!found && current_kind != EHCI_INT_KIND_NONE && size_ok &&
-          maxpacket <= EHCI_INT_BUF_MAX &&
-          (endpoint->bmAttributes & USB_EP_XFER_MASK) ==
-              USB_EP_XFER_INTERRUPT &&
-          (endpoint->bEndpointAddress & USB_EP_ADDR_DIR_IN)) {
-        out->interface_number = current_interface;
-        out->kind = current_kind;
-        out->endpoint = *endpoint;
-        out->endpoint.wMaxPacketSize = maxpacket;
-        found = 1;
-      }
-    }
-    offset += descriptor_length;
-  }
-  return found;
-}
 
 /* PORTSC has write-one-to-clear change bits. Strip them from ordinary RMWs. */
 static void ehci_port_set(struct ehci_hcd *hc, int port, u32 bits) {
@@ -701,9 +569,9 @@ static void ehci_periodic_complete(struct ehci_int_ep *ep) {
     ep->last_len = ep->maxlen - remaining;
     ep->reports++;
     ep->toggle ^= 1;
-    if (ep->kind == EHCI_INT_KIND_HID_BOOT_MOUSE)
+    if (ep->kind == USB_INT_KIND_HID_BOOT_MOUSE)
       mouse_hid_report(ep->buf, ep->last_len);
-    else if (ep->kind == EHCI_INT_KIND_HID_TABLET)
+    else if (ep->kind == USB_INT_KIND_HID_TABLET)
       mouse_hid_tablet_report(ep->buf, ep->last_len);
     if (ep->reports <= EHCI_INT_LOG_LIMIT)
       log_write_int("EHCI: report bytes", ep->last_len, KERNEL, LOG_INFO);
@@ -727,34 +595,53 @@ static void ehci_irq_handler(void) {
   }
 }
 
+/* EHCI's half of the shared device model: everything above a control
+ * transfer is in drivers/usb/usb_device.c. */
+static int ehci_pipe_control(const struct usb_pipe *pipe,
+                             const struct usb_setup_packet *setup, void *data,
+                             u16 length, int in) {
+  (void)in; /* ehci_ctrl_xfer reads the direction out of bmRequestType */
+  return ehci_ctrl_xfer(pipe->hc, pipe->address, pipe->maxpacket, setup, data,
+                        length, EHCI_XFER_TIMEOUT_MS);
+}
+
 static void ehci_enumerate_port(struct ehci_hcd *hc, int port) {
   struct usb_descriptor descriptor;
   if (ehci_port_reset(hc, port) != 0)
     return;
   log_write_int("EHCI: high-speed port enabled", port, KERNEL, LOG_INFO);
+
+  struct usb_pipe pipe = {
+      .hc = hc,
+      .control = ehci_pipe_control,
+      .address = 0,
+      .maxpacket = EHCI_EP0_DEFAULT_MAXP,
+      .tag = "EHCI",
+  };
+
   memset(&descriptor, 0, sizeof(descriptor));
-  if (ehci_get_descriptor(hc, 0, EHCI_EP0_DEFAULT_MAXP, USB_DESC_DEVICE, 0,
-                          &descriptor, 8) < 8) {
+  if (usb_get_descriptor(&pipe, USB_DESC_DEVICE, 0, &descriptor, 8) < 8) {
     log_write_int("EHCI: initial descriptor failed on port", port, KERNEL,
                   LOG_ERROR);
     return;
   }
-  u16 maxpacket = descriptor.bMaxPacketSize0;
-  if (maxpacket == 0)
-    maxpacket = EHCI_EP0_DEFAULT_MAXP;
+  if (descriptor.bMaxPacketSize0)
+    pipe.maxpacket = descriptor.bMaxPacketSize0;
   if (ehci_port_reset(hc, port) != 0)
     return;
+
   u8 address = hc->next_addr;
-  if (ehci_set_address(hc, maxpacket, address) < 0) {
+  if (usb_set_address(&pipe, address) < 0) {
     log_write_int("EHCI: SET_ADDRESS failed on port", port, KERNEL, LOG_ERROR);
     return;
   }
   hc->next_addr++;
+  pipe.address = address;
   pit_delay_ms(2);
+
   memset(&descriptor, 0, sizeof(descriptor));
-  if (ehci_get_descriptor(hc, address, maxpacket, USB_DESC_DEVICE, 0,
-                          &descriptor, sizeof(descriptor)) <
-      (int)sizeof(descriptor)) {
+  if (usb_get_descriptor(&pipe, USB_DESC_DEVICE, 0, &descriptor,
+                         sizeof(descriptor)) < (int)sizeof(descriptor)) {
     log_write_int("EHCI: full descriptor failed for address", address,
                   KERNEL, LOG_ERROR);
     return;
@@ -766,17 +653,18 @@ static void ehci_enumerate_port(struct ehci_hcd *hc, int port) {
   if (descriptor.bNumConfigurations == 0)
     return;
 
-  int config_length = ehci_read_config(hc, address, maxpacket, 0);
+  int config_length =
+      usb_read_config(&pipe, 0, ehci_config_buf, EHCI_CONFIG_BUF_MAX);
   if (config_length < 0)
     return;
   const struct usb_config_descriptor *config =
       (const struct usb_config_descriptor *)(const void *)ehci_config_buf;
-  struct ehci_hid_pointer pointer;
+  struct usb_hid_pointer pointer;
   memset(&pointer, 0, sizeof(pointer));
-  int have_pointer =
-      ehci_find_hid_pointer(ehci_config_buf, config_length, &pointer);
-  if (ehci_set_configuration(hc, address, maxpacket,
-                             config->bConfigurationValue) < 0) {
+  /* An interrupt endpoint has to fit the periodic arena's buffer. */
+  int have_pointer = usb_find_hid_pointer(ehci_config_buf, config_length,
+                                          EHCI_INT_BUF_MAX, "EHCI", &pointer);
+  if (usb_set_configuration(&pipe, config->bConfigurationValue) < 0) {
     log_write_int("EHCI: SET_CONFIGURATION failed for address", address,
                   KERNEL, LOG_ERROR);
     return;
@@ -785,7 +673,7 @@ static void ehci_enumerate_port(struct ehci_hcd *hc, int port) {
                 KERNEL, LOG_INFO);
   struct ehci_storage_device *disk = &hc->storage[port];
   *disk = (struct ehci_storage_device){
-      .hc = hc, .address = address, .port = port, .maxpacket = maxpacket,
+      .hc = hc, .address = address, .port = port, .maxpacket = pipe.maxpacket,
   };
   struct usb_storage_transport transport = {
       .context = disk, .control = ehci_storage_control, .bulk = ehci_storage_bulk,
@@ -794,12 +682,10 @@ static void ehci_enumerate_port(struct ehci_hcd *hc, int port) {
     log_write("USB storage: SCSI/BOT disk ready", KERNEL, LOG_INFO);
   if (!have_pointer)
     return;
-  if (ehci_hid_request(hc, address, maxpacket, USB_REQ_SET_IDLE, 0,
-                       pointer.interface_number) < 0)
+  if (usb_hid_set_idle(&pipe, pointer.interface_number) < 0)
     log_write("EHCI: HID SET_IDLE failed, continuing", KERNEL, LOG_WARN);
-  if (pointer.kind == EHCI_INT_KIND_HID_BOOT_MOUSE &&
-      ehci_hid_request(hc, address, maxpacket, USB_REQ_SET_PROTOCOL, 0,
-                       pointer.interface_number) < 0)
+  if (pointer.kind == USB_INT_KIND_HID_BOOT_MOUSE &&
+      usb_hid_set_boot_protocol(&pipe, pointer.interface_number) < 0)
     log_write("EHCI: HID boot protocol failed, continuing", KERNEL, LOG_WARN);
   u8 endpoint = pointer.endpoint.bEndpointAddress & USB_EP_ADDR_NUM_MASK;
   if (ehci_periodic_start(hc, address, endpoint,

@@ -1,18 +1,26 @@
 /* kernel/display/framebuffer.c , framebuffer abstraction.
  *
- * Four backends behind a single API:
+ * This file owns the surface: its geometry, its mapping, its damage, and the
+ * present loop. What it does *not* own is the scanout, which belongs to
+ * whichever struct fb_backend is attached , see that type below. The four
+ * backends today are:
  *   MB2 direct  , a native 32-bit BGR framebuffer handed to us by GRUB.
- *                  Direct writes are visible on the scanout.
- *   MB2 shadow  , a canonical 32-bit surface converted into a non-native
- *                  VBE/GOP pixel layout when damage is presented.
+ *                  Direct writes are visible on the scanout, so it has no
+ *                  flush op and needs no flush worker.
+ *   MB2 shadow  , the same firmware scanout in a layout the renderer does
+ *                  not speak. Draw into a canonical 32-bit surface and
+ *                  convert during present.
  *   virtio-gpu  , a scatter-gather pixel buffer attached to the host
- *                  resource. Damage tracking + framebuffer_present()
- *                  flush touched rects over the virtqueue.
+ *                  resource; damage goes over the virtqueue.
  *   VMSVGA      , VirtualBox's 32-bit VMware SVGA II scanout. VMMDev
  *                  supplies resize hints and the SVGA FIFO publishes damage.
  *
- * Page tables map either backend's pages contiguously at FB_VIRT_BASE so
- * pixel writers don't need to care which mode is active. Switching is
+ * display_init() at the bottom of this file picks between them. NVIDIA is
+ * not one of them yet: when its driver has taken the scanout, display_init
+ * leaves it alone.
+ *
+ * Page tables map the active backend's pages contiguously at FB_VIRT_BASE so
+ * pixel writers don't need to care which one is driving. Switching is
  * one-way (MB2 → accelerated backend); on failure MB2 stays live.
  *
  * The flush thread (framebuffer_flush_thread_entry) polls + presents at
@@ -23,6 +31,7 @@
 #include <boot/uefi.h>
 #include <display/framebuffer.h>
 #include <display/graphics.h>
+#include <drivers/video/nvidia/nvidia.h>
 #include <drivers/video/virtio/virtio_gpu.h>
 #include <drivers/video/virtualbox/vbox_video.h>
 #include <input/mouse.h>
@@ -46,12 +55,6 @@
 #define FB_MIN_RESOURCE_W 2048U
 #define FB_MIN_RESOURCE_H 2048U
 
-#define FB_MODE_NONE 0
-#define FB_MODE_MB2_DIRECT 1
-#define FB_MODE_VIRTIO 2
-#define FB_MODE_MB2_SHADOW 3
-#define FB_MODE_VBOX 4
-
 #define FB_MAX_DAMAGE 8
 #define FB_DAMAGE_MERGE_SLACK 8192
 
@@ -59,11 +62,72 @@ struct fb_damage_rect {
   u32 x, y, w, h;
 };
 
+/* A display backend is whatever owns the scanout. It answers three questions
+ * and no others: where a damaged rectangle has to be pushed, whether the host
+ * can resize the scanout underneath us, and what memory it holds that must be
+ * handed back when another backend takes over.
+ *
+ * Everything else about a framebuffer , the surface pointer, the geometry,
+ * damage accumulation, the mapping at FB_VIRT_BASE , is the same whoever is
+ * driving, and stays in this file. Callers of framebuffer.h never learn which
+ * backend is active.
+ *
+ * A NULL op means the step does not apply. A backend with no `flush` is one
+ * whose surface already *is* the scanout, and therefore also needs no flush
+ * worker: framebuffer_needs_flush() is that question and nothing more.
+ *
+ * There is deliberately no per-backend context pointer. There is one display.
+ * A second head is what would justify one, not this. */
+struct fb_backend {
+  const char *name;
+  /* Push one damaged rectangle. Returns 0 on success. */
+  int (*flush)(u32 x, u32 y, u32 w, u32 h);
+  /* Poll for a host-side resize. Returns 1 if the framebuffer was rebound. */
+  int (*poll_resize)(void);
+  /* Release memory this backend owns. The FB_VIRT_BASE mapping belongs to the
+   * framebuffer, not the backend, and is torn down separately. */
+  void (*teardown)(void);
+};
+
+static int mb2_shadow_flush(u32 x, u32 y, u32 w, u32 h);
+static void mb2_shadow_teardown(void);
+static int virtio_poll_resize(void);
+static void virtio_teardown(void);
+static int vbox_poll_resize(void);
+
+/* A native firmware scanout: the renderer draws straight into the displayed
+ * pixels, so there is nothing to push and nothing to give back. */
+static const struct fb_backend mb2_direct_backend = {
+    .name = "MB2 direct",
+};
+
+/* The same firmware scanout in a layout the renderer does not speak: draw
+ * into a canonical 32-bit surface and convert during present. */
+static const struct fb_backend mb2_shadow_backend = {
+    .name = "MB2 shadow",
+    .flush = mb2_shadow_flush,
+    .teardown = mb2_shadow_teardown,
+};
+
+static const struct fb_backend virtio_backend = {
+    .name = "virtio-gpu",
+    .flush = virtio_gpu_flush_rect,
+    .poll_resize = virtio_poll_resize,
+    .teardown = virtio_teardown,
+};
+
+/* VMSVGA frames are host MMIO, so there is nothing of ours to free. */
+static const struct fb_backend vbox_backend = {
+    .name = "VMSVGA",
+    .flush = vbox_video_flush_rect,
+    .poll_resize = vbox_poll_resize,
+};
+
 static u32 *fb = 0;
 static u32 fb_w = 0;
 static u32 fb_h = 0;
 static u32 fb_pitch = 0; /* bytes per row */
-static u32 fb_mode = FB_MODE_NONE;
+static const struct fb_backend *fb_active = 0;
 static u32 fb_resize_generation = 0;
 
 /* Non-native firmware scanouts keep their actual GOP/VBE mapping separate
@@ -200,14 +264,13 @@ static u32 fb_resource_h = 0;
 static u64 fb_mb2_phys =
     0; /* preserved so drivers can identify the firmware scanout BAR */
 
-u64 framebuffer_phys(void) {
-  if (fb_mode == FB_MODE_MB2_DIRECT || fb_mode == FB_MODE_MB2_SHADOW ||
-      fb_mode == FB_MODE_VBOX)
-    return fb_mb2_phys;
-  if (fb_mode == FB_MODE_VIRTIO && fb_n_pages > 0)
-    return fb_pages[0];
-  return 0;
-}
+/* The physical address that identifies the active scanout, so a driver can
+ * recognise its own BAR. Each backend records it when it attaches: firmware
+ * and VMSVGA report the frame the host reads, virtio reports its pool base.
+ * Zero when nothing is attached. */
+static u64 fb_scanout_phys = 0;
+
+u64 framebuffer_phys(void) { return fb_scanout_phys; }
 u32 framebuffer_pitch(void) { return fb_pitch; }
 u32 framebuffer_width(void) { return fb_w; }
 u32 framebuffer_height(void) { return fb_h; }
@@ -587,6 +650,16 @@ static u32 encode_scanout_pixel(u32 color) {
          encode_channel((u8)color, fb_blue_pos, fb_blue_size);
 }
 
+static void present_shadow_rect(const struct fb_damage_rect *rect);
+
+/* Converting into the firmware scanout is a local memory copy: it cannot
+ * fail the way a virtqueue or a FIFO can, so this always reports success. */
+static int mb2_shadow_flush(u32 x, u32 y, u32 w, u32 h) {
+  struct fb_damage_rect rect = {x, y, w, h};
+  present_shadow_rect(&rect);
+  return 0;
+}
+
 static void present_shadow_rect(const struct fb_damage_rect *rect) {
   u32 scanout_bytes_per_pixel = (fb_scanout_bpp + 7U) / 8U;
   for (u32 y = 0; y < rect->h; y++) {
@@ -674,7 +747,8 @@ int framebuffer_init(u64 mb2_addr) {
     fb_pitch = t->pitch;
     fb_n_pages = pages;
     fb_mapped_pages = pages;
-    fb_mode = FB_MODE_MB2_DIRECT;
+    fb_scanout_phys = t->addr;
+    fb_active = &mb2_direct_backend;
     log_write("FB: native 32-bit scanout, using direct writes", KERNEL,
               LOG_INFO);
   } else {
@@ -711,7 +785,8 @@ int framebuffer_init(u64 mb2_addr) {
     fb_pitch = t->width * 4U;
     fb_n_pages = pages;
     fb_mapped_pages = pages;
-    fb_mode = FB_MODE_MB2_SHADOW;
+    fb_scanout_phys = t->addr;
+    fb_active = &mb2_shadow_backend;
     memset(fb, 0, shadow_bytes);
     log_write("FB: non-native scanout, enabled 32-bit conversion surface",
               KERNEL, LOG_INFO);
@@ -723,7 +798,9 @@ int framebuffer_init(u64 mb2_addr) {
   log_write_hex("DISPLAY: height    =", fb_h, KERNEL, LOG_INFO);
   log_write_hex("DISPLAY: pitch     =", fb_pitch, KERNEL, LOG_INFO);
   log_write_hex("DISPLAY: bpp       =", t->bpp, KERNEL, LOG_INFO);
-  if (fb_mode == FB_MODE_MB2_SHADOW)
+  /* A converting backend starts with a scanout that does not yet match the
+   * surface we just cleared, so push one frame before anyone looks at it. */
+  if (framebuffer_needs_flush())
     framebuffer_present();
   return 0;
 }
@@ -754,19 +831,31 @@ struct gfx_surface framebuffer_get_gfx_surface(void) {
   return s;
 }
 
-/* Tear down the current backing: unmap pages from FB_VIRT_BASE, and free only
- * PMM-owned shadow/virtio memory. Firmware and VMSVGA frames are MMIO. */
-static void teardown_current(int free_virtio_pages) {
+/* The conversion surface and the separate mapping of the real firmware
+ * scanout are the shadow backend's own memory. */
+static void mb2_shadow_teardown(void) {
+  if (fb_scanout_mapped_pages > 0)
+    unmap_pages_at(FB_SCANOUT_VIRT_BASE, fb_scanout_mapped_pages);
+  if (fb_shadow_phys)
+    pmm_free_contiguous(fb_shadow_phys, fb_shadow_pages);
+}
+
+/* The backing pool handed to RESOURCE_ATTACH_BACKING is ours. */
+static void virtio_teardown(void) {
+  if (fb_pool_phys)
+    pmm_free_contiguous(fb_pool_phys, fb_owned_pages);
+}
+
+/* Give up the current backend so another can take the scanout. The mapping at
+ * FB_VIRT_BASE is this file's to undo whoever was driving; anything beyond it
+ * is the backend's, and only it knows whether the frames were MMIO or ours. */
+static void teardown_current(void) {
   if (fb_mapped_pages > 0)
     unmap_pages_at(FB_VIRT_BASE, fb_mapped_pages);
-  if (fb_mode == FB_MODE_MB2_SHADOW) {
-    if (fb_scanout_mapped_pages > 0)
-      unmap_pages_at(FB_SCANOUT_VIRT_BASE, fb_scanout_mapped_pages);
-    if (fb_shadow_phys)
-      pmm_free_contiguous(fb_shadow_phys, fb_shadow_pages);
-  }
-  if (free_virtio_pages && fb_mode == FB_MODE_VIRTIO && fb_pool_phys)
-    pmm_free_contiguous(fb_pool_phys, fb_owned_pages);
+  if (fb_active && fb_active->teardown)
+    fb_active->teardown();
+  fb_active = 0;
+  fb_scanout_phys = 0;
   fb_n_pages = 0;
   fb_mapped_pages = 0;
   fb_owned_pages = 0;
@@ -796,9 +885,9 @@ static int map_vbox_mode(const struct vbox_video_mode *mode,
 
   u32 pages = (u32)(((u64)mode->pitch * mode->height + 4095ULL) / 4096ULL);
   int physical_changed =
-      fb_mode != FB_MODE_VBOX || fb_mb2_phys != mode->physical;
+      fb_active != &vbox_backend || fb_mb2_phys != mode->physical;
   if (initial_attach) {
-    teardown_current(/*free_virtio_pages=*/1);
+    teardown_current();
     physical_changed = 1;
   } else if (physical_changed && fb_mapped_pages > 0) {
     unmap_pages_at(FB_VIRT_BASE, fb_mapped_pages);
@@ -824,11 +913,12 @@ static int map_vbox_mode(const struct vbox_video_mode *mode,
 
   fb = (u32 *)FB_VIRT_BASE;
   fb_mb2_phys = mode->physical;
+  fb_scanout_phys = mode->physical;
   fb_w = mode->width;
   fb_h = mode->height;
   fb_pitch = mode->pitch;
   fb_n_pages = pages;
-  fb_mode = FB_MODE_VBOX;
+  fb_active = &vbox_backend;
   if (!initial_attach)
     mouse_set_bounds(fb_w, fb_h);
   mark_full_damage();
@@ -837,13 +927,25 @@ static int map_vbox_mode(const struct vbox_video_mode *mode,
   return 0;
 }
 
-int framebuffer_attach_virtualbox(void) {
+static int attach_virtualbox(void) {
   struct vbox_video_mode mode;
   if (vbox_video_get_mode(&mode) != 0 || map_vbox_mode(&mode, 1) != 0)
     return -1;
   log_write_hex("FB: VirtualBox VMSVGA attached, w =", fb_w, KERNEL, LOG_INFO);
   log_write_hex("FB: VirtualBox VMSVGA attached, h =", fb_h, KERNEL, LOG_INFO);
   return 0;
+}
+
+/* The VMMDev companion reports host window-size hints; rebinding is just
+ * re-mapping the frame the host moved us to. */
+static int vbox_poll_resize(void) {
+  struct vbox_video_mode mode;
+  spin_lock(&scanout_lock);
+  int changed = vbox_video_poll_resize(&mode);
+  if (changed > 0)
+    changed = map_vbox_mode(&mode, 0) == 0;
+  spin_unlock(&scanout_lock);
+  return changed > 0;
 }
 
 /* Allocate one maximum-sized pool. The host resource keeps all of it attached,
@@ -929,9 +1031,9 @@ static u32 resource_page_count(u32 w, u32 h) {
   return visible_page_count(w * 4, h);
 }
 
+/* Rebind the virtio scanout to a new size. Only virtio_poll_resize and the
+ * virtio attach path reach this, so the backend is known to be active. */
 static int do_resize(u32 w, u32 h) {
-  if (fb_mode != FB_MODE_VIRTIO)
-    return -1;
   u32 resource_w = fb_resource_w;
   u32 resource_h = fb_resource_h;
   int recreate = w > resource_w || h > resource_h;
@@ -969,7 +1071,7 @@ static int do_resize(u32 w, u32 h) {
   return 0;
 }
 
-int framebuffer_attach_virtio(void) {
+static int attach_virtio(void) {
   u32 w = 0, h = 0;
   if (virtio_gpu_get_dims(&w, &h) != 0)
     return -1;
@@ -979,7 +1081,7 @@ int framebuffer_attach_virtio(void) {
   u32 pitch = resource_w * 4;
   u32 pages = visible_page_count(pitch, h);
 
-  teardown_current(/*free_virtio_pages=*/1);
+  teardown_current();
   if (alloc_and_map_virtio(pages) != 0)
     return -1;
 
@@ -996,25 +1098,18 @@ int framebuffer_attach_virtio(void) {
   fb_pitch = pitch;
   fb_resource_w = resource_w;
   fb_resource_h = resource_h;
-  fb_mode = FB_MODE_VIRTIO;
+  fb_scanout_phys = fb_pool_phys;
+  fb_active = &virtio_backend;
   mark_full_damage();
   log_write_hex("FB: virtio attached, w =", fb_w, KERNEL, LOG_INFO);
   log_write_hex("FB: virtio attached, h =", fb_h, KERNEL, LOG_INFO);
   return 0;
 }
 
-int framebuffer_check_resize(void) {
-  if (fb_mode == FB_MODE_VBOX) {
-    struct vbox_video_mode mode;
-    spin_lock(&scanout_lock);
-    int changed = vbox_video_poll_resize(&mode);
-    if (changed > 0)
-      changed = map_vbox_mode(&mode, 0) == 0;
-    spin_unlock(&scanout_lock);
-    return changed > 0;
-  }
-
-  if (fb_mode != FB_MODE_VIRTIO || !virtio_gpu_poll_display_event())
+/* The host tells us it resized through a display event on the control queue;
+ * the new dimensions then come from GET_DISPLAY_INFO. */
+static int virtio_poll_resize(void) {
+  if (!virtio_gpu_poll_display_event())
     return 0;
 
   u32 w = 0, h = 0;
@@ -1025,9 +1120,14 @@ int framebuffer_check_resize(void) {
   return do_resize(w, h) == 0;
 }
 
+int framebuffer_check_resize(void) {
+  if (!fb_active || !fb_active->poll_resize)
+    return 0;
+  return fb_active->poll_resize();
+}
+
 void framebuffer_present(void) {
-  if (fb_mode != FB_MODE_VIRTIO && fb_mode != FB_MODE_MB2_SHADOW &&
-      fb_mode != FB_MODE_VBOX)
+  if (!framebuffer_needs_flush())
     return;
   /* Snapshot + clear before the synchronous flush so writers can continue
    * accumulating the next batch while virtio waits for host acknowledgement. */
@@ -1046,22 +1146,24 @@ void framebuffer_present(void) {
   spin_unlock(&damage_lock);
 
   spin_lock(&scanout_lock);
+  const struct fb_backend *backend = fb_active;
   for (int i = 0; i < count; i++) {
-    if (fb_mode == FB_MODE_MB2_SHADOW)
-      present_shadow_rect(&pending[i]);
-    else if (fb_mode == FB_MODE_VBOX)
-      vbox_video_flush_rect(pending[i].x, pending[i].y, pending[i].w,
-                            pending[i].h);
-    else
-      virtio_gpu_flush_rect(pending[i].x, pending[i].y, pending[i].w,
-                            pending[i].h);
+    if (backend->flush(pending[i].x, pending[i].y, pending[i].w,
+                       pending[i].h) != 0) {
+      /* One rectangle failing does not make the others undeliverable, and a
+       * dropped frame is not worth wedging the flush thread over. */
+      log_write_string("FB: scanout flush failed for backend", backend->name,
+                       KERNEL, LOG_WARN);
+      break;
+    }
   }
   spin_unlock(&scanout_lock);
 }
 
+/* A backend with no flush op draws straight into the scanout, so nothing has
+ * to carry pixels anywhere and no flush worker is needed. */
 int framebuffer_needs_flush(void) {
-  return fb_mode == FB_MODE_VIRTIO || fb_mode == FB_MODE_MB2_SHADOW ||
-         fb_mode == FB_MODE_VBOX;
+  return fb_active && fb_active->flush;
 }
 
 u32 framebuffer_resize_generation(void) { return fb_resize_generation; }
@@ -1107,4 +1209,47 @@ void framebuffer_clear(u32 color) {
     p += fb_pitch;
   }
   mark_full_damage();
+}
+
+/* Choose a backend and take the scanout.
+ *
+ * The firmware framebuffer GRUB handed us is always brought up first: it is
+ * the one backend that cannot fail, so a failed probe below leaves a working
+ * display rather than a dark one. The accelerated backends are then tried in
+ * order and the first that attaches wins.
+ *
+ * NVIDIA is not a backend yet. When its driver has already taken the scanout
+ * it keeps it, and the probe below is skipped rather than fighting it for the
+ * display. Turning that into a fourth entry in this list is the remaining
+ * piece of this seam.
+ */
+int display_init(u64 mb2_addr) {
+  if (framebuffer_init(mb2_addr) != 0) {
+    log_write("display: no firmware framebuffer", KERNEL, LOG_ERROR);
+    return -1;
+  }
+
+  if (nvidia_display_active()) {
+    log_write("display: NVIDIA driving scanout, keeping its framebuffer",
+              KERNEL, LOG_INFO);
+    return 0;
+  }
+  if (nvidia_device_count() > 0)
+    log_write("display: NVIDIA detected but not driving scanout", KERNEL,
+              LOG_INFO);
+
+  if (virtio_gpu_init() == 0) {
+    if (attach_virtio() == 0)
+      return 0;
+    log_write("display: virtio attach failed, staying on MB2 fb", KERNEL,
+              LOG_WARN);
+  } else if (vbox_video_init(fb_w, fb_h) == 0) {
+    if (attach_virtualbox() == 0)
+      return 0;
+    log_write("display: VMSVGA attach failed, staying on MB2 fb", KERNEL,
+              LOG_WARN);
+  } else {
+    log_write("display: no dynamic GPU, staying on MB2 fb", KERNEL, LOG_INFO);
+  }
+  return 0;
 }

@@ -412,13 +412,8 @@ static int e1000_probe(struct device *dev) {
   return 0;
 }
 
-static struct driver e1000_driver = {.name = "e1000 Ethernet",
-                                     .bus = DEVICE_BUS_PCI,
-                                     .match = e1000_match,
-                                     .probe = e1000_probe,
-                                     .poll = e1000_poll_rx};
-
-void e1000_driver_init(void) {
-  log_write("e1000: initialising", KERNEL, LOG_INFO);
-  driver_register(&e1000_driver);
-}
+const struct driver e1000_driver = {.name = "e1000 Ethernet",
+                                    .bus = DEVICE_BUS_PCI,
+                                    .match = e1000_match,
+                                    .probe = e1000_probe,
+                                    .poll = e1000_poll_rx};
