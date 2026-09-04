@@ -23,7 +23,7 @@ if [ ! -f config.mak ]; then
         CC="${CC:-x86_64-elf-gcc}" \
         AR="${AR:-x86_64-elf-ar}" \
         RANLIB="${RANLIB:-x86_64-elf-ranlib}" \
-        CFLAGS="${CFLAGS:--ffreestanding -fno-pie -mno-red-zone -static}"
+        CFLAGS="${CFLAGS:--ffreestanding -fno-pie -mno-red-zone -static -DDEBUG}"
 fi
 
 if [ "$#" -eq 0 ]; then

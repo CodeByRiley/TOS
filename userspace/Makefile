@@ -12,7 +12,7 @@ USER_PE_CC   := x86_64-w64-mingw32-gcc
 USER_AS      := nasm
 USER_CFLAGS  := -ffreestanding -nostdlib -fno-pie -mno-red-zone -static \
                   -I . -I lib -I include -I ../kernel -O2 -Wall -Wextra -std=gnu23 \
-                  -MMD -MP
+                  -MMD -MP -DDEBUG
 USER_LDFLAGS := -nostdlib -static -T lib/user.ld
 BUILD_DOOM ?= 0
 SHOW_DOOM_INFO ?= 0
@@ -29,7 +29,7 @@ BUILD_NETSURF ?= 0
 # it keeps the section count down to what the loader has to walk.
 PE_CFLAGS := -ffreestanding -nostdlib -fno-pie -mno-red-zone -static \
 							-fno-asynchronous-unwind-tables \
-              -I . -I lib -I include -I ../kernel -O2 -Wall -Wextra -std=gnu23
+              -I . -I lib -I include -I ../kernel -O2 -Wall -Wextra -std=gnu23 -DDEBUG
 
 # mingw counterparts of crt0.s and syscall.s; everything else is the same
 # source the ELF build uses.
@@ -134,7 +134,7 @@ MUSL_INC    := -nostdinc \
 MUSL_CFLAGS := -ffreestanding -nostdlib -fno-pie -mno-red-zone -static \
                -O2 -Wall -Wextra -std=gnu11 \
                $(MUSL_INC) -I . -I lib -I include -I ../kernel \
-               -DTOS_USE_MUSL
+               -DTOS_USE_MUSL -DDEBUG
 
 # thread.elf stays on the hand-rolled lib: it drives TOS's own thread
 # syscalls (SYS_THREAD_CREATE/EXIT/JOIN), and musl's pthreads issue

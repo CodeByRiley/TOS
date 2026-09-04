@@ -6,7 +6,7 @@
 *.elf
 diff.txt
 diff.diff
-
+ArchitectureReview.html
 
 # Language server configuration
 .asm-lsp.toml

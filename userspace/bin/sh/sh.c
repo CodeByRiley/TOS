@@ -16,38 +16,38 @@
  *   - TAB completes command names from PATH or files from the current dir.
  */
 // #region INCLUDES
-#include <lib/syscall.h>
-#include <lib/keymap.h>
-#include <lib/console.h>
-#include <lib/process.h>
 #include <include/key_codes.h>
-#include <utilities/types.h>
+#include <lib/console.h>
+#include <lib/keymap.h>
+#include <lib/process.h>
+#include <lib/syscall.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <utilities/types.h>
 // #endregion INCLUDES
-
 
 // #region PRINTF WRAPPER
 /* Local printf bound to the console (not stdout) so anything writing to
  * fd 1 elsewhere doesn't mix into the shell's UI. */
 static int sh_printf(const char *fmt, ...) {
-    char buf[512];
-    va_list ap; va_start(ap, fmt);
-    int r = vsnprintf(buf, sizeof(buf), fmt, ap);
-    va_end(ap);
-    console_write(buf, r);
-    return r;
+  char buf[512];
+  va_list ap;
+  va_start(ap, fmt);
+  int r = vsnprintf(buf, sizeof(buf), fmt, ap);
+  va_end(ap);
+  console_write(buf, r);
+  return r;
 }
-#define printf  sh_printf
+#define printf sh_printf
 #define con_out(s, n) console_write((s), (n))
 // #endregion PRINTF WRAPPER
 
 // #region GLOBALS
 #define LINE_MAX 512
 #define EXEC_PATH_MAX 256
-#define EXEC_DIR_MAX  256
+#define EXEC_DIR_MAX 256
 
 #define DEFAULT_EXEC_PATH "/bin:/usr/bin:/usr/local/bin:/system/bin"
 
@@ -56,52 +56,52 @@ static char exec_path[EXEC_PATH_MAX] = DEFAULT_EXEC_PATH;
 /* Read one colon-delimited PATH component. Empty components mean the current
  * directory, matching the usual Unix PATH convention. */
 static int path_next(const char *path, int *cursor, char *out, int max) {
-    if (!path || !cursor || *cursor < 0 || !out || max < 2)
-        return 0;
+  if (!path || !cursor || *cursor < 0 || !out || max < 2)
+    return 0;
 
-    int i = *cursor;
-    int n = 0;
-    int overflow = 0;
-    while (path[i] && path[i] != ':') {
-        if (n + 1 < max)
-            out[n++] = path[i];
-        else
-            overflow = 1;
-        i++;
-    }
-    *cursor = path[i] == ':' ? i + 1 : -1;
+  int i = *cursor;
+  int n = 0;
+  int overflow = 0;
+  while (path[i] && path[i] != ':') {
+    if (n + 1 < max)
+      out[n++] = path[i];
+    else
+      overflow = 1;
+    i++;
+  }
+  *cursor = path[i] == ':' ? i + 1 : -1;
 
-    if (n == 0)
-        out[n++] = '.';
-    out[n] = 0;
-    return overflow ? -1 : 1;
+  if (n == 0)
+    out[n++] = '.';
+  out[n] = 0;
+  return overflow ? -1 : 1;
 }
 
 static int set_exec_path(const char *value) {
-    int n = 0;
-    if (!value)
-        return -1;
-    while (value[n]) {
-        if (n + 1 >= EXEC_PATH_MAX)
-            return -1;
-        n++;
-    }
-    for (int i = 0; i <= n; i++)
-        exec_path[i] = value[i];
-    return 0;
+  int n = 0;
+  if (!value)
+    return -1;
+  while (value[n]) {
+    if (n + 1 >= EXEC_PATH_MAX)
+      return -1;
+    n++;
+  }
+  for (int i = 0; i <= n; i++)
+    exec_path[i] = value[i];
+  return 0;
 }
 
 /* Returns 0 for a normal word, 1 for an accepted PATH assignment, and -1
  * for a PATH assignment that did not fit. */
 static int apply_path_assignment(const char *word) {
-    static const char prefix[] = "PATH=";
-    if (!word)
-        return 0;
-    for (int i = 0; prefix[i]; i++) {
-        if (word[i] != prefix[i])
-            return 0;
-    }
-    return set_exec_path(word + sizeof(prefix) - 1) == 0 ? 1 : -1;
+  static const char prefix[] = "PATH=";
+  if (!word)
+    return 0;
+  for (int i = 0; prefix[i]; i++) {
+    if (word[i] != prefix[i])
+      return 0;
+  }
+  return set_exec_path(word + sizeof(prefix) - 1) == 0 ? 1 : -1;
 }
 // #endregion GLOBALS
 
@@ -118,202 +118,216 @@ static int apply_path_assignment(const char *word) {
  * there is no modifier state to track here. Ctrl+-/Ctrl+= console zoom is
  * handled by winman for the same reason: raw keycodes never reach us. */
 static char read_char(void) {
-    static char buf[32];
-    static int  have = 0;
-    static int  next = 0;
+  static char buf[32];
+  static int have = 0;
+  static int next = 0;
 
-    while (1) {
-        if (next < have)
-            return buf[next++];
+  while (1) {
+    if (next < have)
+      return buf[next++];
 
-        long n = tty_read_input(buf, sizeof(buf));
-        if (n > 0) {
-            have = (int)n;
-            next = 0;
-            continue;
-        }
-        have = next = 0;
-        sleep_ticks(1);
+    long n = tty_read_input(buf, sizeof(buf));
+    if (n > 0) {
+      have = (int)n;
+      next = 0;
+      continue;
     }
+    have = next = 0;
+    sleep_ticks(1);
+  }
 }
 
 // #endregion KEYBOARD INPUT
 
 // #region TAB COMPLETION
 #define COMP_MAX_MATCHES 32
-#define COMP_NAME_MAX    64
+#define COMP_NAME_MAX 64
 
 /* Cache across consecutive TAB presses so cycling matches doesn't rescan
  * the filesystem. Invalidated by any non-TAB key (read_line clears it). */
 static char comp_matches[COMP_MAX_MATCHES][COMP_NAME_MAX];
-static int  comp_count = 0;
-static int  comp_index = 0;
-static int  comp_word_len = 0;       /* length of word that was replaced */
+static int comp_count = 0;
+static int comp_index = 0;
+static int comp_word_len = 0; /* length of word that was replaced */
 
 /* Index of first character of the last whitespace-delimited word in
  * buf[0..n]. */
 static int word_start(const char *buf, int n) {
-    int i = n;
-    while (i > 0 && buf[i - 1] != ' ' && buf[i - 1] != '\t') i--;
-    return i;
+  int i = n;
+  while (i > 0 && buf[i - 1] != ' ' && buf[i - 1] != '\t')
+    i--;
+  return i;
 }
 
 static int is_command_word(const char *buf, int word_offset) {
-    for (int i = 0; i < word_offset; i++) {
-        if (buf[i] != ' ' && buf[i] != '\t')
-            return 0;
-    }
-    return 1;
+  for (int i = 0; i < word_offset; i++) {
+    if (buf[i] != ' ' && buf[i] != '\t')
+      return 0;
+  }
+  return 1;
 }
 
 /* Case-insensitive prefix match. plen passed separately so prefix can be
  * a substring of buf without a NUL boundary. */
 static int starts_with_ci(const char *name, const char *prefix, int plen) {
-    for (int i = 0; i < plen; i++) {
-        char a = name[i];
-        char b = prefix[i];
-        if (!a) return 0;
-        if (a >= 'A' && a <= 'Z') a = (char)(a + 32);
-        if (b >= 'A' && b <= 'Z') b = (char)(b + 32);
-        if (a != b) return 0;
-    }
-    return 1;
+  for (int i = 0; i < plen; i++) {
+    char a = name[i];
+    char b = prefix[i];
+    if (!a)
+      return 0;
+    if (a >= 'A' && a <= 'Z')
+      a = (char)(a + 32);
+    if (b >= 'A' && b <= 'Z')
+      b = (char)(b + 32);
+    if (a != b)
+      return 0;
+  }
+  return 1;
 }
 
 static int ends_with_ci(const char *name, int length, const char *suffix) {
-    int suffix_len = (int)strlen(suffix);
-    if (length < suffix_len)
-        return 0;
-    for (int i = 0; i < suffix_len; i++) {
-        char a = name[length - suffix_len + i];
-        char b = suffix[i];
-        if (a >= 'A' && a <= 'Z') a = (char)(a + 32);
-        if (b >= 'A' && b <= 'Z') b = (char)(b + 32);
-        if (a != b)
-            return 0;
-    }
-    return 1;
+  int suffix_len = (int)strlen(suffix);
+  if (length < suffix_len)
+    return 0;
+  for (int i = 0; i < suffix_len; i++) {
+    char a = name[length - suffix_len + i];
+    char b = suffix[i];
+    if (a >= 'A' && a <= 'Z')
+      a = (char)(a + 32);
+    if (b >= 'A' && b <= 'Z')
+      b = (char)(b + 32);
+    if (a != b)
+      return 0;
+  }
+  return 1;
 }
 
 static int comp_contains(const char *name, int length) {
-    for (int i = 0; i < comp_count; i++) {
-        if ((int)strlen(comp_matches[i]) != length)
-            continue;
-        int same = 1;
-        for (int j = 0; j < length; j++) {
-            if (comp_matches[i][j] != name[j]) {
-                same = 0;
-                break;
-            }
-        }
-        if (same)
-            return 1;
+  for (int i = 0; i < comp_count; i++) {
+    if ((int)strlen(comp_matches[i]) != length)
+      continue;
+    int same = 1;
+    for (int j = 0; j < length; j++) {
+      if (comp_matches[i][j] != name[j]) {
+        same = 0;
+        break;
+      }
     }
-    return 0;
+    if (same)
+      return 1;
+  }
+  return 0;
 }
 
 static void comp_add(const char *name, int length, const char *prefix,
                      int prefix_len) {
-    if (comp_count >= COMP_MAX_MATCHES || length <= 0 ||
-        length >= COMP_NAME_MAX || prefix_len > length ||
-        !starts_with_ci(name, prefix, prefix_len) ||
-        comp_contains(name, length))
-        return;
-    for (int i = 0; i < length; i++)
-        comp_matches[comp_count][i] = name[i];
-    comp_matches[comp_count][length] = 0;
-    comp_count++;
+  if (comp_count >= COMP_MAX_MATCHES || length <= 0 ||
+      length >= COMP_NAME_MAX || prefix_len > length ||
+      !starts_with_ci(name, prefix, prefix_len) || comp_contains(name, length))
+    return;
+  for (int i = 0; i < length; i++)
+    comp_matches[comp_count][i] = name[i];
+  comp_matches[comp_count][length] = 0;
+  comp_count++;
 }
 
 static void comp_scan_dir(const char *dir, const char *prefix, int prefix_len,
                           int commands_only) {
-    char     dbuf[512];
-    unsigned idx = 0;
-    while (comp_count < COMP_MAX_MATCHES) {
-        long n = readdir_path(dir, &idx, dbuf, sizeof(dbuf));
-        if (n <= 0) break;
-        long off = 0;
-        while (off < n && comp_count < COMP_MAX_MATCHES) {
-            const char *name = dbuf + off;
-            int nl = (int)strlen(name);
-            int display_len = nl;
-            if (commands_only) {
-                if (ends_with_ci(name, nl, ".elf") ||
-                    ends_with_ci(name, nl, ".exe"))
-                    display_len -= 4;
-                else
-                    display_len = 0;
-            }
-            comp_add(name, display_len, prefix, prefix_len);
-            off += (long)nl + 1;
-        }
+  char dbuf[512];
+  unsigned idx = 0;
+  while (comp_count < COMP_MAX_MATCHES) {
+    long n = readdir_path(dir, &idx, dbuf, sizeof(dbuf));
+    if (n <= 0)
+      break;
+    long off = 0;
+    while (off < n && comp_count < COMP_MAX_MATCHES) {
+      const char *name = dbuf + off;
+      int nl = (int)strlen(name);
+      int display_len = nl;
+      if (commands_only) {
+        if (ends_with_ci(name, nl, ".elf") || ends_with_ci(name, nl, ".exe"))
+          display_len -= 4;
+        else
+          display_len = 0;
+      }
+      comp_add(name, display_len, prefix, prefix_len);
+      off += (long)nl + 1;
     }
+  }
 }
 
 /* Command words come from PATH and have their executable suffix hidden.
  * Other words retain ordinary current-directory filename completion. */
 static void comp_scan(const char *prefix, int prefix_len, int command_word) {
-    comp_count = 0;
-    comp_index = 0;
+  comp_count = 0;
+  comp_index = 0;
 
-    if (!command_word) {
-        comp_scan_dir(".", prefix, prefix_len, 0);
-        return;
-    }
+  if (!command_word) {
+    comp_scan_dir(".", prefix, prefix_len, 0);
+    return;
+  }
 
-    int cursor = 0;
-    char dir[EXEC_DIR_MAX];
-    int status;
-    while ((status = path_next(exec_path, &cursor, dir, sizeof(dir))) != 0) {
-        if (status > 0)
-            comp_scan_dir(dir, prefix, prefix_len, 1);
-    }
+  int cursor = 0;
+  char dir[EXEC_DIR_MAX];
+  int status;
+  while ((status = path_next(exec_path, &cursor, dir, sizeof(dir))) != 0) {
+    if (status > 0)
+      comp_scan_dir(dir, prefix, prefix_len, 1);
+  }
 }
 
 /* Erase the previously-completed word from buf and the screen, then write
  * comp_matches[comp_index] in its place. */
 static void comp_apply(char *buf, int *n_ptr, int max) {
-    int n     = *n_ptr;
-    int wstart = n - comp_word_len;
-    if (wstart < 0) wstart = 0;
+  int n = *n_ptr;
+  int wstart = n - comp_word_len;
+  if (wstart < 0)
+    wstart = 0;
 
-    for (int i = 0; i < comp_word_len; i++) console_puts("\b \b");
+  for (int i = 0; i < comp_word_len; i++)
+    console_puts("\b \b");
 
-    const char *m  = comp_matches[comp_index];
-    int         ml = (int)strlen(m);
-    if (wstart + ml >= max) ml = max - wstart - 1;
-    if (ml < 0) ml = 0;
+  const char *m = comp_matches[comp_index];
+  int ml = (int)strlen(m);
+  if (wstart + ml >= max)
+    ml = max - wstart - 1;
+  if (ml < 0)
+    ml = 0;
 
-    for (int i = 0; i < ml; i++) {
-        buf[wstart + i] = m[i];
-        console_putc(m[i]);
-    }
-    *n_ptr        = wstart + ml;
-    comp_word_len = ml;
+  for (int i = 0; i < ml; i++) {
+    buf[wstart + i] = m[i];
+    console_putc(m[i]);
+  }
+  *n_ptr = wstart + ml;
+  comp_word_len = ml;
 }
 
 /* TAB handler. First press snapshots the word and scans the FS; further
  * consecutive presses (no other input in between) cycle the match list. */
 static void handle_tab(char *buf, int *n_ptr, int max, int continuing) {
-    int n = *n_ptr;
-    if (!continuing) {
-        int ws  = word_start(buf, n);
-        int wl  = n - ws;
-        char prefix[COMP_NAME_MAX];
-        if (wl >= COMP_NAME_MAX) wl = COMP_NAME_MAX - 1;
-        for (int i = 0; i < wl; i++) prefix[i] = buf[ws + i];
-        prefix[wl] = 0;
+  int n = *n_ptr;
+  if (!continuing) {
+    int ws = word_start(buf, n);
+    int wl = n - ws;
+    char prefix[COMP_NAME_MAX];
+    if (wl >= COMP_NAME_MAX)
+      wl = COMP_NAME_MAX - 1;
+    for (int i = 0; i < wl; i++)
+      prefix[i] = buf[ws + i];
+    prefix[wl] = 0;
 
-        comp_word_len = wl;
-        comp_scan(prefix, wl, is_command_word(buf, ws));
-        if (comp_count == 0) return;     /* no matches; leave buf as-is */
-        comp_index = 0;
-        comp_apply(buf, n_ptr, max);
-    } else {
-        if (comp_count == 0) return;
-        comp_index = (comp_index + 1) % comp_count;
-        comp_apply(buf, n_ptr, max);
-    }
+    comp_word_len = wl;
+    comp_scan(prefix, wl, is_command_word(buf, ws));
+    if (comp_count == 0)
+      return; /* no matches; leave buf as-is */
+    comp_index = 0;
+    comp_apply(buf, n_ptr, max);
+  } else {
+    if (comp_count == 0)
+      return;
+    comp_index = (comp_index + 1) % comp_count;
+    comp_apply(buf, n_ptr, max);
+  }
 }
 
 // #endregion TAB COMPLETION
@@ -322,33 +336,34 @@ static void handle_tab(char *buf, int *n_ptr, int max, int continuing) {
 /* Read a line into buf. Handles backspace + TAB locally; returns length
  * (excluding the trailing NUL). Echoes characters as it goes. */
 static int read_line(char *buf, int max) {
-    int n            = 0;
-    int last_was_tab = 0;
-    while (1) {
-        char c = read_char();
-        if (c != '\t') last_was_tab = 0;
-        if (c == '\n') {
-            console_putc('\n');
-            buf[n] = 0;
-            return n;
-        }
-        if (c == '\b') {
-            if (n > 0) {
-                n--;
-                console_puts("\b \b");
-            }
-            continue;
-        }
-        if (c == '\t') {
-            handle_tab(buf, &n, max, last_was_tab);
-            last_was_tab = 1;
-            continue;
-        }
-        if (n + 1 < max) {
-            buf[n++] = c;
-            console_putc(c);
-        }
+  int n = 0;
+  int last_was_tab = 0;
+  while (1) {
+    char c = read_char();
+    if (c != '\t')
+      last_was_tab = 0;
+    if (c == '\n') {
+      console_putc('\n');
+      buf[n] = 0;
+      return n;
     }
+    if (c == '\b') {
+      if (n > 0) {
+        n--;
+        console_puts("\b \b");
+      }
+      continue;
+    }
+    if (c == '\t') {
+      handle_tab(buf, &n, max, last_was_tab);
+      last_was_tab = 1;
+      continue;
+    }
+    if (n + 1 < max) {
+      buf[n++] = c;
+      console_putc(c);
+    }
+  }
 }
 
 // #endregion LINE INPUT
@@ -357,16 +372,22 @@ static int read_line(char *buf, int max) {
 /* Split `line` into argv-style tokens in place. Pointers in argv alias
  * into line, which is modified (NUL inserted at each separator). */
 static int tokenize(char *line, char **argv, int max) {
-    int argc = 0;
-    char *p = line;
-    while (*p && argc < max) {
-        while (*p == ' ' || *p == '\t') p++;
-        if (!*p) break;
-        argv[argc++] = p;
-        while (*p && *p != ' ' && *p != '\t') p++;
-        if (*p) { *p = 0; p++; }
+  int argc = 0;
+  char *p = line;
+  while (*p && argc < max) {
+    while (*p == ' ' || *p == '\t')
+      p++;
+    if (!*p)
+      break;
+    argv[argc++] = p;
+    while (*p && *p != ' ' && *p != '\t')
+      p++;
+    if (*p) {
+      *p = 0;
+      p++;
     }
-    return argc;
+  }
+  return argc;
 }
 
 // #endregion TOKENIZER
@@ -374,9 +395,9 @@ static int tokenize(char *line, char **argv, int max) {
 // #region BUILT-INS
 
 struct builtin {
-    const char *name;
-    const char *usage;
-    int (*fn)(int argc, char **argv);
+  const char *name;
+  const char *usage;
+  int (*fn)(int argc, char **argv);
 };
 
 static int builtin_help(int argc, char **argv);
@@ -392,139 +413,177 @@ static int builtin_exit(int argc, char **argv);
 static int builtin_cd(int argc, char **argv);
 static int builtin_pwd(int argc, char **argv);
 static int builtin_export(int argc, char **argv);
-
+static int builtin_fault(int argc, char **argv);
 static const struct builtin builtins[] = {
-    { "help",     "help",                       builtin_help },
-    { "clear",    "clear",                      builtin_clear },
-    { "exit",     "exit",                       builtin_exit },
-    { "run",      "run PATH[.elf] [ARG...] [&]", builtin_run },
-    { "mkdir",    "mkdir DIR",                  builtin_mkdir },
-    { "rm",       "rm FILE",                    builtin_rm },
-    { "echo",     "echo TEXT...",               builtin_echo },
-    { "write",    "write FILE TEXT...",         builtin_write },
-    { "test",     "test",                       builtin_test },
-    { "fdnstest", "fdnstest",                   builtin_fdnstest },
-    { "cd",  "cd DIR", builtin_cd },
-    { "pwd", "pwd",    builtin_pwd },
-    { "export", "export PATH=DIR[:DIR...]", builtin_export },
-    { 0, 0, 0 },
+    {"help", "help", builtin_help},
+    {"clear", "clear", builtin_clear},
+    {"exit", "exit", builtin_exit},
+    {"run", "run PATH[.elf] [ARG...] [&]", builtin_run},
+    {"mkdir", "mkdir DIR", builtin_mkdir},
+    {"rm", "rm FILE", builtin_rm},
+    {"echo", "echo TEXT...", builtin_echo},
+    {"write", "write FILE TEXT...", builtin_write},
+    {"test", "test", builtin_test},
+    {"fdnstest", "fdnstest", builtin_fdnstest},
+    {"fault", "fault", builtin_fault},
+    {"cd", "cd DIR", builtin_cd},
+    {"pwd", "pwd", builtin_pwd},
+    {"export", "export PATH=DIR[:DIR...]", builtin_export},
+    {0, 0, 0},
 };
 
 static int shell_should_exit = 0;
 
 static const struct builtin *find_builtin(const char *name) {
-    for (int i = 0; builtins[i].name; i++) {
-        if (strcmp(name, builtins[i].name) == 0)
-            return &builtins[i];
-    }
-    return 0;
+  for (int i = 0; builtins[i].name; i++) {
+    if (strcmp(name, builtins[i].name) == 0)
+      return &builtins[i];
+  }
+  return 0;
 }
 
 static int builtin_help(int argc, char **argv) {
-    (void)argc;
-    (void)argv;
+  (void)argc;
+  (void)argv;
 
-    printf("builtins:\n");
-    for (int i = 0; builtins[i].name; i++)
-        printf("  %s\n", builtins[i].usage);
-    printf("external programs: type an ELF basename or path\n");
-    return 0;
+  printf("builtins:\n");
+  for (int i = 0; builtins[i].name; i++)
+    printf("  %s\n", builtins[i].usage);
+  printf("external programs: type an ELF basename or path\n");
+  return 0;
 }
 
 static int builtin_mkdir(int argc, char **argv) {
-    if (argc < 2) { printf("usage: mkdir DIR\n"); return 1; }
-    if (mkdir_path(argv[1]) != 0)
-        printf("mkdir: %s: failed\n", argv[1]);
-    return 0;
+  if (argc < 2) {
+    printf("usage: mkdir DIR\n");
+    return 1;
+  }
+  if (mkdir_path(argv[1]) != 0)
+    printf("mkdir: %s: failed\n", argv[1]);
+  return 0;
 }
 
 static int builtin_echo(int argc, char **argv) {
-    for (int i = 1; i < argc; i++) {
-        if (i > 1) console_putc(' ');
-        console_puts(argv[i]);
-    }
-    console_putc('\n');
-    return 0;
+  for (int i = 1; i < argc; i++) {
+    if (i > 1)
+      console_putc(' ');
+    console_puts(argv[i]);
+  }
+  console_putc('\n');
+  return 0;
 }
 
 static int builtin_write(int argc, char **argv) {
-    if (argc < 3) { printf("usage: write FILE TEXT...\n"); return 1; }
-    FILE *fp = fopen(argv[1], "w");
-    if (!fp) { printf("write: %s: open failed\n", argv[1]); return 1; }
-    for (int i = 2; i < argc; i++) {
-        if (i > 2) fwrite(" ", 1, 1, fp);
-        fwrite(argv[i], 1, strlen(argv[i]), fp);
-    }
-    fwrite("\n", 1, 1, fp);
-    fclose(fp);
-    return 0;
+  if (argc < 3) {
+    printf("usage: write FILE TEXT...\n");
+    return 1;
+  }
+  FILE *fp = fopen(argv[1], "w");
+  if (!fp) {
+    printf("write: %s: open failed\n", argv[1]);
+    return 1;
+  }
+  for (int i = 2; i < argc; i++) {
+    if (i > 2)
+      fwrite(" ", 1, 1, fp);
+    fwrite(argv[i], 1, strlen(argv[i]), fp);
+  }
+  fwrite("\n", 1, 1, fp);
+  fclose(fp);
+  return 0;
 }
 
 static int builtin_rm(int argc, char **argv) {
-    if (argc < 2) { printf("usage: rm FILE\n"); return 1; }
-    if (unlink(argv[1]) != 0) {
-        printf("rm: %s: not found\n", argv[1]);
-        return 1;
-    }
-    return 0;
+  if (argc < 2) {
+    printf("usage: rm FILE\n");
+    return 1;
+  }
+  if (unlink(argv[1]) != 0) {
+    printf("rm: %s: not found\n", argv[1]);
+    return 1;
+  }
+  return 0;
 }
 
 static int builtin_clear(int argc, char **argv) {
-    (void)argc;
-    (void)argv;
-    console_clear();
-    return 0;
+  (void)argc;
+  (void)argv;
+  console_clear();
+  return 0;
 }
 
 static int builtin_exit(int argc, char **argv) {
-    (void)argc;
-    (void)argv;
-    shell_should_exit = 1;
-    return 0;
+  (void)argc;
+  (void)argv;
+  shell_should_exit = 1;
+  return 0;
 }
 
 static int builtin_cd(int argc, char **argv) {
-    const char *path = argc > 1 ? argv[1] : "/";
-    if (chdir(path) != 0) {
-        printf("cd: %s: failed\n", path);
-        return 1;
-    }
-    return 0;
+  const char *path = argc > 1 ? argv[1] : "/";
+  if (chdir(path) != 0) {
+    printf("cd: %s: failed\n", path);
+    return 1;
+  }
+  return 0;
 }
 
 static int builtin_pwd(int argc, char **argv) {
-    (void)argc;
-    (void)argv;
+  (void)argc;
+  (void)argv;
 
-    char buf[256];
-    if (!getcwd(buf, sizeof(buf))) {
-        printf("pwd: failed\n");
-        return 1;
-    }
+  char buf[256];
+  if (!getcwd(buf, sizeof(buf))) {
+    printf("pwd: failed\n");
+    return 1;
+  }
 
-    printf("%s\n", buf);
-    return 0;
+  printf("%s\n", buf);
+  return 0;
 }
 
 static int builtin_export(int argc, char **argv) {
-    if (argc == 1) {
-        printf("PATH=%s\n", exec_path);
-        return 0;
-    }
-    if (argc != 2) {
-        printf("usage: export PATH=DIR[:DIR...]\n");
-        return 1;
-    }
-    int assignment = apply_path_assignment(argv[1]);
-    if (assignment == 0) {
-        printf("usage: export PATH=DIR[:DIR...]\n");
-        return 1;
-    }
-    if (assignment < 0) {
-        printf("export: PATH is too long\n");
-        return 1;
-    }
+  if (argc == 1) {
+    printf("PATH=%s\n", exec_path);
     return 0;
+  }
+  if (argc != 2) {
+    printf("usage: export PATH=DIR[:DIR...]\n");
+    return 1;
+  }
+  int assignment = apply_path_assignment(argv[1]);
+  if (assignment == 0) {
+    printf("usage: export PATH=DIR[:DIR...]\n");
+    return 1;
+  }
+  if (assignment < 0) {
+    printf("export: PATH is too long\n");
+    return 1;
+  }
+  return 0;
+}
+
+#ifdef DEBUG
+#warning "DEBUG is enabled"
+#else
+#warning "DEBUG is disabled"
+#endif
+
+static int builtin_fault(int argc, char **argv) {
+  (void)argc;
+  (void)argv;
+
+#ifndef DEBUG
+  printf("fault: only available in debug builds\n");
+  return 1;
+#else
+  printf("About to intentionally dereference a null pointer...\n");
+
+  volatile int *bad_ptr = (volatile int *)0;
+  *bad_ptr = 0xDEADBEEF;
+#endif
+
+  return 0;
 }
 
 // #endregion BUILT-INS
@@ -532,12 +591,12 @@ static int builtin_export(int argc, char **argv) {
 // #region EXEC
 
 static const char *path_basename(const char *path) {
-    const char *base = path;
-    for (const char *p = path; *p; p++) {
-        if (*p == '/' || *p == '\\')
-            base = p + 1;
-    }
-    return base;
+  const char *base = path;
+  for (const char *p = path; *p; p++) {
+    if (*p == '/' || *p == '\\')
+      base = p + 1;
+  }
+  return base;
 }
 
 /* Resolve argv[0] as an ELF path and run it.
@@ -552,164 +611,173 @@ static const char *path_basename(const char *path) {
  * windowed apps don't pin the prompt. The trailing `&` argv token sets
  * bg upstream. */
 static int exec_argv(int argc, char **argv, int bg) {
-    if (argc < 1 || !argv[0] || !argv[0][0]) return -1;
-    static char fixed[256];
-    if (process_resolve(argv[0], exec_path, fixed, sizeof(fixed)) != 0)
-        return -1;
+  if (argc < 1 || !argv[0] || !argv[0][0])
+    return -1;
+  static char fixed[256];
+  if (process_resolve(argv[0], exec_path, fixed, sizeof(fixed)) != 0)
+    return -1;
 
-    /* Lowercase base (sans extension) for child's argv[0]. */
-    const char *base = path_basename(fixed);
-    static char prog_name[16];
-    int  pn = 0;
-    while (pn < (int)sizeof(prog_name) - 1 && base[pn] && base[pn] != '.') {
-        char c = base[pn];
-        if (c >= 'A' && c <= 'Z') c += 32;
-        prog_name[pn] = c;
-        pn++;
-    }
-    prog_name[pn] = 0;
+  /* Lowercase base (sans extension) for child's argv[0]. */
+  const char *base = path_basename(fixed);
+  static char prog_name[16];
+  int pn = 0;
+  while (pn < (int)sizeof(prog_name) - 1 && base[pn] && base[pn] != '.') {
+    char c = base[pn];
+    if (c >= 'A' && c <= 'Z')
+      c += 32;
+    prog_name[pn] = c;
+    pn++;
+  }
+  prog_name[pn] = 0;
 
-    static char *child_argv[16];
-    int n = 0;
-    child_argv[n++] = prog_name;
-    for (int j = 1; j < argc && n < 15; j++) {
-        child_argv[n++] = argv[j];
-    }
-    child_argv[n] = 0;
+  static char *child_argv[16];
+  int n = 0;
+  child_argv[n++] = prog_name;
+  for (int j = 1; j < argc && n < 15; j++) {
+    child_argv[n++] = argv[j];
+  }
+  child_argv[n] = 0;
 
-    if (bg) {
-        long pid = spawn(fixed, child_argv);
-        if (pid < 0) {
-            printf("%s: spawn failed\n", fixed);
-            return -1;
-        }
-        printf("[%s pid=%d &]\n", fixed, (int)pid);
-        return 0;
+  if (bg) {
+    long pid = spawn(fixed, child_argv);
+    if (pid < 0) {
+      printf("%s: spawn failed\n", fixed);
+      return -1;
     }
-    long code = exec(fixed, child_argv);
-    //console_clear();
-    //printf("[%s exited %d]\n", fixed, (int)code);
+    printf("[%s pid=%d &]\n", fixed, (int)pid);
     return 0;
+  }
+  long code = exec(fixed, child_argv);
+  // console_clear();
+  // printf("[%s exited %d]\n", fixed, (int)code);
+  return 0;
 }
 
 /* `run PATH[.elf] [ARGS...] [&]` , explicit form. Strips the leading
  * "run" token and forwards the rest to exec_argv. */
 static int builtin_run(int argc, char **argv) {
-    if (argc < 2) { printf("usage: run PATH[.elf] [ARG...] [&]\n"); return 1; }
-    int bg = 0;
-    if (argc >= 2 && argv[argc - 1] && strcmp(argv[argc - 1], "&") == 0) {
-        bg = 1;
-        argc--;
-    }
-    return exec_argv(argc - 1, argv + 1, bg);
+  if (argc < 2) {
+    printf("usage: run PATH[.elf] [ARG...] [&]\n");
+    return 1;
+  }
+  int bg = 0;
+  if (argc >= 2 && argv[argc - 1] && strcmp(argv[argc - 1], "&") == 0) {
+    bg = 1;
+    argc--;
+  }
+  return exec_argv(argc - 1, argv + 1, bg);
 }
 
 static int builtin_test(int argc, char **argv) {
-    (void)argc;
-    (void)argv;
+  (void)argc;
+  (void)argv;
 
-    char a_buf[5] = {0};
-    char b_buf[5] = {0};
+  char a_buf[5] = {0};
+  char b_buf[5] = {0};
 
-    int a = (int)open("readme.txt", 0);
-    int b = (int)open("readme.txt", 0);
+  int a = (int)open("readme.txt", 0);
+  int b = (int)open("readme.txt", 0);
 
-    if (a < 0 || b < 0) {
-        printf("fdtest: open failed a=%d b=%d\n", a, b);
-        if (a >= 0) close(a);
-        if (b >= 0) close(b);
-        return 1;
-    }
+  if (a < 0 || b < 0) {
+    printf("fdtest: open failed a=%d b=%d\n", a, b);
+    if (a >= 0)
+      close(a);
+    if (b >= 0)
+      close(b);
+    return 1;
+  }
 
-    long ar = read(a, a_buf, 4);
-    long br = read(b, b_buf, 4);
+  long ar = read(a, a_buf, 4);
+  long br = read(b, b_buf, 4);
 
-    printf("fdtest: a='%s' b='%s'\n", a_buf, b_buf);
+  printf("fdtest: a='%s' b='%s'\n", a_buf, b_buf);
 
-    if (ar == 4 && br == 4 && strcmp(a_buf, b_buf) == 0) {
+  if (ar == 4 && br == 4 && strcmp(a_buf, b_buf) == 0) {
 
-        sh_printf("fdtest: PASS independent open offsets\n");
-    }
-    else {
-        sh_printf("fdtest: FAIL ar=%d br=%d\n", (int)ar, (int)br);
-    }
+    sh_printf("fdtest: PASS independent open offsets\n");
+  } else {
+    sh_printf("fdtest: FAIL ar=%d br=%d\n", (int)ar, (int)br);
+  }
 
-    close(a);
-    close(b);
-    return (ar == 4 && br == 4 && strcmp(a_buf, b_buf) == 0) ? 0 : 1;
+  close(a);
+  close(b);
+  return (ar == 4 && br == 4 && strcmp(a_buf, b_buf) == 0) ? 0 : 1;
 }
 
 static int builtin_fdnstest(int argc, char **argv) {
-    (void)argc;
-    (void)argv;
+  (void)argc;
+  (void)argv;
 
-    int parent_fd = (int)open("readme.txt", 0);
-    if (parent_fd < 0) {
-        printf("fdnstest: parent open failed\n");
-        return 1;
-    }
+  int parent_fd = (int)open("readme.txt", 0);
+  if (parent_fd < 0) {
+    printf("fdnstest: parent open failed\n");
+    return 1;
+  }
 
-    printf("fdnstest: parent fd=%d\n", parent_fd);
+  printf("fdnstest: parent fd=%d\n", parent_fd);
 
-    char *child_argv[] = { "fdchild", 0 };
-    long code = exec("/usr/bin/fdchild.elf", child_argv);
+  char *child_argv[] = {"fdchild", 0};
+  long code = exec("/usr/bin/fdchild.elf", child_argv);
 
-    printf("fdnstest: child exited %d\n", (int)code);
-    close(parent_fd);
-    return code == 0 ? 0 : 1;
+  printf("fdnstest: child exited %d\n", (int)code);
+  close(parent_fd);
+  return code == 0 ? 0 : 1;
 }
 
 // #endregion EXEC
 
 // #region MAIN
 int main(int argc, char **argv) {
-    (void)argc; (void)argv;
+  (void)argc;
+  (void)argv;
 
-    console_init();
-    sh_printf("shelf v0.1 - type 'help'\n");
+  console_init();
+  sh_printf("shelf v0.1 - type 'help'\n");
 
-    char  line[LINE_MAX];
-    char *targs[16];
+  char line[LINE_MAX];
+  char *targs[16];
 
-    while (1) {
-        console_puts("$ ");
-        int len = read_line(line, sizeof(line));
-        if (len == 0) continue;
+  while (1) {
+    console_puts("$ ");
+    int len = read_line(line, sizeof(line));
+    if (len == 0)
+      continue;
 
-        int  ac = tokenize(line, targs, 16);
-        if (ac == 0) continue;
-        char *cmd = targs[0];
+    int ac = tokenize(line, targs, 16);
+    if (ac == 0)
+      continue;
+    char *cmd = targs[0];
 
-        if (ac == 1) {
-            int assignment = apply_path_assignment(cmd);
-            if (assignment != 0) {
-                if (assignment < 0)
-                    printf("PATH: value is too long\n");
-                continue;
-            }
-        }
-
-        const struct builtin *builtin = find_builtin(cmd);
-        if (builtin) {
-            builtin->fn(ac, targs);
-            if (shell_should_exit) {
-                printf("exiting SHELF\n");
-                return 0;
-            }
-        } else {
-            /* No built-in matched , try filesystem lookup. A trailing
-             * `&` token means launch backgrounded via spawn(). */
-            int bg = 0;
-            int eff_ac = ac;
-            if (eff_ac >= 1 && targs[eff_ac - 1] &&
-                strcmp(targs[eff_ac - 1], "&") == 0) {
-                bg = 1;
-                eff_ac--;
-            }
-            if (exec_argv(eff_ac, targs, bg) != 0) {
-                printf("%s: command not found\n", cmd);
-            }
-        }
+    if (ac == 1) {
+      int assignment = apply_path_assignment(cmd);
+      if (assignment != 0) {
+        if (assignment < 0)
+          printf("PATH: value is too long\n");
+        continue;
+      }
     }
+
+    const struct builtin *builtin = find_builtin(cmd);
+    if (builtin) {
+      builtin->fn(ac, targs);
+      if (shell_should_exit) {
+        printf("exiting SHELF\n");
+        return 0;
+      }
+    } else {
+      /* No built-in matched , try filesystem lookup. A trailing
+       * `&` token means launch backgrounded via spawn(). */
+      int bg = 0;
+      int eff_ac = ac;
+      if (eff_ac >= 1 && targs[eff_ac - 1] &&
+          strcmp(targs[eff_ac - 1], "&") == 0) {
+        bg = 1;
+        eff_ac--;
+      }
+      if (exec_argv(eff_ac, targs, bg) != 0) {
+        printf("%s: command not found\n", cmd);
+      }
+    }
+  }
 }
 // #endregion MAIN
