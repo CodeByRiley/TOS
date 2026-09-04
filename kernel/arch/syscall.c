@@ -138,13 +138,6 @@ _Static_assert(SYSRET_STAR_BASE + 16 == (GDT_USER_CODE | GDT_RPL_USER),
 #define POLLERR 0x0008
 #define POLLNVAL 0x0020
 
-struct fb_info {
-  u64 width;
-  u64 height;
-  u64 pitch;
-  u64 bpp;
-};
-
 struct linux_iovec {
   void *base;
   u64 len;
@@ -749,7 +742,7 @@ static long sys_audio_write(const void *pcm, long bytes) {
   return sb16_stream_write(audio_caller_pid(), pcm, (u32)bytes);
 }
 
-static long sys_audio_status(struct audio_status_user *out) {
+static long sys_audio_status(struct audio_status *out) {
   if (!user_buffer_ok(out, sizeof(*out), 1))
     return SB16_STREAM_ERR_INVALID;
 
@@ -758,7 +751,7 @@ static long sys_audio_status(struct audio_status_user *out) {
   if (result != 0)
     return result;
 
-  *out = (struct audio_status_user){
+  *out = (struct audio_status){
       .available = status.available,
       .playing = status.playing,
       .paused = status.paused,
@@ -1827,36 +1820,7 @@ static long sys_getcwd(char *buf, usize size) {
   return (long)(uintptr_t)buf;
 }
 
-/* Userspace-visible proc_info layout. MUST match struct proc_info in
- * userspace/lib/syscall.h byte-for-byte. */
-struct proc_info_user {
-  u64 ticks_run;
-  int pid;
-  int parent_pid;
-  int state;
-  char name[16];
-};
-
-struct mem_stats_user {
-  u64 total_frames;
-  u64 used_frames;
-  u64 frame_size;
-};
-
-_Static_assert(sizeof(struct fb_info) == 32,
-               "fb_info userspace ABI must be four u64 fields");
-_Static_assert(sizeof(struct proc_info_user) == 40,
-               "proc_info_user userspace ABI must stay compact");
-_Static_assert(offsetof(struct proc_info_user, ticks_run) == 0,
-               "proc_info_user.ticks_run offset is userspace ABI");
-_Static_assert(offsetof(struct proc_info_user, pid) == 8,
-               "proc_info_user.pid offset is userspace ABI");
-_Static_assert(offsetof(struct proc_info_user, name) == 20,
-               "proc_info_user.name offset is userspace ABI");
-_Static_assert(sizeof(struct mem_stats_user) == 24,
-               "mem_stats_user userspace ABI must be three u64 fields");
-
-static long sys_proc_list(struct proc_info_user *out, long max) {
+static long sys_proc_list(struct proc_info *out, long max) {
   if (!out || max <= 0)
     return -1;
   if (max > 64)
@@ -1875,7 +1839,7 @@ static long sys_proc_list(struct proc_info_user *out, long max) {
   return n;
 }
 
-static long sys_mem_stats(struct mem_stats_user *out) {
+static long sys_mem_stats(struct mem_stats *out) {
   if (!out)
     return -1;
   out->total_frames = pmm_usable_frames();
@@ -1888,13 +1852,13 @@ static long sys_mem_stats(struct mem_stats_user *out) {
  * layer copies: it runs with the ring lock held and interrupts off, which
  * is no place to take a page fault. user_buffer_ok() faults the pages in
  * up front, so the copy underneath the lock only touches present pages. */
-static long sys_net_stats(struct netmon_stats_user *out) {
+static long sys_net_stats(struct net_stats *out) {
   if (!user_buffer_ok(out, sizeof(*out), 1))
     return -1;
   return netmon_read_stats(out);
 }
 
-static long sys_net_capture(u64 *cursor, struct netmon_frame_user *out,
+static long sys_net_capture(u64 *cursor, struct net_frame *out,
                             long max) {
   if (max <= 0)
     return -1;
@@ -2039,11 +2003,11 @@ static long sys_recvfrom(int fd, void *buf, usize len, int flags,
   return n;
 }
 
-static long sys_net_ping(struct net_ping_user *req) {
+static long sys_net_ping(struct net_ping *req) {
   if (!user_buffer_ok(req, sizeof(*req), 1))
     return -1;
 
-  struct net_ping_user local;
+  struct net_ping local;
   memcpy(&local, req, sizeof(local));
 
   if (local.timeout_ms == 0 || local.timeout_ms > 60000u)
@@ -2257,12 +2221,7 @@ long syscall_dispatch(struct syscall_frame *f) {
                            (char *)(uintptr_t)a3, (usize)a4);
     break;
   case SYS_SET_TID_ADDRESS:
-    if ((u64)a2 >= USER_VA_MIN && (u64)a3 >= USER_VA_MIN && a4 > 0) {
-      ret = sys_readdir_path((const char *)(uintptr_t)a1, (u32 *)(uintptr_t)a2,
-                             (char *)(uintptr_t)a3, (usize)a4);
-    } else {
-      ret = sys_set_tid_address((u64)(uintptr_t)a1);
-    }
+    ret = sys_set_tid_address((u64)(uintptr_t)a1);
     break;
   case SYS_CHDIR:
     ret = sys_chdir((const char *)(uintptr_t)a1);
@@ -2326,7 +2285,7 @@ long syscall_dispatch(struct syscall_frame *f) {
     ret = sys_audio_write((const void *)(uintptr_t)a1, a2);
     break;
   case SYS_AUDIO_STATUS:
-    ret = sys_audio_status((struct audio_status_user *)(uintptr_t)a1);
+    ret = sys_audio_status((struct audio_status *)(uintptr_t)a1);
     break;
   case SYS_AUDIO_DRAIN:
     ret = sys_audio_drain();
@@ -2445,10 +2404,10 @@ long syscall_dispatch(struct syscall_frame *f) {
     ret = sys_reboot((uintptr_t)a1);
     break;
   case SYS_PROC_LIST:
-    ret = sys_proc_list((struct proc_info_user *)(uintptr_t)a1, (long)a2);
+    ret = sys_proc_list((struct proc_info *)(uintptr_t)a1, (long)a2);
     break;
   case SYS_MEM_STATS:
-    ret = sys_mem_stats((struct mem_stats_user *)(uintptr_t)a1);
+    ret = sys_mem_stats((struct mem_stats *)(uintptr_t)a1);
     break;
   case SYS_CON_PUSH:
     ret = sys_con_push();
@@ -2463,12 +2422,11 @@ long syscall_dispatch(struct syscall_frame *f) {
     ret = sys_thread_exit();
     break;
   case SYS_THREAD_JOIN:
-    if ((u64)a1 >= USER_VA_MIN) {
-      ret = sys_linux_futex((u32 *)(uintptr_t)a1, (int)a2, (u32)a3,
-                            (const struct linux_timespec *)(uintptr_t)a4);
-    } else {
-      ret = sys_thread_join((uintptr_t)a1);
-    }
+    ret = sys_thread_join((uintptr_t)a1);
+    break;
+  case SYS_FUTEX:
+    ret = sys_linux_futex((u32 *)(uintptr_t)a1, (int)a2, (u32)a3,
+                          (const struct linux_timespec *)(uintptr_t)a4);
     break;
   case SYS_FUTEX_WAIT:
     ret = sys_futex_wait((u32 *)(uintptr_t)a1, (u32)a2);
@@ -2477,14 +2435,14 @@ long syscall_dispatch(struct syscall_frame *f) {
     ret = sys_futex_wake((u32 *)(uintptr_t)a1);
     break;
   case SYS_NET_STATS:
-    ret = sys_net_stats((struct netmon_stats_user *)(uintptr_t)a1);
+    ret = sys_net_stats((struct net_stats *)(uintptr_t)a1);
     break;
   case SYS_NET_CAPTURE:
     ret = sys_net_capture((u64 *)(uintptr_t)a1,
-                          (struct netmon_frame_user *)(uintptr_t)a2, (long)a3);
+                          (struct net_frame *)(uintptr_t)a2, (long)a3);
     break;
   case SYS_NET_PING:
-    ret = sys_net_ping((struct net_ping_user *)(uintptr_t)a1);
+    ret = sys_net_ping((struct net_ping *)(uintptr_t)a1);
     break;
   case SYS_SOCKET:
     ret = sys_socket((int)a1, (int)a2, (int)a3);

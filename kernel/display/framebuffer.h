@@ -16,16 +16,7 @@
 
 #include <stdint.h>
 #include <utilities/types.h>
-
-#define FB_PRESENT_MAX_RECTS 16
-
-/* Shared with userspace's syscall ABI. Coordinates and extents are pixels. */
-struct fb_rect {
-  u32 x, y, w, h;
-};
-
-_Static_assert(sizeof(struct fb_rect) == 16,
-               "fb_rect must match the userspace ABI");
+#include <arch/syscall_abi.h>
 
 /* Probe MB2 tag 8 and prep the contiguous-page backend. */
 int framebuffer_init(u64 mb2_addr);

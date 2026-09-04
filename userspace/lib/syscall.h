@@ -1,15 +1,11 @@
 /* userspace/lib/syscall.h , userspace syscall interface.
  *
- * All system call numbers, kernel-shared structs, and the C wrappers
+ * The shared syscall registry and payload structs, plus the C wrappers
  * that userspace apps call instead of writing `syscall0..6` directly.
  *
  * Sections:
- *   - SYS_* numbers           , must match kernel/arch/syscall.h dispatch table.
- *   - proc_info / mem_stats   , mirrors of kernel structs returned by
- *                                SYS_PROC_LIST and SYS_MEM_STATS.
- *   - msg / ipc_msg           , input-event and cross-process message
- *                                layouts. ipc_msg must match
- *                                kernel/msg/msg.h byte-for-byte.
+ *   - SYS_* numbers           , selected from kernel/arch/syscalls.def.
+ *   - syscall ABI payloads    , imported from kernel/arch/syscall_abi.h.
  *   - syscallN()              , raw register-passing trampolines.
  *   - libc-style wrappers     , typed helpers around the syscalls above.
  *
@@ -20,6 +16,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <arch/syscall_abi.h>
 
 #ifdef TOS_USE_MUSL
 /* Built against musl: the POSIX surface comes from the real headers, and
@@ -35,88 +32,22 @@
 
 /* ---------------- System-call numbers -----------------------------------
  *
- * Linux x86_64 numbers wherever the call means the same thing; TOS-only
- * calls take numbers Linux has not used. 13 (rt_sigaction) is deliberately
- * left free. */
-#define SYS_READ    		     	 0
-#define SYS_WRITE   		     	 1
-#define SYS_OPEN    		     	 2
-#define SYS_CLOSE   		     	 3
-#define SYS_STAT             	 4
-#define SYS_FSTAT            	 5
-#define SYS_POLL             	 7
-#define SYS_LSEEK   		     	 8
-#define SYS_MMAP    		     	 9
-#define SYS_MPROTECT         	 10
-#define SYS_MUNMAP           	 11
-#define SYS_BRK              	 12
-#define SYS_RT_SIGACTION     	 13
-#define SYS_IOCTL            	 16
-#define SYS_READV            	 19
-#define SYS_WRITEV           	 20
-#define SYS_NANOSLEEP        	 35
-#define SYS_LINUX_GETPID     	 39
-#define SYS_FCNTL            	 72
-#define SYS_GETCWD           	 79
-#define SYS_CHDIR            	 80
-#define SYS_RMDIR            	 84
-#define SYS_READDIR          	 217
-#define SYS_SET_TID_ADDRESS  	 218
-#define SYS_CLOCK_GETTIME    	 228
-#define SYS_EXIT_GROUP       	 231
-#define SYS_FSTATAT          	 262
+ * The kernel owns the registry. BOTH entries become this enum; Linux-only
+ * compatibility calls are intentionally absent because musl supplies those
+ * numbers itself. */
+enum syscall_number {
+#define SYSCALL_BOTH(name, number) SYS_##name = number,
+#define SYSCALL_KERNEL(name, number)
+#define SYSCALL_ALIAS_BOTH(name, target) SYS_##name = SYS_##target,
+#include <arch/syscalls.def>
+#undef SYSCALL_ALIAS_BOTH
+#undef SYSCALL_KERNEL
+#undef SYSCALL_BOTH
+};
 
-#define SYS_YIELD   	  	   	 24
-#define SYS_EXIT    	  	   	 60
-#define SYS_FB_INFO     	   	 1000
-#define SYS_FB_MAP      	   	 1001
-#define SYS_FB_DAMAGE   	   	 1002
-#define SYS_FB_PRESENT       	 1003
-#define SYS_FB_REGISTER      	 1004
-#define SYS_FB_UNREGISTER    	 1005
-#define SYS_KBD_POLL    	   	 1006
-#define SYS_GET_TICKS   	   	 1008
-#define SYS_EXEC        	   	 1020
-#define SYS_MSG_GET     	   	 1040
-#define SYS_MSG_PEEK    	   	 1041
-#define SYS_MOUSE_POS   	   	 1007
-#define SYS_CON_WRITE   	   	 1060
-#define SYS_CON_CLEAR   	   	 1061
-#define SYS_SLEEP_TICKS 	   	 1009
-#define SYS_GET_PID     	   	 39
-#define SYS_IPC_SEND         	 1042
-#define SYS_IPC_RECV         	 1043
-#define SYS_SHMEM_SHARE      	 1044
-#define SYS_SHMEM_UNSHARE    	 1045
-#define SYS_WM_REGISTER      	 1065
-#define SYS_WM_PID           	 1066
-#define SYS_TTY_DRAIN        	 1067
-#define SYS_TTY_INJECT         1068
-#define SYS_TTY_READ_INPUT     1069
-#define SYS_TTY_ALLOC          1070
-#define SYS_TTY_FREE           1071
-#define SYS_TTY_SPAWN          1072
-#define SYS_PROC_LIST        	 1022
-#define SYS_MEM_STATS        	 1023
-#define SYS_CON_PUSH         	 1062
-#define SYS_CON_POP          	 1063
-#define SYS_SPAWN            	 1021
-#define SYS_KILL             	 62
-#define SYS_UNAME            	 63
-#define SYS_CON_ZOOM         	 1064
-#define SYS_AUDIO_OPEN       	 1080
-#define SYS_AUDIO_WRITE      	 1081
-#define SYS_AUDIO_STATUS     	 1082
-#define SYS_AUDIO_DRAIN      	 1083
-#define SYS_AUDIO_CLOSE      	 1084
-#define SYS_AUDIO_SET_VOLUME 	 1085
-#define SYS_AUDIO_PAUSE      	 1086
-#define SYS_AUDIO_RESUME     	 1087
-#define SYS_ARCH_PRCTL          158
 #define ARCH_SET_FS         0x1002
 #define ARCH_GET_FS         0x1003
 
-#define AUDIO_FORMAT_S16_LE    1
 #define AUDIO_CHANNELS_STEREO  2
 
 #define AUDIO_ERR_NO_DEVICE    (-1)
@@ -124,25 +55,6 @@
 #define AUDIO_ERR_INVALID      (-3)
 #define AUDIO_ERR_NOT_OWNER    (-4)
 
-#define SYS_THREAD_CREATE  		 1100
-#define SYS_THREAD_EXIT    		 1101
-#define SYS_THREAD_JOIN	   		 1102
-#define SYS_FUTEX_WAIT     		 1103
-#define SYS_FUTEX_WAKE	   		 1104
-#define SYS_MKDIR          		 83
-#define SYS_UNLINK         		 87
-#define SYS_SHUTDOWN       		 1120
-#define SYS_REBOOT         		 1121
-#define SYS_READDIR_PATH     	 1122
-#define SYS_STAT_RAW         	 1123
-#define SYS_FSTAT_RAW        	 1124
-#define SYS_NET_STATS          1140
-#define SYS_NET_CAPTURE        1141
-#define SYS_NET_PING           1142
-/* TOS's index-based directory walk. Split off 217, which is now strictly
- * Linux getdents64 , the kernel used to pick between the two by guessing
- * whether the first argument looked like an fd. */
-#define SYS_READDIR_INDEX      1125
 /* ---------------- mmap / mprotect --------------------------------------
  *
  * Linux PROT_ and MAP_ values. Two deliberate deviations from Linux:
@@ -174,206 +86,12 @@
 #define MAP_FAILED      ((void *)-1)
 #endif
 
-/* ---------------- File metadata (SYS_STAT / SYS_FSTAT) ------------------ */
-/* Byte-for-byte mirror of kernel struct stat_user. libc's POSIX struct
- * stat is built from this in lib/stat.c. */
-#define STAT_TYPE_FILE 0
-#define STAT_TYPE_DIR  1
-
-struct stat_user {
-    uint64_t size;
-    uint64_t first_cluster;
-    uint32_t type;
-    uint32_t attr;
-};
-
-_Static_assert(sizeof(struct stat_user) == 24,
-               "stat_user must match kernel struct stat_user size");
-
-/* ---------------- Process inspection (SYS_PROC_LIST) -------------------- */
-/* Byte-for-byte mirror of kernel struct proc_info_user. */
-#define PROC_NAME_MAX 16
-struct proc_info {
-    uint64_t ticks_run;
-
-    int      pid;
-    int      parent_pid;
-    int      state;
-
-    char     name[PROC_NAME_MAX];
-};
-
-_Static_assert(sizeof(struct proc_info) == 40,
-               "proc_info must match kernel proc_info_user size");
-_Static_assert(offsetof(struct proc_info, ticks_run) == 0,
-               "proc_info.ticks_run offset must match kernel");
-_Static_assert(offsetof(struct proc_info, pid) == 8,
-               "proc_info.pid offset must match kernel");
-_Static_assert(offsetof(struct proc_info, name) == 20,
-               "proc_info.name offset must match kernel");
-
-/* Process state codes , must match enum task_state in kernel/sched/sched.h. */
-#define PROC_STATE_RUNNING  0
-#define PROC_STATE_BLOCKED  1
-#define PROC_STATE_ZOMBIE   2
-#define PROC_STATE_READY    3
-#define PROC_STATE_DEAD     4
-#define PROC_STATE_SLEEPING 5
-#define PROC_STATE_LOADING  6
-
-/* Physical memory accounting (SYS_MEM_STATS). */
-struct mem_stats {
-    uint64_t total_frames;
-    uint64_t used_frames;
-    uint64_t frame_size;
-};
-
-_Static_assert(sizeof(struct mem_stats) == 24,
-               "mem_stats must match kernel mem_stats_user size");
-
-/* ---------------- Network observation (SYS_NET_*) -----------------------
- *
- * Mirrors of kernel/net/netmon.h. These describe the NIC and what has
- * crossed it; there is deliberately no way to send or receive through
- * them, because there is no socket layer behind them yet. netmon.elf is
- * the only consumer.
- *
- * Only the first NET_FRAME_BYTES of a frame are captured, which covers
- * Ethernet plus an IPv4 and TCP/UDP header with room to spare. */
-#define NET_FRAME_BYTES   128
-#define NET_CAPTURE_BATCH  16
-
-#define NET_DIR_RX 0
-#define NET_DIR_TX 1
-
-struct net_frame {
-    uint64_t seq;       /* capture sequence, unique and monotonic */
-    uint64_t ticks;     /* scheduler ticks when captured          */
-    uint32_t length;    /* length on the wire                     */
-    uint32_t captured;  /* bytes present in data[]                */
-    uint32_t direction; /* NET_DIR_RX or NET_DIR_TX               */
-    uint32_t reserved;
-    uint8_t  data[NET_FRAME_BYTES];
-};
-
-struct net_stats {
-    uint64_t rx_frames;
-    uint64_t rx_bytes;
-    uint64_t tx_frames;
-    uint64_t tx_bytes;
-    uint64_t seq_next;    /* sequence the next frame will be given */
-    uint64_t seq_oldest;  /* oldest sequence still in the ring     */
-    uint8_t  mac[6];
-    uint8_t  ipv4[4];
-    uint32_t link_up;
-    uint32_t speed_mbps;
-    uint32_t present;     /* 0 when no NIC is bound                */
-    uint32_t ring_frames;
-};
-
-/* SYS_NET_PING argument block. Mirrors struct net_ping_user in
- * kernel/net/icmp.h; rtt_ms is written by the kernel and is meaningful
- * only when the call returns 0. */
-struct net_ping {
-    uint8_t  dst[4];
-    uint16_t ident;
-    uint16_t seq;
-    uint32_t timeout_ms;
-    uint32_t rtt_ms;    /* out */
-};
-
-_Static_assert(sizeof(struct net_ping) == 16,
-               "net_ping must match kernel net_ping_user size");
-
-_Static_assert(sizeof(struct net_frame) == 160,
-               "net_frame must match kernel netmon_frame_user size");
-_Static_assert(sizeof(struct net_stats) == 80,
-               "net_stats must match kernel netmon_stats_user size");
-
-/* PCM output status. ring_queued is data waiting in the kernel queue;
- * device_queued has already reached DMA but has not finished playing. */
-struct audio_status {
-    uint32_t available;
-    uint32_t playing;
-    uint32_t paused;
-    uint32_t sample_rate;
-    uint32_t channels;
-    uint32_t format;
-    uint32_t ring_capacity;
-    uint32_t ring_queued;
-    uint32_t device_queued;
-    uint32_t underruns;
-    uint32_t volume;
-    int32_t  owner_pid;
-};
-
-_Static_assert(sizeof(struct audio_status) == 48,
-               "audio_status must match the kernel ABI");
-
-/* ---------------- Input-event ring (SYS_MSG_GET/PEEK) ------------------- */
-#define MSG_NONE        0
-#define MSG_KEY_DOWN    1
-#define MSG_KEY_UP      2
-#define MSG_MOUSE_MOVE  3
-#define MSG_MOUSE_DOWN  4
-#define MSG_MOUSE_UP    5
-#define MSG_TIMER       6
-#define MSG_QUIT        7
-
+/* Mouse-button bits carried in struct msg.param. */
 #define MOUSE_BTN_LEFT    0x01
 #define MOUSE_BTN_RIGHT   0x02
 #define MOUSE_BTN_MIDDLE  0x04
 #define MOUSE_BTN_FORWARD 0x08
 #define MOUSE_BTN_BACK    0x10
-
-
-struct msg {
-    uint16_t type;    /* MSG_*                 */
-    uint16_t param;   /* keycode or btn mask   */
-    int16_t  x;
-    int16_t  y;
-    uint32_t when;    /* ticks                 */
-};
-
-_Static_assert(sizeof(struct msg) == 12,
-               "msg must match kernel struct msg size");
-
-/* ---------------- Cross-process IPC ------------------------------------- */
-/* Must match kernel kernel/msg/msg.h.
- *
- * Winman-specific IPC_WM_* type codes are declared in lib/wm.h alongside
- * the libwm client API. Codes 0x180..0x1FF are reserved for generic /
- * kernel-originated control messages; user-defined types start at 0x200. */
-#define IPC_PEER_EXITED				 0x180
-#define IPC_USER_FIRST         0x200
-
-struct ipc_msg {
-    uint32_t type;
-    uint32_t from_pid;   /* set by kernel on the receiver side */
-    int32_t  a, b, c, d;
-    uint64_t va;
-    uint32_t pitch;
-    uint32_t flags;
-    char     str[48];
-};
-
-_Static_assert(sizeof(struct ipc_msg) == 88,
-               "ipc_msg must match kernel struct ipc_msg size");
-
-/* ---------------- Framebuffer info -------------------------------------- */
-struct fb_info { uint64_t width, height, pitch, bpp; };
-
-_Static_assert(sizeof(struct fb_info) == 32,
-               "fb_info must match kernel fb_info size");
-
-#define FB_PRESENT_MAX_RECTS 16
-
-struct fb_rect {
-    uint32_t x, y, w, h;
-};
-
-_Static_assert(sizeof(struct fb_rect) == 16,
-               "fb_rect must match kernel fb_rect size");
 
 /* ---------------- Raw syscall trampolines -------------------------------
  *

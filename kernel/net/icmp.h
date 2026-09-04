@@ -15,6 +15,7 @@
 #include <utilities/types.h>
 #include <net/ipv4.h>
 #include <stdint.h>
+#include <arch/syscall_abi.h>
 
 #define ICMP_HDR_LEN 8
 #define ICMP_ECHO_REPLY 0U
@@ -37,18 +38,6 @@ struct icmp_hdr {
   u16 ident;
   u16 sequence;
 } PACKED;
-
-/* ---------------- Userspace ABI ----------------------------------------
- * Copied verbatim to and from user memory by SYS_NET_PING, so the layout
- * is ABI. The static assertion in icmp.c pins it. Mirrored as
- * struct net_ping in userspace/lib/syscall.h. */
-struct net_ping_user {
-  u8 dst[IPV4_ALEN];
-  u16 ident;
-  u16 seq;
-  u32 timeout_ms;
-  u32 rtt_ms; /* out: valid only when the call returns 0 */
-};
 
 /* Called by ipv4_input for IPPROTO_ICMP. `payload` is the ICMP message,
  * `len` its length; the IPv4 header is passed for the source address. */

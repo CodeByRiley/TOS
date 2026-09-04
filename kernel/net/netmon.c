@@ -11,16 +11,9 @@
 #include <sync/spinlock.h>
 #include <utilities/string.h>
 
-_Static_assert(sizeof(struct netmon_frame_user) == 160,
-               "netmon_frame_user layout is userspace ABI");
-_Static_assert(sizeof(struct netmon_stats_user) == 80,
-               "netmon_stats_user layout is userspace ABI");
-_Static_assert(offsetof(struct netmon_frame_user, data) == 32,
-               "netmon_frame_user.data offset is userspace ABI");
-
 static struct {
   struct spinlock lock;
-  struct netmon_frame_user ring[NETMON_RING_FRAMES];
+  struct net_frame ring[NETMON_RING_FRAMES];
   u64 seq_next;
   u64 rx_frames, rx_bytes;
   u64 tx_frames, tx_bytes;
@@ -63,7 +56,7 @@ void netmon_record(int direction, const void *frame, u32 length) {
 
   u64 flags = spin_lock_irqsave(&monitor.lock);
 
-  struct netmon_frame_user *slot =
+  struct net_frame *slot =
       &monitor.ring[monitor.seq_next % NETMON_RING_FRAMES];
   slot->seq = monitor.seq_next;
   slot->ticks = pit_ticks();
@@ -95,7 +88,7 @@ void netmon_record(int direction, const void *frame, u32 length) {
   spin_unlock_irqrestore(&monitor.lock, flags);
 }
 
-long netmon_read_stats(struct netmon_stats_user *out) {
+long netmon_read_stats(struct net_stats *out) {
   if (!out)
     return -1;
 
@@ -118,7 +111,7 @@ long netmon_read_stats(struct netmon_stats_user *out) {
   return 0;
 }
 
-long netmon_read_frames(u64 *cursor, struct netmon_frame_user *out,
+long netmon_read_frames(u64 *cursor, struct net_frame *out,
                         long max) {
   if (!cursor || !out || max <= 0)
     return -1;

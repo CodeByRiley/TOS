@@ -77,6 +77,16 @@ kernel, with three different budgets.
 
 ## Userspace
 
+**Syscall registry** , `kernel/arch/syscalls.def`: the one assignment of every
+syscall name to a number. **Both** entries are visible to libtos; **kernel**
+entries implement Linux-compatible calls that musl issues directly. Aliases
+are explicit. A number has one meaning: Linux futex is 202, while TOS thread
+join remains 1102.
+
+**Syscall payload** , a struct copied byte-for-byte across the ring boundary.
+All eleven live in `kernel/arch/syscall_abi.h`, included by both sides; there
+are no kernel/userspace mirror structs whose field order can drift.
+
 **Winman** , the desktop compositor, `userspace/bin/winman/`. Clients talk to
 it over IPC through **libwm** (`userspace/lib/wm.h`) and never see the wire
 protocol.

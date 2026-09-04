@@ -10,8 +10,8 @@
  *                       the winman <-> client protocol and for kernel-
  *                       originated notifications (peer-exited, etc.).
  *
- * Both struct sizes + key offsets are pinned with static_asserts because
- * they are part of the userspace ABI (mirror: userspace/lib/syscall.h).
+ * Both layouts live in arch/syscall_abi.h because the kernel and userspace
+ * copy them verbatim across the syscall boundary.
  *
  * Implementation: kernel/msg/msg.c.
  */
@@ -21,56 +21,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <utilities/types.h>
-
-/* --- Input event ring -------------------------------------------------- */
-
-#define MSG_NONE        0
-#define MSG_KEY_DOWN    1
-#define MSG_KEY_UP      2
-#define MSG_MOUSE_MOVE  3
-#define MSG_MOUSE_DOWN  4
-#define MSG_MOUSE_UP    5
-#define MSG_TIMER       6
-#define MSG_QUIT        7
-
-struct msg {
-    u16 type;     /* MSG_*                                          */
-    u16 param;    /* KEY_* keycode for key events; button mask for
-                          mouse-button events; unused for moves          */
-    int16_t  x;        /* mouse abs cursor X (or relative dx for KEY)    */
-    int16_t  y;        /* mouse abs cursor Y                             */
-    u32 when;     /* PIT ticks at post time                         */
-};
-
-_Static_assert(sizeof(struct msg) == 12,
-               "msg userspace ABI must stay 12 bytes");
-_Static_assert(offsetof(struct msg, when) == 8,
-               "msg.when offset is userspace ABI");
-
-/* Larger inter-process control message. Used for winman <-> client
- * protocol, kernel notifications, etc. Sender and recipient identified
- * by pid; kernel deep-copies the struct into the recipient's per-task
- * ring on SYS_IPC_SEND. */
-
-#define IPC_PEER_EXITED        0x180   /* kernel -> any: a=pid_that_exited   */
-#define IPC_USER_FIRST         0x200   /* userspace-defined ids start here   */
-
-struct ipc_msg {
-    u32 type;       /* IPC_*                                      */
-    u32 from_pid;   /* set by kernel on send                      */
-    int32_t  a, b, c, d; /* generic integer payload                    */
-    u64 va;         /* shared-memory va or 64-bit payload         */
-    u32 pitch;      /* surface pitch (bytes per row) on responses */
-    u32 flags;
-    char     str[48];    /* title / name / arbitrary short string      */
-};
-
-_Static_assert(sizeof(struct ipc_msg) == 88,
-               "ipc_msg userspace ABI must stay 88 bytes");
-_Static_assert(offsetof(struct ipc_msg, va) == 24,
-               "ipc_msg.va offset is userspace ABI");
-_Static_assert(offsetof(struct ipc_msg, str) == 40,
-               "ipc_msg.str offset is userspace ABI");
+#include <arch/syscall_abi.h>
 
 void msg_init(void);
 

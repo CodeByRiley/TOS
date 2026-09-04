@@ -20,8 +20,8 @@
  * what identifying traffic actually needs; full-length capture would cost
  * 24x the memory to show payload nobody is reading yet.
  *
- * Implementation: kernel/net/netmon.c. Userspace mirror of these two
- * structs: struct net_stats / struct net_frame in userspace/lib/syscall.h.
+ * Implementation: kernel/net/netmon.c. Shared syscall payloads live in
+ * arch/syscall_abi.h.
  */
 #ifndef NETMON_H
 #define NETMON_H
@@ -29,46 +29,14 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <utilities/types.h>
+#include <arch/syscall_abi.h>
 
 #define NETMON_RING_FRAMES 64
-#define NETMON_FRAME_BYTES 128
 
-/* Largest batch one SYS_NET_CAPTURE call will return. Bounds how long the
- * ring lock is held while copying into user memory. */
-#define NETMON_CAPTURE_BATCH 16
-
-#define NETMON_DIR_RX 0
-#define NETMON_DIR_TX 1
-
-/* ---------------- Userspace ABI ----------------------------------------
- * Both structs are copied verbatim into user memory, so their layout is
- * ABI. The static assertions in netmon.c pin it. */
-
-struct netmon_frame_user {
-  u64 seq;       /* capture sequence, unique and monotonic     */
-  u64 ticks;     /* scheduler ticks when captured              */
-  u32 length;    /* frame length on the wire                   */
-  u32 captured;  /* bytes actually in data[], <= length        */
-  u32 direction; /* NETMON_DIR_RX or NETMON_DIR_TX             */
-  u32 reserved;
-  u8  data[NETMON_FRAME_BYTES];
-};
-
-struct netmon_stats_user {
-  u64 rx_frames;
-  u64 rx_bytes;
-  u64 tx_frames;
-  u64 tx_bytes;
-  u64 seq_next;    /* sequence the next captured frame will get */
-  u64 seq_oldest;  /* oldest sequence still held in the ring    */
-  u8  mac[6];
-  u8  ipv4[4];
-  u32 link_up;
-  u32 speed_mbps;
-  u32 present;     /* 0 when no driver has called netmon_bind() */
-  u32 ring_frames; /* NETMON_RING_FRAMES, so callers need not
-                         * hardcode the capture depth                */
-};
+#define NETMON_FRAME_BYTES NET_FRAME_BYTES
+#define NETMON_CAPTURE_BATCH NET_CAPTURE_BATCH
+#define NETMON_DIR_RX NET_DIR_RX
+#define NETMON_DIR_TX NET_DIR_TX
 
 /* ---------------- Driver-facing ---------------------------------------- */
 
@@ -86,12 +54,12 @@ void netmon_record(int direction, const void *frame, u32 length);
 
 /* Both write straight into user memory, which the caller must have
  * validated first. Return 0 / the frame count, or -1. */
-long netmon_read_stats(struct netmon_stats_user *out);
+long netmon_read_stats(struct net_stats *out);
 
 /* Copies frames from *cursor onward, advancing it past what was returned.
  * A cursor behind the ring jumps to the oldest frame still held. Compare
  * out[0].seq with the input cursor to detect the jump. */
-long netmon_read_frames(u64 *cursor, struct netmon_frame_user *out,
+long netmon_read_frames(u64 *cursor, struct net_frame *out,
                         long max);
 
 #endif /* NETMON_H */

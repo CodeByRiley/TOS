@@ -7,9 +7,6 @@
 #include <sync/spinlock.h>
 #include <utilities/string.h>
 
-_Static_assert(sizeof(struct net_ping_user) == 16,
-               "net_ping_user layout is userspace ABI");
-
 /* A ping in flight. The requesting task fills this in and then yields; the
  * driver poll task writes `replied` and `reply_ticks` when the matching
  * echo reply arrives. Both sides go through the lock, because a plain
