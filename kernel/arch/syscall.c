@@ -1284,7 +1284,6 @@ static long sys_read(int fd, void *buf, usize n) {
 //   struct fat_file *file = task_fd_file(t, fd);
 //   usize available = file->pos < file->size ? file->size - file->pos : 0;
 //   usize transfer = n < available ? n : available;
-//   if (!user_buffer_ok(buf, transfer, 1))
 //     return -1;
 //   return (long)fat_read(file, buf, n);
 // }

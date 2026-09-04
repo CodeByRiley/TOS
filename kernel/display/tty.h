@@ -18,7 +18,7 @@
  * hands one out and tty_release() gives it back.
  *
  * In-band control codes are emitted into the drain ring so winman can
- * mirror tty_clear / tty_push / tty_pop on its surface. They sit in
+ * mirror tty_clear_ch / tty_push_ch / tty_pop_ch on its surface. They sit in
  * unassigned low C0 ASCII so they don't collide with regular text or
  * handled control chars (\t \n \r \b are already in use).
  *
@@ -45,43 +45,16 @@
 extern struct ttf_font *g_sys_font;
 
 void tty_init(void);
-void tty_putc(char c);
-void tty_write(const char *buf, usize n);
-void tty_clear(void);
-
-/* Input injection from userspace */
-void tty_inject_input(char c);
-
-/* Read characters injected into the TTY. Used by the read() syscall for stdin.
- * Returns number of chars actually copied into buf. */
-usize tty_read_input(char *buf, usize max);
 
 /* Disable framebuffer drawing while winman owns the screen. Text still
  * buffers into the grid so the kernel log doesn't blackhole. */
 void tty_set_active(int on);
 int  tty_is_active(void);
 
-/* Drain up to `max` chars of unconsumed input into `out`. Returns count.
- * Used by userspace winman to render the kernel text stream into its own
- * console window. */
-usize tty_drain(char *out, usize max);
-
-/* Alt-screen save/restore , single level. push snapshots the grid +
- * cursor into a backing buffer then clears the live grid so a fullscreen
- * app draws on a fresh canvas; pop restores. No-op if push wasn't called
- * or restore already happened. */
-int  tty_push(void);
-int  tty_pop(void);
-
-/* Change the glyph scale by one step in the sign of delta. Returns the
- * resulting scale (1..4), or -1 when the grid cannot be reallocated. */
-int  tty_zoom(int delta);
-
 /* --- channel-addressed forms ------------------------------------------
  *
- * The unindexed calls above are exactly these with idx == TTY_KERNEL, and
- * remain the entry points for kernel log output. Everything reached from a
- * syscall goes through these instead, with the caller's task->tty.
+ * Every operation names its channel explicitly. Kernel output passes
+ * TTY_KERNEL; syscall paths pass the caller's task->tty.
  *
  * Out-of-range or closed channels are ignored (writes) or return 0 / -1
  * (reads), so a stale index from userspace cannot corrupt another channel. */

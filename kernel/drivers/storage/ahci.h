@@ -246,7 +246,8 @@ struct AHCI_DEVICE_DATA {
     struct AHCI_PORT ports[AHCI_MAX_PORTS]; // Array of port states
 };
 
-void ahci_init(void);
+struct driver;
+extern const struct driver ahci_driver;
 
 /* The controller ahci_init bound, or NULL when there is none. One controller
  * is supported. Declared here because callers used to re-extern it for

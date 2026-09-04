@@ -98,12 +98,6 @@ static usize chan_drain(struct tty_chan *ch, char *out, usize max) {
     return n;
 }
 
-void tty_inject_input(char c) { tty_inject_input_ch(TTY_KERNEL, c); }
-
-usize tty_read_input(char *buf, usize max) {
-    return tty_read_input_ch(TTY_KERNEL, buf, max);
-}
-
 void tty_inject_input_ch(int idx, char c) {
     if (!chan_valid(idx))
         return;
@@ -335,7 +329,7 @@ static int reflow_grid(int new_cols, int new_rows) {
     cy = new_cy;
 
     /* A saved grid uses the old dimensions. Discarding it is safer than
-     * allowing tty_pop() to copy a differently sized allocation. */
+     * allowing kernel_pop() to copy a differently sized allocation. */
     discard_saved_grid();
     return 0;
 }
@@ -390,7 +384,7 @@ void tty_resize(void) {
     dirty = 1;
 }
 
-int tty_zoom(int delta) {
+static int kernel_zoom(int delta) {
     if (!ready) return -1;
     if (delta == 0) return scale;
 
@@ -414,7 +408,7 @@ int tty_zoom(int delta) {
     return scale;
 }
 
-void tty_putc(char c) {
+static void kernel_putc(char c) {
     if (!ready) return;
     drain_push(c);
     if (c == '\n') { newline(); dirty = 1; return; }
@@ -428,7 +422,7 @@ void tty_putc(char c) {
         return;
     }
     if (c == '\t') {
-        do { tty_putc(' '); } while (cx % 8);
+        do { kernel_putc(' '); } while (cx % 8);
         return;
     }
     if (cx >= cols) newline();
@@ -437,12 +431,12 @@ void tty_putc(char c) {
     dirty = 1;
 }
 
-void tty_write(const char *buf, usize n) {
+static void kernel_write(const char *buf, usize n) {
     if (!buf) return;
-    for (usize i = 0; i < n; i++) tty_putc(buf[i]);
+    for (usize i = 0; i < n; i++) kernel_putc(buf[i]);
 }
 
-void tty_clear(void) {
+static void kernel_clear(void) {
     if (!ready) return;
     memset(grid, 0, (usize)cols * (usize)rows);
     cx = cy = 0;
@@ -451,7 +445,7 @@ void tty_clear(void) {
     drain_push(TTY_CTRL_CLEAR);
 }
 
-int tty_push(void) {
+static int kernel_push(void) {
     if (!ready) return -1;
     usize bytes = (usize)cols * (usize)rows;
     if (saved_grid) { kfree(saved_grid); saved_grid = 0; }
@@ -467,7 +461,7 @@ int tty_push(void) {
     return 0;
 }
 
-int tty_pop(void) {
+static int kernel_pop(void) {
     if (!ready || !saved_grid) return -1;
     usize bytes = (usize)cols * (usize)rows;
     memcpy(grid, saved_grid, bytes);
@@ -491,10 +485,6 @@ void tty_set_active(int on) {
 
 int tty_is_active(void) { return active; }
 
-usize tty_drain(char *out, usize max) {
-    return tty_drain_ch(TTY_KERNEL, out, max);
-}
-
 /* --- channel-addressed writes -----------------------------------------
  *
  * Channel 0 goes through the grid path above so the kernel keeps rendering
@@ -506,7 +496,7 @@ void tty_write_ch(int idx, const char *buf, usize n) {
     if (!buf)
         return;
     if (idx == TTY_KERNEL) {
-        tty_write(buf, n);
+        kernel_write(buf, n);
         return;
     }
     if (!chan_valid(idx))
@@ -517,7 +507,7 @@ void tty_write_ch(int idx, const char *buf, usize n) {
 
 void tty_clear_ch(int idx) {
     if (idx == TTY_KERNEL) {
-        tty_clear();
+        kernel_clear();
         return;
     }
     if (!chan_valid(idx))
@@ -527,7 +517,7 @@ void tty_clear_ch(int idx) {
 
 int tty_push_ch(int idx) {
     if (idx == TTY_KERNEL)
-        return tty_push();
+        return kernel_push();
     if (!chan_valid(idx))
         return -1;
     chan_drain_push(&chans[idx], TTY_CTRL_PUSH);
@@ -536,7 +526,7 @@ int tty_push_ch(int idx) {
 
 int tty_pop_ch(int idx) {
     if (idx == TTY_KERNEL)
-        return tty_pop();
+        return kernel_pop();
     if (!chan_valid(idx))
         return -1;
     chan_drain_push(&chans[idx], TTY_CTRL_POP);
@@ -547,7 +537,7 @@ int tty_pop_ch(int idx) {
  * owns the console's scale and clamps it. 0 means "code delivered". */
 int tty_zoom_ch(int idx, int delta) {
     if (idx == TTY_KERNEL)
-        return tty_zoom(delta);
+        return kernel_zoom(delta);
     if (!chan_valid(idx) || delta == 0)
         return -1;
     chan_drain_push(&chans[idx], delta > 0 ? TTY_CTRL_ZOOM_IN

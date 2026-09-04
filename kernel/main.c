@@ -116,16 +116,16 @@ static void input_init(void) {
 
 static void devices_init(void) {
   driver_core_init();
-  if (nvidia_driver_register() != 0) {
+  if (driver_register(&nvidia_driver) != 0) {
     log_write("nvidia: driver registration failed", KERNEL, LOG_ERROR);
   }
   pci_init();
   driver_probe_pci_devices();
   isa_probe_devices();
-  sb16_driver_init();
-  e1000_driver_init();
+  driver_register(&sb16_driver);
+  driver_register(&e1000_driver);
   usb_init();
-  ahci_init();
+  driver_register(&ahci_driver);
 }
 
 static void filesystem_init(u64 mb2_addr) {
@@ -142,7 +142,7 @@ static void late_init(void) {
   if (g_sys_font != NULL) {
     tty_resize();
     static const char hello[] = "Hello from TTF!\n";
-    tty_write(hello, sizeof(hello) - 1);
+    tty_write_ch(TTY_KERNEL, hello, sizeof(hello) - 1);
   }
 
   tty_init();

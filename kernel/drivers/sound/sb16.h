@@ -143,7 +143,8 @@ struct sb16_stream_status {
  * register is not carried into. */
 #define ISA_DMA16_BOUNDARY   0x20000
 
-void sb16_driver_init(void);
+struct driver;
+extern const struct driver sb16_driver;
 
 void sb16_dsp_write(u8 command);
 void sb16_mixer_write(u8 index, u8 value);

@@ -12,7 +12,8 @@
 #include <utilities/types.h>
 #define NVIDIA_PCI_VENDOR_ID 0x10DE
 
-int nvidia_driver_register(void);
+struct driver;
+extern const struct driver nvidia_driver;
 
 /* Number of NVIDIA display controllers this driver has bound. Presence
  * only , a bound device is not necessarily driving the display. */

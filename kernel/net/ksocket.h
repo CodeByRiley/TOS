@@ -67,13 +67,6 @@ struct packet_queue {
 
 // --------------------------------
 
-#define SOCKET_RX_BUFFER_SIZE 4096
-struct ring_buffer {
-    u8 data[SOCKET_RX_BUFFER_SIZE];
-    u32 head;
-    u32 tail;
-};
-
 // The core Socket Structure
 struct socket {
     u32 id;
@@ -84,9 +77,7 @@ struct socket {
     struct sockaddr_in local;    // Local IP and Port
     struct sockaddr_in remote;  // Remote IP and Port
 
-    // RX structures
-    struct ring_buffer rx_buffer;   // For TCP byte streams
-    struct packet_queue rx_queue;   // For UDP datagrams
+    struct packet_queue rx_queue;
 
     struct spinlock lock;
     struct socket *next;    // Linked list for the global socket table

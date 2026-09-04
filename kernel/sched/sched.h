@@ -37,7 +37,7 @@
 #define SCHED_PRIO_HIGH 1
 #define SCHED_PRIO_LEVELS 2
 
-/* BSP scheduler with a fixed 16-slot task table and a singly-linked ready
+/* BSP scheduler with a fixed-size task table and a singly-linked ready
  * queue. APs service the separate SMP-safe kernel work queue; userspace stays
  * on the BSP until scheduler state is made per-CPU. */
 #define MAX_TASKS 32
