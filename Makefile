@@ -196,12 +196,14 @@ HOST_KERNEL_STUBS := tests/host_kernel_stubs.c
 VFS_HOST_SRCS := kernel/fs/vfs/vfs.c kernel/fs/vfs/namei.c kernel/fs/vfs/file.c \
 		kernel/fs/vfs/lock.c tests/vfs_lock_host.c
 VFS_HOST_TESTS := $(addprefix $(HOST_TEST_DIR)/,vfs_test.exe fat_directory_test.exe \
-		ext2_vfs_test.exe ext2_device_test.exe stdio_mode_test.exe vfs_serialization_test.exe)
+		fat_device_test.exe ext2_vfs_test.exe ext2_device_test.exe stdio_mode_test.exe \
+		vfs_serialization_test.exe)
 $(VFS_HOST_TESTS): HOST_TEST_CFLAGS += -DVFS_HOST_TEST -pthread
 $(VFS_HOST_TESTS): kernel/fs/vfs/lock.h kernel/sched/sched.h tests/vfs_lock_host.h
 FAT_HOST_SRCS := kernel/fs/fat/fat.c kernel/fs/fat/fat_mount.c \
 		kernel/fs/fat/fat_file.c kernel/fs/fat/fat_name.c \
-		kernel/fs/fat/fat_directory.c kernel/fs/fat/fat_vfs.c
+		kernel/fs/fat/fat_directory.c kernel/fs/fat/fat_vfs.c \
+		kernel/fs/fat/fat_block.c
 FS_HOST_HEADERS := $(wildcard kernel/fs/vfs/*.h kernel/fs/fat/*.h kernel/fs/ext2/*.h)
 
 HOST_TEST_BINS := \
@@ -212,6 +214,7 @@ HOST_TEST_BINS := \
 	$(HOST_TEST_DIR)/uvm_test.exe \
 	$(HOST_TEST_DIR)/process_pml4_test.exe \
 	$(HOST_TEST_DIR)/fat_directory_test.exe \
+	$(HOST_TEST_DIR)/fat_device_test.exe \
 	$(HOST_TEST_DIR)/ext2_vfs_test.exe \
 	$(HOST_TEST_DIR)/ext2_device_test.exe \
 	$(HOST_TEST_DIR)/usb_storage_test.exe \
@@ -258,6 +261,14 @@ $(HOST_TEST_DIR)/fat_directory_test.exe: tests/fat_directory_test.c \
 		| $(HOST_TEST_DIR)
 	$(HOST_CC) $(HOST_TEST_CFLAGS) -I kernel \
 		tests/fat_directory_test.c $(FAT_HOST_SRCS) $(VFS_HOST_SRCS) \
+		$(HOST_KERNEL_STUBS) -o $@
+
+$(HOST_TEST_DIR)/fat_device_test.exe: tests/fat_device_test.c \
+		$(HOST_KERNEL_STUBS) $(FAT_HOST_SRCS) $(VFS_HOST_SRCS) \
+		$(FS_HOST_HEADERS) tests/vfs_backend_checks.h \
+		kernel/drivers/storage/block.h | $(HOST_TEST_DIR)
+	$(HOST_CC) $(HOST_TEST_CFLAGS) -I kernel \
+		tests/fat_device_test.c $(FAT_HOST_SRCS) $(VFS_HOST_SRCS) \
 		$(HOST_KERNEL_STUBS) -o $@
 
 $(HOST_TEST_DIR)/ext2-base.img: tools/create_ext2_test_image.sh \

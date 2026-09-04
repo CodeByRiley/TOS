@@ -135,4 +135,16 @@ int short_name_exact(const char *name, u32 length, char out[11], u8 *nt_case);
 int short_name_alias(struct fat_dir dir, const char *name, u32 length, char out[11]);
 u32 entry_short_name(const struct dir_entry *entry, char *out);
 int short_name_taken(struct fat_dir dir, const char name[11]);
+
+/* Split between fat_vfs.c (VFS objects) and fat_block.c (transport).
+ *
+ * fat_vfs_mount_image is the plain RAM-image mount and also the VFS `mount`
+ * hook; fat_mount_block reads a volume off a device and then calls it. The
+ * device mount owns the image it allocated, which is what fat_block_release
+ * gives back on unmount; an image mount owns nothing and it is a no-op. */
+struct vfs_superblock;
+int fat_vfs_mount_image(struct vfs_superblock *super, void *image, usize size);
+int fat_mount_block(struct vfs_superblock *super, void *context);
+int fat_block_sync(struct vfs_superblock *super);
+void fat_block_release(void);
 #endif

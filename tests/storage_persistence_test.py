@@ -25,7 +25,7 @@ def boot(args, image, pass_number):
                "-drive", f"if=none,id=testdisk,file={image},format=raw"]
     if args.transport == "ahci":
         command += ["-machine", "q35", "-device", "ide-hd,drive=testdisk,bus=ide.0"]
-        mounted = "rootfs: ext2 mounted from AHCI SATA drive"
+        mounted = "rootfs: ext2 mounted from AHCI at /"
         path = "/persist.txt"
     else:
         command += ["-device", "ich9-usb-ehci1,id=ehci", "-device",

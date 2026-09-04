@@ -19,12 +19,7 @@
 #include <drivers/sound/sb16.h>
 #include <drivers/storage/ahci.h>
 #include <drivers/video/nvidia/nvidia.h>
-#include <fs/ext2/ext2.h>
-#include <drivers/storage/ahci_block.h>
-#include <drivers/usb/storage/usb_storage.h>
-#include <fs/fat/ahci/fat_ahci.h>
-#include <fs/fat/fat_vfs.h>
-#include <fs/vfs/vfs.h>
+#include <fs/rootfs.h>
 #include <input/keyboard.h>
 #include <input/mouse.h>
 #include <interrupts/idt.h>
@@ -39,7 +34,6 @@
 #include <stdint.h>
 #include <utilities/log.h>
 
-extern struct AHCI_DEVICE_DATA *g_ahci_dev;
 extern u64 *kernel_pml4;
 static u8 bsp_syscall_kstack[16384] ALIGNED(16);
 
@@ -135,66 +129,7 @@ static void devices_init(void) {
 }
 
 static void filesystem_init(u64 mb2_addr) {
-  static struct ahci_block_device root_disk;
-  vfs_init();
-  ext2_vfs_register();
-  fat_vfs_register();
-
-  bool fs_mounted = false;
-
-  /* Try AHCI */
-  if (g_ahci_dev) {
-    for (int port = 0; port < AHCI_MAX_PORTS && !fs_mounted; port++) {
-      if (ahci_block_open(&root_disk, g_ahci_dev, port)) continue;
-      if (ext2_mount_device("/", &root_disk.device) == 0) {
-        log_write("rootfs: ext2 mounted from AHCI SATA drive", FILESYS, LOG_INFO);
-        fs_mounted = true;
-      } else {
-        ahci_block_close(&root_disk);
-      }
-    }
-  }
-  if (g_ahci_dev && !fs_mounted) {
-    if (fat_mount_from_ahci(g_ahci_dev, 0) == 0) {
-      if (fat_vfs_attach("/") == 0) {
-        log_write("rootfs: mounted from AHCI SATA drive", FILESYS, LOG_INFO);
-        fs_mounted = true;
-      } else {
-        log_write("rootfs: FAT mounted but VFS attach failed", FILESYS, LOG_WARN);
-        /* detach/unmount here so state doesn't linger */
-      }
-    }
-  }
-  if (!fs_mounted)
-    log_write("rootfs: AHCI unavailable or unformatted, trying ramdisk...",
-              KERNEL, LOG_WARN);
-
-  /* Try Ramdisk */
-  struct MB2_TAG_MODULE *m = mb2_find_module(mb2_addr, "rootfs");
-  if (!fs_mounted && m) {
-    const char *fstype = 0;
-    if (vfs_mount_auto("/", phys_to_virt(m->mod_start),
-                       m->mod_end - m->mod_start, &fstype) == 0) {
-      log_write("rootfs: mounted from Multiboot2 ramdisk module", FILESYS, LOG_INFO);
-      if (fstype)
-        log_write(fstype, FILESYS, LOG_INFO);
-      fs_mounted = true;
-    }
-  }
-
-  /* Transport discovery precedes VFS setup. Mount supported USB volumes only
-   * after the root exists; synthetic mountpoints need no on-disk directory. */
-  for (size_t i = 0; fs_mounted && i < usb_storage_count(); i++) {
-    char path[] = "/usb0";
-    path[4] += (char)i;
-    if (ext2_mount_device(path, usb_storage_device(i)) == 0)
-      log_write(path, FILESYS, LOG_INFO);
-    else
-      log_write("USB storage: no supported raw ext2 volume", FILESYS, LOG_WARN);
-  }
-
-  /* Panic only if nothing worked */
-  if (!fs_mounted) {
+  if (rootfs_mount(mb2_addr) != 0) {
     log_write("PANIC: Unable to mount any root filesystem!", KERNEL, LOG_ERROR);
     for (;;)
       __asm__ volatile("hlt");

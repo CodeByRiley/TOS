@@ -28,7 +28,6 @@
 #include <display/framebuffer.h>
 #include <display/tty.h>
 #include <drivers/sound/sb16.h>
-#include <fs/fat/ahci/fat_ahci.h>
 #include <fs/vfs/vfs.h>
 #include <input/keyboard.h>
 #include <input/mouse.h>
@@ -1023,7 +1022,6 @@ static void delay_seconds(long seconds) {
 /* Try several poweroff mechanisms; halt if all fail. */
 static void hw_shutdown(void) {
   log_write("powering off...", KERNEL, LOG_INFO);
-  fat_flush();
   if (vfs_sync_all()) {
     log_write("shutdown: filesystem sync failed; refusing poweroff", KERNEL,
               LOG_ERROR);
@@ -1041,7 +1039,6 @@ static void hw_shutdown(void) {
 /* Reboot via 8042, then ACPI reset, then triple fault. */
 static void hw_reboot(void) {
   log_write("rebooting...", KERNEL, LOG_INFO);
-  fat_flush();
   if (vfs_sync_all()) {
     log_write("reboot: filesystem sync failed; refusing reset", KERNEL,
               LOG_ERROR);

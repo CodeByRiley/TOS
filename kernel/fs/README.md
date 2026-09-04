@@ -22,7 +22,7 @@ without importing its caches, locking machinery or full POSIX feature set.
 | `fat/fat_name.c` | Long-name encoding and DOS 8.3 aliases |
 | `fat/fat_vfs.c` | Translate FAT entries to VFS objects |
 | `fat/fat_internal.h` | Shared FAT layouts, constants and helper declarations |
-| `fat/ahci/` | Existing AHCI image loading and write-through |
+| `fat/fat_block.c` | Reading a FAT volume off a block device and writing back |
 | `ext2/ext2_mount.c` | Superblock, feature and geometry validation |
 | `ext2/ext2_io.c` | Device-backed cache, dirty-block writeback and barriers |
 | `ext2/ext2_inode.c` | Inodes, block allocation and indirect blocks |
@@ -125,7 +125,13 @@ is not a snapshot of concurrent namespace changes.
 `drivers/storage/block.h` is the common 512-byte sector interface. A transport
 supplies read, write, flush and capacity; callers supply ordinary virtual
 buffers. AHCI uses one low physical bounce page, so heap/stack buffers do not
-need to be contiguous or DMA-addressable. The AHCI command builder is shared
+need to be contiguous or DMA-addressable.
+
+Both filesystems mount through that interface, so either can be read from
+either transport. `fs/rootfs.c` is the boot-time search that pairs them up: it
+walks the transports the drivers discovered and offers each volume to each
+registered filesystem until one recognises it, then attaches USB volumes under
+the root it found. Adding a filesystem to that search is one table row. The AHCI command builder is shared
 by reads, writes, IDENTIFY and FLUSH CACHE EXT. Failed commands disable the
 port and stop DMA before releasing buffers; recovery currently needs reboot.
 
@@ -169,16 +175,20 @@ that device context, preventing a stale mount from writing to a replacement.
 Cached reads can still return old data after unplugging; this is not hotplug.
 
 Boot-attached high-speed EHCI SCSI/BOT disks with 512-byte sectors are supported,
-one interface and LUN 0 per device, up to eight devices. Raw ext2 volumes mount
-at `/usb0` etc. There is no MBR/GPT partition scan, USB FAT mounting, hub support,
-hotplug enumeration, xHCI, UAS, READ CAPACITY(16), or non-512-byte sectors yet.
-Most ordinary formatted USB sticks therefore will not mount in this first pass.
+one interface and LUN 0 per device, up to eight devices. Raw ext2 and FAT
+volumes both mount at `/usb0` etc, because a USB disk is a `block_device` like
+any other. There is still no MBR/GPT partition scan, hub support, hotplug
+enumeration, xHCI, UAS, READ CAPACITY(16), or non-512-byte sectors, so a stick
+with a partition table still will not mount: the filesystem has to start at
+LBA 0.
 
 ## Verification and extension
 
 Run `make test-fs` for the VFS allocation-failure tests, FAT16/32 tests,
 ext2 tests, stdio tests, serialization tests and a read-only `e2fsck` of the
-mutated ext2 image. Host filesystem tests require pthreads. The serialization
+mutated ext2 image. `fat_device_test` covers the device-backed FAT path against
+a fake transport, because the QEMU persistence tests put ext2 on their disks and
+so never take it. Host filesystem tests require pthreads. The serialization
 test runs the real gate and ext2 with a pthread IRQ/scheduler adapter: eight
 workers mutate namespaces, append through independent handles and write a
 shared cursor. A deterministic queue checks read/close/unmount ordering;
@@ -199,7 +209,8 @@ on `build/tests/ahci-persistence.img` and `usb-persistence.img` afterward.
 `python tests/ehci_test.py` checks existing control/periodic HID transfers.
 
 To add a filesystem, implement component-based inode operations and file
-operations, supply a root inode from its mount hook, then register its type.
+operations, supply a root inode from its mount hook, then register its type,
+and add it to the table in `fs/rootfs.c` if it should be considered at boot.
 Do not add another pathname walker or change syscall callers.
 
 `kernel/fs_old` is an untouched migration reference, excluded from the

@@ -1,9 +1,9 @@
-/* kernel/fs/fat/fat_vfs.h , FAT-to-VFS adapter registration.
+/* kernel/fs/fat/fat_vfs.h , FAT VFS backend registration.
  *
- * Registers the FAT filesystem type and attaches an already initialized FAT
- * image to a VFS mountpoint.
+ * Exposes the FAT filesystem type to kernel startup code. On-disk layouts and
+ * backend helpers remain private to fat_internal.h.
  *
- * Implementation: kernel/fs/fat/fat_vfs.c.
+ * Implementation: kernel/fs/fat/fat_vfs.c, kernel/fs/fat/fat_block.c.
  */
 #ifndef KERNEL_FAT_VFS_H
 #define KERNEL_FAT_VFS_H
@@ -11,6 +11,8 @@
 #define FAT_VFS_NAME "fat"
 
 void fat_vfs_register(void);
-int fat_vfs_attach(const char *mountpoint);
+struct block_device;
+/* Device/context must outlive the mount. The filesystem owns its RAM cache. */
+int fat_mount_device(const char *mountpoint, const struct block_device *device);
 
 #endif

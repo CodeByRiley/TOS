@@ -32,10 +32,22 @@ window, mmap arena, shmem arena, stack). Constants in `kernel/loader/process.h`.
 **Block device** , the 512-byte sector interface in
 `kernel/drivers/storage/block.h`: read, write, flush, capacity. Two adapters
 today, AHCI and USB mass storage. Buffers are ordinary virtual addresses; the
-transport owns DMA.
+transport owns DMA. Both filesystems mount through it, so any filesystem can
+be read from any transport.
 
 **Transport** , what carries sectors to a device (AHCI, USB BOT/SCSI). Distinct
 from the filesystem that interprets them.
+
+**Root search** , the boot-time pairing of transports with filesystems in
+`kernel/fs/rootfs.c`. Not a fixed order of special cases: it walks the devices
+the drivers found and offers each to every registered filesystem until one
+recognises the volume. The Multiboot ramdisk is the fallback, not the first
+choice, so a machine with a formatted disk boots from the disk.
+
+**Write-through** , FAT's persistence model: every changed sector is written to
+the device as it changes, rather than being tracked and written later. ext2
+instead marks blocks dirty and writes them at sync. Both cache the whole
+volume in RAM.
 
 ## Display
 

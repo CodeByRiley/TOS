@@ -151,7 +151,8 @@ static int test_fat32(void) {
 
     vfs_init();
     fat_vfs_register();
-    failed |= expect(fat_vfs_attach("/") == 0, "attach existing FAT32 volume");
+    failed |= expect(vfs_mount_image("/", "fat", image, image_size) == 0,
+                     "mount existing FAT32 volume");
     failed |= vfs_backend_checks(expect);
     failed |= expect(vfs_unmount("/") == 0, "unmount FAT32 before releasing image");
     free(image);
@@ -314,7 +315,8 @@ int main(void) {
 
     vfs_init();
     fat_vfs_register();
-    failed |= expect(fat_vfs_attach("/") == 0, "attach existing FAT16 volume");
+    failed |= expect(vfs_mount_image("/", "fat", image, image_size) == 0,
+                     "mount existing FAT16 volume");
     failed |= expect(vfs_mount_image("/second", "fat", image, image_size) < 0,
                      "second FAT mount is rejected without replacing active volume");
     failed |= vfs_backend_checks(expect);
