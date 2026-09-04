@@ -18,6 +18,7 @@
 #include <interrupts/pic.h>
 #include <memory/hhdm.h>
 #include <memory/pmm.h>
+#include <memory/uvm.h>
 #include <memory/vma.h>
 #include <memory/vmm.h>
 #include <sched/sched.h>
@@ -482,28 +483,16 @@ void isr_handler(struct interrupt_frame *r) {
         }
       }
 
-      /* USER SPACE DEMAND PAGING */
+      /* USER SPACE DEMAND PAGING
+       *
+       * Error-code bit 1 says the access was a write. Passing it means a
+       * write into a range reserved read-only is refused here rather than
+       * mapped read-only and re-faulted: the task reaches its segfault one
+       * fault earlier and without spending a frame on the way. */
       if (!(r->err_code & 0x1)) {
         struct task *t = task_current();
-        struct task_vm *vm = t ? t->vm : 0;
-        if (vm && vm->user_pml4) {
-          for (int i = 0; i < MAX_USER_VMAS; i++) {
-            if (vm->vmas[i].used && cr2 >= vm->vmas[i].start &&
-                cr2 < vm->vmas[i].end) {
-              u64 page_addr = cr2 & ~0xFFFULL;
-              u64 phys = pmm_alloc_frame();
-
-              if (phys) {
-                memset((void *)phys_to_virt(phys), 0, 4096);
-                if (vmm_map_in(vm->user_pml4, page_addr, phys,
-                               vm->vmas[i].pte_flags) == 0)
-                  return;
-                pmm_free_frame(phys);
-              }
-              break;
-            }
-          }
-        }
+        if (t && uvm_fault_in(t->vm, cr2, (r->err_code & 0x2) != 0))
+          return;
       }
 
       page_fault_report(r, cr2);

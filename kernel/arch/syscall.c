@@ -36,6 +36,7 @@
 #include <memory/heap.h>
 #include <memory/hhdm.h>
 #include <memory/pmm.h>
+#include <memory/uvm.h>
 #include <memory/vmm.h>
 #include <msg/msg.h>
 #include <net/icmp.h>
@@ -435,218 +436,21 @@ static u64 prot_to_pte(int prot) {
   return flags;
 }
 
-/* True if `base .. base+bytes` is a legal user range that does not run
- * into the stack. Wrap-around is checked by the caller's overflow test. */
-static int user_range_ok(u64 base, u64 bytes) {
-  if (bytes == 0 || base < USER_VA_MIN)
-    return 0;
-  if (base + bytes < base || base + bytes > USER_VA_MAX)
-    return 0;
-  if (base < USER_STACK_TOP && base + bytes > USER_STACK_LOW)
-    return 0;
-  return 1;
-}
-
-static struct user_vma *user_vma_at(struct task *task, u64 address) {
-  if (!task || !task->vm)
-    return 0;
-  for (int i = 0; i < MAX_USER_VMAS; i++) {
-    struct user_vma *vma = &task->vm->vmas[i];
-    if (vma->used && address >= vma->start && address < vma->end)
-      return vma;
-  }
-  return 0;
-}
-
-static struct user_vma *user_vma_free_slot(struct task *task) {
-  if (!task || !task->vm)
-    return 0;
-  for (int i = 0; i < MAX_USER_VMAS; i++) {
-    if (!task->vm->vmas[i].used)
-      return &task->vm->vmas[i];
-  }
-  return 0;
-}
-
-/* Resolve a lazy anonymous page before a syscall implementation accesses it.
- * Kernel copy-in/copy-out must not rely on taking a nested supervisor-mode
- * page fault halfway through a filesystem or display operation. */
-static int user_page_prepare(struct task *task, u64 page, int writable) {
-  if (!task || !task->vm)
-    return 0;
-  u64 entry = vmm_entry_in(task->vm->user_pml4, page);
-  if (entry) {
-    return (entry & VMM_USER) && (!writable || (entry & VMM_WRITE));
-  }
-
-  struct user_vma *vma = user_vma_at(task, page);
-  if (!vma || !(vma->pte_flags & VMM_USER) ||
-      (writable && !(vma->pte_flags & VMM_WRITE))) {
-    return 0;
-  }
-
-  u64 phys = pmm_alloc_frame();
-  if (!phys)
-    return 0;
-  memset((void *)phys_to_virt(phys), 0, 4096);
-  if (vmm_map_in(task->vm->user_pml4, page, phys, vma->pte_flags) != 0) {
-    pmm_free_frame(phys);
-    return 0;
-  }
-  return 1;
-}
-
-/* Validate syscall buffers and materialize any pages covered by a lazy VMA.
- * mmap's range helper intentionally rejects the stack because it must never
- * allocate over it; ordinary syscall buffers may still live there. */
+/* Validate a syscall buffer belonging to the running task and materialise
+ * any lazy pages it covers, so a copy-in or copy-out cannot take a nested
+ * supervisor-mode fault partway through. The address space itself lives in
+ * memory/uvm.h; this only supplies the current task's. */
 static int user_buffer_ok(const void *pointer, u64 bytes, int writable) {
-  if (bytes == 0)
-    return 1;
-
   struct task *task = task_current();
-  u64 base = (u64)(uintptr_t)pointer;
-  u64 end = base + bytes;
-  if (!task_pml4(task) || base < USER_VA_MIN || end < base)
-    return 0;
-
-  int in_general_range = end <= USER_VA_MAX;
-  int in_stack = base >= USER_STACK_LOW && end <= USER_STACK_TOP;
-  if (!in_general_range && !in_stack)
-    return 0;
-
-  u64 page = base & ~4095ULL;
-  u64 last = (end - 1) & ~4095ULL;
-  for (;;) {
-    if (!user_page_prepare(task, page, writable))
-      return 0;
-    if (page == last)
-      break;
-    page += 4096;
-  }
-  return 1;
-}
-
-/* Every page in the range must be free for a MAP_FIXED to succeed. */
-static int range_is_unmapped(struct task *t, u64 base, u64 bytes) {
-  if (!t || !t->vm)
-    return 0;
-  u64 end = base + bytes;
-  for (int i = 0; i < MAX_USER_VMAS; i++) {
-    struct user_vma *vma = &t->vm->vmas[i];
-    if (vma->used && base < vma->end && end > vma->start)
-      return 0;
-  }
-  for (u64 off = 0; off < bytes; off += 4096) {
-    if (vmm_translate_in(t->vm->user_pml4, base + off))
-      return 0;
-  }
-  return 1;
-}
-
-/* Record a freed arena range for reuse. Merge every overlapping or adjacent
- * hole, including duplicate munmap calls, so arena_alloc can never return two
- * overlapping ranges from stale free-list entries. */
-static void hole_add(struct task *t, u64 base, u64 bytes) {
-  if (!t || !t->vm)
-    return;
-  u64 end = base + bytes;
-  for (int i = 0; i < TASK_MMAP_HOLES; i++) {
-    struct vm_hole *h = &t->vm->mmap_holes[i];
-    if (!h->len)
-      continue;
-    u64 hole_end = h->base + h->len;
-    if (hole_end < base || h->base > end)
-      continue;
-    if (h->base < base)
-      base = h->base;
-    if (hole_end > end)
-      end = hole_end;
-    h->base = 0;
-    h->len = 0;
-    /* The expanded range may now touch a hole visited earlier. */
-    i = -1;
-  }
-
-  for (int i = 0; i < TASK_MMAP_HOLES; i++) {
-    if (!t->vm->mmap_holes[i].len) {
-      t->vm->mmap_holes[i].base = base;
-      t->vm->mmap_holes[i].len = end - base;
-      return;
-    }
-  }
-  /* List full: the range stays unmapped but its VA is not reused. */
-  log_write("mmap: hole list full, leaking user VA", KERNEL, LOG_WARN);
-}
-
-/* First-fit over the free list, then the bump pointer. Returns 0 when the
- * arena is exhausted , never a valid address, since the arena starts well
- * above USER_VA_MIN. */
-static u64 arena_alloc(struct task *t, u64 bytes) {
-  if (!t || !t->vm)
-    return 0;
-  for (int i = 0; i < TASK_MMAP_HOLES; i++) {
-    struct vm_hole *h = &t->vm->mmap_holes[i];
-    if (!h->len || h->len < bytes)
-      continue;
-    u64 base = h->base;
-    h->base += bytes;
-    h->len -= bytes;
-    return base;
-  }
-
-  u64 base = t->vm->mmap_next_va;
-  if (base + bytes < base || base + bytes > USER_MMAP_LIMIT)
-    return 0;
-  t->vm->mmap_next_va = base + bytes;
-  return base;
-}
-
-/* Drop `start..end` from the VMA table. A hole wholly inside one mapping
- * needs one additional record for its right-hand side; reserve that slot
- * before changing anything so munmap remains all-or-nothing for metadata. */
-static int user_vma_remove_range(struct task *task, u64 start, u64 end) {
-  if (!task || !task->vm)
-    return -1;
-  struct user_vma *split = 0;
-  for (int i = 0; i < MAX_USER_VMAS; i++) {
-    struct user_vma *vma = &task->vm->vmas[i];
-    if (vma->used && start > vma->start && end < vma->end) {
-      split = user_vma_free_slot(task);
-      if (!split)
-        return -1;
-      break;
-    }
-  }
-
-  for (int i = 0; i < MAX_USER_VMAS; i++) {
-    struct user_vma *vma = &task->vm->vmas[i];
-    if (!vma->used || start >= vma->end || end <= vma->start)
-      continue;
-
-    if (start <= vma->start && end >= vma->end) {
-      memset(vma, 0, sizeof(*vma));
-    } else if (start <= vma->start) {
-      vma->start = end;
-    } else if (end >= vma->end) {
-      vma->end = start;
-    } else {
-      *split = (struct user_vma){
-          .start = end,
-          .end = vma->end,
-          .pte_flags = vma->pte_flags,
-          .used = 1,
-      };
-      vma->end = start;
-    }
-  }
-  return 0;
+  return task && uvm_buffer_ok(task->vm, pointer, bytes, writable);
 }
 
 /* mmap(addr, len, prot, flags).
  *
- * Anonymous, private, demand-backed: the VMA reserves the address range and
- * pages receive zeroed frames on first access. There is no file-backed
- * mapping; a loader reads section bytes in with read() after mapping it.
+ * Anonymous, private, demand-backed: the reservation covers the address
+ * range and pages receive zeroed frames on first access. There is no
+ * file-backed mapping; a loader reads section bytes in with read() after
+ * mapping it.
  *
  * Without MAP_FIXED, `addr` is ignored and the range comes from the arena.
  * With MAP_FIXED, `addr` must be page-aligned and entirely unmapped. */
@@ -666,40 +470,16 @@ static long sys_mmap(u64 addr, long len, int prot, int flags) {
   if (bytes < (u64)len)
     return -1;
 
-  struct user_vma *vma = user_vma_free_slot(t);
-  if (!vma)
-    return -1;
-
-  u64 base;
-  if (flags & MAP_FIXED) {
-    if (addr & 4095)
-      return -1;
-    if (!user_range_ok(addr, bytes))
-      return -1;
-    if (!range_is_unmapped(t, addr, bytes))
-      return -1;
-    base = addr;
-  } else {
-    base = arena_alloc(t, bytes);
-    if (!base)
-      return -1;
-  }
-
-  *vma = (struct user_vma){
-      .start = base,
-      .end = base + bytes,
-      .pte_flags = pte_flags,
-      .used = 1,
-  };
-  return (long)base;
+  u64 base = uvm_reserve(t->vm, addr, bytes, pte_flags, (flags & MAP_FIXED) != 0);
+  return base ? (long)base : -1;
 }
 
 /* mprotect(addr, len, prot).
  *
- * All-or-nothing: the range is validated before a single PTE changes, so
- * a partial failure can't leave a PE image half RX and half RW. Lazy pages
- * are committed during validation; after that every page has a PTE whose
- * permissions can be changed without relying on VMA metadata. */
+ * A range the framebuffer has registered is refused outright: its pages are
+ * borrowed by the display, so re-permissioning them here is not this task's
+ * to do. Everything after that is address-space work, and uvm_protect keeps
+ * it all-or-nothing. */
 static long sys_mprotect(u64 addr, long len, int prot) {
   if (len <= 0 || (addr & 4095))
     return -1;
@@ -713,33 +493,15 @@ static long sys_mprotect(u64 addr, long len, int prot) {
     return -1;
 
   u64 bytes = ((u64)len + 4095) & ~4095ULL;
-  if (bytes < (u64)len || !user_range_ok(addr, bytes))
+  if (bytes < (u64)len)
     return -1;
   if (framebuffer_registered_range_overlaps(t->vm->user_pml4, addr, bytes))
     return -1;
 
-  for (u64 off = 0; off < bytes; off += 4096) {
-    if (!user_page_prepare(t, addr + off, 0))
-      return -1;
-  }
-
-  for (u64 off = 0; off < bytes; off += 4096) {
-    if (vmm_protect_in(t->vm->user_pml4, addr + off, pte_flags) != 0)
-      return -1;
-  }
-
-  return 0;
+  return uvm_protect(t->vm, addr, bytes, pte_flags);
 }
 
 /* munmap(addr, len).
- *
- * Unmaps whole pages and returns their frames to the PMM, except frames
- * carrying VMM_SHARED: these are borrowed from another process or kernel
- * subsystem, and freeing one here would hand a live page back to the
- * allocator. Ranges
- * inside the mmap arena go on the free list; MAP_FIXED ranges outside it
- * need no bookkeeping, since fixed mappings are placed by the caller and
- * collision-checked at map time.
  *
  * Unmapping a range with holes in it is not an error , POSIX says the same
  * , so this reports success as long as the range itself is legal. */
@@ -752,27 +514,10 @@ static long sys_munmap(u64 addr, long len) {
     return -1;
 
   u64 bytes = ((u64)len + 4095) & ~4095ULL;
-  if (bytes < (u64)len || !user_range_ok(addr, bytes))
+  if (bytes < (u64)len)
     return -1;
 
-  if (user_vma_remove_range(t, addr, addr + bytes) != 0)
-    return -1;
-
-  for (u64 off = 0; off < bytes; off += 4096) {
-    u64 va = addr + off;
-    u64 entry = vmm_entry_in(t->vm->user_pml4, va);
-    if (!entry)
-      continue;
-    vmm_unmap_in(t->vm->user_pml4, va);
-    /* Mask to bits 12-51: VMM_NX lives at bit 63, so stripping the low
-     * flag bits alone would hand the PMM an address with it still set. */
-    if (!(entry & VMM_SHARED))
-      pmm_free_frame(entry & VMM_ADDR_MASK);
-  }
-
-  if (addr >= USER_MMAP_BASE && addr + bytes <= USER_MMAP_LIMIT)
-    hole_add(t, addr, bytes);
-  return 0;
+  return (long)uvm_release(t->vm, addr, bytes);
 }
 
 static long sys_kbd_poll(int *pressed, u16 *key) {
@@ -1161,7 +906,7 @@ static long sys_shmem_unshare(long target_pid, u64 va, long npages) {
    * address down there would clear a PTE the kernel and every other
    * process walk, not just this target's view of it. */
   u64 bytes = (u64)npages * 4096;
-  if (va < USER_SHMEM_BASE || !user_range_ok(va, bytes))
+  if (va < USER_SHMEM_BASE || !uvm_range_ok(va, bytes))
     return -1;
 
   /* Only pages carrying VMM_SHARED arrived through a share, so only those

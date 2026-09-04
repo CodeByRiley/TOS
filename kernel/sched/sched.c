@@ -229,8 +229,7 @@ static int task_state_alloc(struct task *t, int with_vm) {
     if (!t->vm)
       goto fail;
     memset(t->vm, 0, sizeof(*t->vm));
-    t->vm->shmem_next_va = USER_SHMEM_BASE;
-    t->vm->mmap_next_va = USER_MMAP_BASE;
+    uvm_init(t->vm);
   }
 
   t->input_owner_restore_pid = -1;

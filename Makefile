@@ -209,6 +209,7 @@ HOST_TEST_BINS := \
 	$(HOST_TEST_DIR)/vfs_test.exe \
 	$(HOST_TEST_DIR)/pmm_test.exe \
 	$(HOST_TEST_DIR)/vmm_test.exe \
+	$(HOST_TEST_DIR)/uvm_test.exe \
 	$(HOST_TEST_DIR)/process_pml4_test.exe \
 	$(HOST_TEST_DIR)/fat_directory_test.exe \
 	$(HOST_TEST_DIR)/ext2_vfs_test.exe \
@@ -237,6 +238,12 @@ $(HOST_TEST_DIR)/vmm_test.exe: tests/vmm_test.c kernel/memory/vmm.c \
 		kernel/memory/vmm.h kernel/memory/hhdm.h | $(HOST_TEST_DIR)
 	$(HOST_CC) $(HOST_TEST_CFLAGS) -DHHDM_HOST_TEST -DVMM_HOST_TEST \
 		-I kernel tests/vmm_test.c kernel/memory/vmm.c -o $@
+
+$(HOST_TEST_DIR)/uvm_test.exe: tests/uvm_test.c kernel/memory/uvm.c \
+		kernel/memory/uvm.h kernel/memory/vmm.h kernel/memory/hhdm.h \
+		kernel/loader/process.h | $(HOST_TEST_DIR)
+	$(HOST_CC) $(HOST_TEST_CFLAGS) -DHHDM_HOST_TEST -I kernel \
+		tests/uvm_test.c kernel/memory/uvm.c -o $@
 
 $(HOST_TEST_DIR)/process_pml4_test.exe: tests/process_pml4_test.c \
 		kernel/loader/process.c kernel/memory/vmm.h kernel/memory/hhdm.h \
