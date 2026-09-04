@@ -35,8 +35,8 @@ static int tb_load_icon(const char *path, const char *name, int max_dim,
     return 0;
   }
 
-  if (icon->width <= 0 || icon->height <= 0 ||
-      icon->width > max_dim || icon->height > max_dim) {
+  if (icon->width <= 0 || icon->height <= 0 || icon->width > max_dim ||
+      icon->height > max_dim) {
     printf("winman: %s has invalid %s icon dimensions %dx%d, using "
            "built-in %s icon\n",
            path, name, icon->width, icon->height, name);
@@ -44,8 +44,8 @@ static int tb_load_icon(const char *path, const char *name, int max_dim,
     return 0;
   }
 
-  printf("winman: %s icon %dx%d from %s\n", name, icon->width,
-         icon->height, path);
+  printf("winman: %s icon %dx%d from %s\n", name, icon->width, icon->height,
+         path);
   return 1;
 }
 
@@ -68,7 +68,7 @@ static int tb_load_network_icon(const char *path, const char *name,
 void tb_load_icons(void) {
   if (!tb_start_icon_loaded)
     tb_start_icon_loaded = tb_load_icon(TB_START_ICON_PATH, "start",
-                                       TB_START_ICON_MAX_DIM, &tb_start_icon);
+                                        TB_START_ICON_MAX_DIM, &tb_start_icon);
   if (!tb_network_connected_icon_loaded)
     tb_network_connected_icon_loaded = tb_load_network_icon(
         TB_NETWORK_CONNECTED_ICON_PATH, "connected network",
@@ -284,8 +284,8 @@ void draw_button_mask(int x, int y,
 
 /* Taskbar masks carry their own size, independently of the Start button. */
 static void draw_taskbar_mask(int x, int y, int size,
-                              const uint8_t mask[size][size],
-                              uint32_t fg, uint32_t bg) {
+                              const uint8_t mask[size][size], uint32_t fg,
+                              uint32_t bg) {
   fb_fill_rect(x, y, size, size, bg);
   for (int r = 0; r < size; r++) {
     for (int c = 0; c < size; c++) {
@@ -503,7 +503,8 @@ static void draw_network_status(void) {
   if (!network_rect(&x, &y, &w, &h))
     return;
   const struct bmp_image *icon = tb_network_connected
-      ? &tb_network_connected_icon : &tb_network_disconnected_icon;
+                                     ? &tb_network_connected_icon
+                                     : &tb_network_disconnected_icon;
   int loaded = tb_network_connected ? tb_network_connected_icon_loaded
                                     : tb_network_disconnected_icon_loaded;
   if (!loaded) {
@@ -528,8 +529,8 @@ static void draw_network_status(void) {
   if (2 * pad >= w || 2 * pad >= h)
     pad = 0;
 
-  blit_icon(x + pad, y + pad, w - 2 * pad, h - 2 * pad,
-            icon->width, icon->height, icon->pixels);
+  blit_icon(x + pad, y + pad, w - 2 * pad, h - 2 * pad, icon->width,
+            icon->height, icon->pixels);
 }
 
 void draw_taskbar(void) {
