@@ -19,8 +19,6 @@
 #include <drivers/sound/sb16.h>
 #include <drivers/storage/ahci.h>
 #include <drivers/video/nvidia/nvidia.h>
-#include <drivers/video/virtio/virtio_gpu.h>
-#include <drivers/video/virtualbox/vbox_video.h>
 #include <fs/ext2/ext2.h>
 #include <drivers/storage/ahci_block.h>
 #include <drivers/usb/storage/usb_storage.h>
@@ -96,34 +94,12 @@ static void ipc_and_sched_init(void) {
   log_write("scheduler initialised", KERNEL, LOG_INFO);
 }
 
-static void display_init(u64 mb2_addr) {
-  log_write("initialising framebuffer", KERNEL, LOG_INFO);
-  framebuffer_init(mb2_addr);
-  log_write("framebuffer initialised", KERNEL, LOG_INFO);
-
-  if (!nvidia_display_active()) {
-    if (nvidia_device_count() > 0) {
-      log_write("display: NVIDIA detected but not driving scanout", KERNEL,
-                LOG_INFO);
-    }
-    if (virtio_gpu_init() == 0) {
-      if (framebuffer_attach_virtio() != 0) {
-        log_write("display: virtio attach failed, staying on MB2 fb", KERNEL,
-                  LOG_WARN);
-      }
-    } else if (vbox_video_init(framebuffer_width(), framebuffer_height()) ==
-               0) {
-      if (framebuffer_attach_virtualbox() != 0) {
-        log_write("display: VMSVGA attach failed, staying on MB2 fb", KERNEL,
-                  LOG_WARN);
-      }
-    } else {
-      log_write("display: no dynamic GPU, staying on MB2 fb", KERNEL, LOG_INFO);
-    }
-  } else {
-    log_write("display: NVIDIA driving scanout, keeping its framebuffer",
-              KERNEL, LOG_INFO);
-  }
+/* Which backend ends up driving the scanout is the display module's business;
+ * whether that backend earns a scheduler thread is ours. */
+static void display_start(u64 mb2_addr) {
+  log_write("initialising display", KERNEL, LOG_INFO);
+  display_init(mb2_addr);
+  log_write("display initialised", KERNEL, LOG_INFO);
 
   if (framebuffer_needs_flush()) {
     struct task *flush = task_spawn(framebuffer_flush_thread_entry);
@@ -309,7 +285,7 @@ void kernel_main(u64 mb2_addr) {
   acpi_and_smp_init(mb2_addr);
   ipc_and_sched_init();
   devices_init(); /* PCI + drivers first so display can see them */
-  display_init(mb2_addr);
+  display_start(mb2_addr);
   input_init(); /* after real framebuffer exists */
   filesystem_init(mb2_addr);
   late_init();

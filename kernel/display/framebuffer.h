@@ -1,17 +1,13 @@
 /* kernel/display/framebuffer.h , framebuffer abstraction.
  *
- * Four backends sit behind this surface:
- *   - MB2 direct: a native 32-bit firmware framebuffer handed to us by GRUB.
- *   - MB2 shadow: a canonical 32-bit surface converted into non-native
- *     VBE/GOP pixel layouts during present.
- *   - virtio-gpu mode: a scatter-gather pixel buffer attached to the host
- *     resource. Damage tracking + framebuffer_present() flush touched
- *     rects across the virtqueue.
- *   - VirtualBox VMSVGA: a 32-bit SVGA II scanout with VMMDev resize hints
- *     and damage updates submitted through the SVGA FIFO.
+ * One surface, and whichever backend currently owns the scanout behind it.
+ * Which backend that is , firmware, virtio-gpu, VMSVGA , is deliberately not
+ * part of this interface: callers draw, mark damage, and present. The set of
+ * backends and the order they are probed in live in framebuffer.c.
  *
- * Switching backends is one-way (MB2 → accelerated backend); callers do
- * not care which is active beyond present + damage tracking.
+ * Call display_init() once at boot. After it returns, framebuffer_needs_flush
+ * says whether the active backend wants the periodic present worker; nothing
+ * else here varies by backend.
  *
  * Implementation: kernel/display/framebuffer.c.
  */
@@ -55,14 +51,11 @@ u32 framebuffer_pitch(void);
 u32 framebuffer_num_pages(void);
 u64 framebuffer_phys_for_page(u32 idx);
 
-/* One-shot switch to the virtio-gpu backend. Allocates a reusable 64 MiB
- * backing pool and an oversized host resource so ordinary resizes only change
- * the scanout rectangle. Must be called after virtio_gpu_init succeeds. */
-int framebuffer_attach_virtio(void);
-
-/* Switch from the firmware GOP/VBE mapping to VirtualBox's VMSVGA 2D
- * framebuffer. The VMMDev companion supplies host window-size hints. */
-int framebuffer_attach_virtualbox(void);
+/* Bring up the display: probe the firmware framebuffer, then take the best
+ * backend available. Returns 0 once something is driving the scanout, -1 only
+ * when there is no framebuffer at all. Callers do not learn which backend
+ * won; ask framebuffer_needs_flush() whether a flush worker is wanted. */
+int display_init(u64 mb2_addr);
 
 /* Poll the active accelerated backend for a host-side window resize. Returns
  * 1 if rebound to a new size, 0 otherwise. Owned by the flush thread. */
