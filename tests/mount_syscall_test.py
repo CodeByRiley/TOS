@@ -85,6 +85,17 @@ def main() -> int:
         send_text(qmp, "mount -u /mnt\n")
         expect("umount: released /mnt", "umount syscall did not release")
 
+        # Failures come back as a negated errno, which musl turns into errno
+        # and -1, so these strings are strerror's and prove the code survived
+        # the whole path rather than being flattened to a generic -1.
+        send_text(qmp, "mount nosuchvol /mnt9\n")
+        expect("cannot mount nosuchvol at /mnt9: no such disk",
+               "unknown volume did not report ENOENT")
+
+        send_text(qmp, "mount -u /\n")
+        expect("cannot unmount /: disk in use",
+               "unmounting the root did not report EBUSY")
+
         # Remounting is the point of leaving unclaimed AHCI adapters open: the
         # transport has to survive an unmount for a second mount to borrow it.
         # A different mountpoint keeps this from matching the first mount's

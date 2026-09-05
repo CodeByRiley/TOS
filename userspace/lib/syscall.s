@@ -47,6 +47,18 @@ syscall4:
     syscall
     ret
 
+; long syscall5(long n, long a, long b, long c, long d, long e)
+global syscall5
+syscall5:
+	mov rax, rdi
+	mov rdi, rsi
+	mov rsi, rdx
+	mov rdx, rcx
+	mov r10, r8
+	mov r8, r9
+	syscall
+	ret
+
 ; long syscall6(long n, long a, long b, long c, long d, long e, long f)
 global syscall6
 syscall6:

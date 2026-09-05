@@ -63,6 +63,18 @@ sysarg_t syscall4(sysarg_t n, sysarg_t a, sysarg_t b, sysarg_t c,
     return ret;
 }
 
+sysarg_t syscall5(sysarg_t n, sysarg_t a, sysarg_t b, sysarg_t c,
+                  sysarg_t d, sysarg_t e) {
+    sysarg_t ret;
+    register sysarg_t r10 __asm__("r10") = d;
+    register sysarg_t r8  __asm__("r8")  = e;
+    __asm__ volatile ("syscall"
+                      : "=a"(ret)
+                      : "a"(n), "D"(a), "S"(b), "d"(c), "r"(r10), "r"(r8)
+                      : "rcx", "r11", "memory");
+    return ret;
+}
+
 sysarg_t syscall6(sysarg_t n, sysarg_t a, sysarg_t b, sysarg_t c,
                   sysarg_t d, sysarg_t e, sysarg_t f) {
     sysarg_t ret;

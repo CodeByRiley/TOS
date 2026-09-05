@@ -3,6 +3,7 @@
 #define VFS_INTERNAL_H
 #include "vfs.h"
 #include "lock.h"
+#include <utilities/errno.h>
 #include <memory/heap.h>
 #include <utilities/string.h>
 

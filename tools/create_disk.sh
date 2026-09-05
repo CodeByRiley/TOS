@@ -53,6 +53,7 @@ payloads=(
 	"userspace/bin/winman/winman.elf::system/bin/winman.elf"
 	"userspace/bin/plist/plist.elf::system/bin/plist.elf"
 	"userspace/bin/mount/mount.elf::system/bin/mount.elf"
+	"userspace/bin/umount/umount.elf::system/bin/umount.elf"
 	"userspace/bin/lsdisk/lsdisk.elf::system/bin/lsdisk.elf"
 	"userspace/bin/diskinfo/diskinfo.elf::system/bin/diskinfo.elf"
 	"userspace/bin/sync/sync.elf::system/bin/sync.elf"

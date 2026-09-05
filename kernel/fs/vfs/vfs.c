@@ -85,18 +85,34 @@ static void release_super(struct vfs_superblock *super) {
     memset(super, 0, sizeof(*super));
 }
 
+/* Negative errno, so a caller can say WHY a mount failed rather than only
+ * that it did. The distinction that matters to a person at a shell is
+ * "nothing here recognises this volume" (EINVAL) against "the mountpoint is
+ * taken" (EBUSY) or "there is no such filesystem" (ENODEV); the auto variants
+ * below rely on EINVAL being the one that means "try the next backend". */
 static int mount_type(const char *path, const struct vfs_filesystem *type,
                       void *source, size_t size, int attach) {
+    if (!type)
+        return -ENODEV;
+    if (!source)
+        return -EINVAL;
     char name[VFS_PATH_MAX];
-    if (!type || !source || mount_name(path, name) || vfs_find_mount(name))
-        return -1;
+    if (mount_name(path, name))
+        return -EINVAL;
+    if (vfs_find_mount(name))
+        return -EBUSY;
     /* Validate capacity BEFORE calling a backend with mutable mount state. */
     struct vfs_mount *mount = 0;
     for (size_t i = 0; i < VFS_MAX_MOUNTS; i++)
         if (!mounts[i].super.filesystem) { mount = &mounts[i]; break; }
-    if (!mount || (attach && !type->attach) ||
-        (!attach && (!size || (type->probe && type->probe(source, size) <= 0))))
-        return -1;
+    if (!mount)
+        return -ENOMEM;
+    /* A filesystem with no attach cannot sit on a device at all, which is a
+     * property of the type and not of this volume. */
+    if (attach && !type->attach)
+        return -ENODEV;
+    if (!attach && (!size || (type->probe && type->probe(source, size) <= 0)))
+        return -EINVAL;
     struct vfs_superblock *super = &mount->super;
     super->filesystem = type;
     if (attach)
@@ -104,7 +120,7 @@ static int mount_type(const char *path, const struct vfs_filesystem *type,
     int result = attach ? type->attach(super, source) : type->mount(super, source, size);
     if (result || !super->root || super->root->type != VFS_NODE_DIRECTORY) {
         release_super(super);
-        return -1;
+        return -EINVAL;
     }
     strcpy(mount->path, name);
     return 0;
@@ -120,51 +136,69 @@ int vfs_attach(const char *path, const char *type, void *context) {
     return mount_type(path, find_type(type), context, 0, 1);
 }
 
+/* Try each registered filesystem in turn and keep the first that claims the
+ * source. Only two failures mean "ask the next one": EINVAL, this backend
+ * looked and did not recognise the volume, and ENODEV, this backend cannot
+ * work that way at all. Every other code describes the mountpoint rather than
+ * the backend and would come back identically from all the rest, so it is
+ * returned straight away instead of being retried seven more times and then
+ * replaced by whatever the last candidate happened to say. */
+static int mount_any(const char *path, void *source, size_t size, int attach,
+                     const char **type) {
+    if (type) *type = 0;
+    /* Nothing registered, or nothing that can take a source of this kind. */
+    int reason = -ENODEV;
+    for (size_t i = 0; i < VFS_MAX_FILESYSTEMS; i++) {
+        if (!filesystems[i]) continue;
+        int result = mount_type(path, filesystems[i], source, size, attach);
+        if (result == 0) {
+            if (type) *type = filesystems[i]->name;
+            return 0;
+        }
+        if (result != -EINVAL && result != -ENODEV)
+            return result;
+        if (result == -EINVAL)
+            reason = -EINVAL; /* Something read it and rejected it. */
+    }
+    return reason;
+}
+
 int vfs_mount_auto(const char *path, void *image, size_t size, const char **type) {
     VFS_GUARD();
-    if (type) *type = 0;
-    for (size_t i = 0; i < VFS_MAX_FILESYSTEMS; i++) {
-        if (filesystems[i] && !mount_type(path, filesystems[i], image, size, 0)) {
-            if (type) *type = filesystems[i]->name;
-            return 0;
-        }
-    }
-    return -1;
+    return mount_any(path, image, size, 0, type);
 }
 
-/* The attach counterpart of vfs_mount_auto: offer a transport to each
- * registered filesystem in registration order and keep the first that claims
- * it. Order therefore belongs to whoever registers, so the discriminating
- * formats must register first , ext2 validates a superblock, while FAT accepts
- * anything carrying a plausible BPB. */
+/* The attach counterpart of vfs_mount_auto. Order belongs to whoever
+ * registers, so the discriminating formats must register first , ext2
+ * validates a superblock, while FAT accepts anything carrying a plausible
+ * BPB. */
 int vfs_attach_auto(const char *path, void *context, const char **type) {
     VFS_GUARD();
-    if (type) *type = 0;
-    for (size_t i = 0; i < VFS_MAX_FILESYSTEMS; i++) {
-        if (filesystems[i] && !mount_type(path, filesystems[i], context, 0, 1)) {
-            if (type) *type = filesystems[i]->name;
-            return 0;
-        }
-    }
-    return -1;
+    return mount_any(path, context, 0, 1, type);
 }
 
+/* Negative errno. EINVAL means the path is not a mountpoint at all, and every
+ * EBUSY means something is still using the volume , an open file, a mount
+ * nested inside it, or a live inode reference. EIO is the dangerous one: the
+ * volume is still mounted because its final sync failed, so its data is not
+ * on the disk and unmounting anyway would lose it. */
 int vfs_unmount(const char *path) {
     VFS_GUARD();
     char name[VFS_PATH_MAX];
-    if (mount_name(path, name)) return -1;
+    if (mount_name(path, name)) return -EINVAL;
     struct vfs_mount *mount = vfs_find_mount(name);
-    if (!mount || mount->super.open_files) return -1;
+    if (!mount) return -EINVAL;
+    if (mount->super.open_files) return -EBUSY;
     size_t length = strlen(name);
     for (size_t i = 0; i < VFS_MAX_MOUNTS; i++)
         if (&mounts[i] != mount && mounts[i].super.filesystem &&
             !strncmp(mounts[i].path, name, length) &&
             (length == 1 || mounts[i].path[length] == '/'))
-            return -1;
+            return -EBUSY;
     for (struct vfs_inode *inode = mount->super.inodes; inode; inode = inode->next)
-        if (inode != mount->super.root || inode->references != 1) return -1;
+        if (inode != mount->super.root || inode->references != 1) return -EBUSY;
     if (mount->super.filesystem->sync && mount->super.filesystem->sync(&mount->super))
-        return -1;
+        return -EIO;
     release_super(&mount->super);
     memset(mount, 0, sizeof(*mount));
     return 0;

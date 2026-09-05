@@ -33,12 +33,10 @@ long chdir(const char *path) {
  * through musl's own wrappers. See lib/syscall.h for what TOS accepts. */
 int mount(const char *source, const char *target, const char *filesystemtype,
           unsigned long mountflags, const void *data) {
-    /* Five arguments, sent through the six-argument trampoline: there is no
-     * syscall5, and the kernel never reads the sixth slot for this call. */
-    return (int)syscall6(SYS_MOUNT, (sysarg_t)(uintptr_t)source,
+    return (int)syscall5(SYS_MOUNT, (sysarg_t)(uintptr_t)source,
                          (sysarg_t)(uintptr_t)target,
                          (sysarg_t)(uintptr_t)filesystemtype,
-                         (sysarg_t)mountflags, (sysarg_t)(uintptr_t)data, 0);
+                         (sysarg_t)mountflags, (sysarg_t)(uintptr_t)data);
 }
 int umount2(const char *target, int flags) {
     return (int)syscall2(SYS_UMOUNT, (sysarg_t)(uintptr_t)target,

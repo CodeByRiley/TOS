@@ -55,6 +55,13 @@ enum errornum {
     ENOSYS       = 38,
     ENOTEMPTY    = 39,
     ELOOP        = 40,
+    /* Socket codes. Not contiguous with the block above because these are
+     * the Linux numbers, which is what the kernel returns and what musl's
+     * headers use; see kernel/utilities/errno.h. */
+    ENOTSOCK        = 88,
+    EPROTONOSUPPORT = 93,
+    EAFNOSUPPORT    = 97,
+    EADDRINUSE      = 98,
 };
 
 #endif

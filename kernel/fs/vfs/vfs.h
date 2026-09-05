@@ -99,6 +99,12 @@ void vfs_inode_put(struct vfs_inode *inode);
  * Init is boot-time only. Unmount before releasing a mounted image.
  * Callers own handle/buffer storage and must keep it alive until calls return;
  * separate calls (e.g. seek + write) are not one atomic operation. */
+/* The mount and unmount calls return 0 or a NEGATIVE errno (see
+ * utilities/errno.h), so a caller can report why rather than only that it
+ * failed: ENODEV for no such filesystem, EBUSY for a taken mountpoint or a
+ * volume still in use, EINVAL for a source nothing recognises, ENOMEM for a
+ * full mount table, EIO when a final sync failed and the volume is therefore
+ * still mounted. Everything else here still returns a bare 0/-1. */
 void vfs_init(void);
 int vfs_register(const struct vfs_filesystem *filesystem);
 int vfs_mount_image(const char *mountpoint, const char *filesystem,

@@ -276,6 +276,10 @@ $(HOST_TEST_DIR)/ext2-base.img: tools/create_ext2_test_image.sh \
 		tests/fixtures/ext2_root/seed/hello.txt | $(HOST_TEST_DIR)
 	$(call run_linux,bash tools/create_ext2_test_image.sh $@)
 
+$(HOST_TEST_DIR)/mbr-base.img: tools/create_partitioned_test_image.sh \
+		| $(HOST_TEST_DIR)
+	$(call run_linux,bash tools/create_partitioned_test_image.sh $@)
+
 EXT2_HOST_SRCS := kernel/fs/ext2/ext2_mount.c kernel/fs/ext2/ext2_inode.c \
 		kernel/fs/ext2/ext2_io.c \
 		kernel/fs/ext2/ext2_dir.c kernel/fs/ext2/ext2_file.c \
@@ -420,12 +424,14 @@ holyd-win:
 	@echo "  ./holyd.exe samples/gui.hd"
 
 .PHONY: test-qemu-heavy test-heavy
-# The ext2 image is a real prerequisite, not just a host-test artefact: the
-# mount test needs a second volume in a format the FAT root is not.
-test-qemu-heavy: build-x86_64 $(HOST_TEST_DIR)/ext2-base.img
+# Both images are real prerequisites, not just host-test artefacts: the mount
+# test needs a second volume in a format the FAT root is not, and the MBR test
+# needs a disk whose sector 0 is a partition table.
+test-qemu-heavy: build-x86_64 $(HOST_TEST_DIR)/ext2-base.img $(HOST_TEST_DIR)/mbr-base.img
 	wsl bash -lc "cd \$$(wslpath '$(CURDIR)') && \
 		python3 tests/smp_async_spawn_test.py --cpus 4 --timeout 90 && \
 		python3 tests/mount_syscall_test.py --timeout 180 && \
+		python3 tests/mbr_partition_test.py --timeout 200 && \
 		python3 tests/system_stress_test.py --cpus 4 --timeout 240 && \
 		python3 tests/window_lifecycle_test.py --timeout 120 && \
 		python3 tests/muse_liveness_test.py --timeout 90 && \

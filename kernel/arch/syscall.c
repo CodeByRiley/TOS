@@ -12,6 +12,17 @@
  * action, and writes the result into the frame's rax slot. The tail of the
  * frame is a complete, validated ring-3 iretq image.
  *
+ * Failures are reported as a NEGATED errno (utilities/errno.h), which is the
+ * Linux convention: musl's __syscall_ret turns a return in [-4095, -1] into
+ * errno and -1, so a musl-linked caller gets working errno and strerror()
+ * without either side knowing about the other. A handler that returns a bare
+ * -1 is therefore claiming EPERM, which is why none of them do any more.
+ *
+ * Static helpers in this file (resolve_path, fd_alloc_for, fb_source_span and
+ * friends) still signal with a plain 0/-1. They are not syscall returns; the
+ * handler that calls one decides which code the failure deserves, and often
+ * the same helper failure means different things to different callers.
+ *
  * Pointer validation is best-effort: anything taken from userspace is
  * range-checked against [0, USER_LOW_LIMIT) and walked via
  * vmm_translate_in to confirm it's actually mapped USER+writable. The
@@ -45,6 +56,7 @@
 #include <sched/sched.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <utilities/errno.h>
 #include <utilities/log.h>
 #include <utilities/string.h>
 
@@ -232,7 +244,7 @@ static void uts_field(char out[65], const char *value) {
 
 static long sys_uname(struct linux_utsname *out) {
   if (!out || !user_buffer_ok(out, sizeof(*out), 1))
-    return -1;
+    return -EFAULT;
 
   memset(out, 0, sizeof(*out));
   uts_field(out->sysname, "TOS");
@@ -251,13 +263,13 @@ static long sys_rt_sigaction(int signal,
   struct task *task = task_current();
   if (!task || !task->context || signal < 1 || signal > TASK_SIGNAL_COUNT ||
       sigset_bytes != LINUX_SIGSET_BYTES)
-    return -1;
+    return -EINVAL;
   if (action && (signal == LINUX_SIGKILL || signal == LINUX_SIGSTOP))
-    return -1;
+    return -EINVAL;
   if (action && !user_buffer_ok(action, sizeof(*action), 0))
-    return -1;
+    return -EFAULT;
   if (old_action && !user_buffer_ok(old_action, sizeof(*old_action), 1))
-    return -1;
+    return -EFAULT;
 
   /* Copy through locals so act == oldact consumes the new disposition before
    * returning the previous one, matching the Linux syscall contract. */
@@ -289,8 +301,8 @@ static int fd_alloc_for(struct task *t, struct vfs_file *f) {
 }
 
 static long sys_fb_info(struct fb_info *out) {
-  if (!out)
-    return -1;
+  if (!out || !user_buffer_ok(out, sizeof(*out), 1))
+    return -EFAULT;
   out->width = framebuffer_width();
   out->height = framebuffer_height();
   out->pitch = framebuffer_pitch();
@@ -334,13 +346,13 @@ static long sys_fb_map(void) {
   for (u32 i = first_missing; i < pages; i++) {
     u64 phys = framebuffer_phys_for_page(i);
     if (!phys)
-      return -1;
+      return -ENXIO;
     /* The framebuffer pool belongs to the display subsystem. Mark this as a
        borrowed mapping so munmap/task teardown removes the PTE without
        returning the still-live scanout frame to the PMM. */
     if (vmm_map(USER_FB_BASE + (u64)i * 4096, phys,
                 VMM_PRESENT | VMM_WRITE | VMM_USER | VMM_SHARED) != 0) {
-      return -1;
+      return -ENOMEM;
     }
   }
   return USER_FB_BASE;
@@ -364,11 +376,15 @@ static int fb_source_span(u64 source_pitch, u64 *source_bytes) {
 static long sys_fb_register(const void *pixels, u64 source_pitch) {
   struct task *task = task_current();
   u64 source_bytes;
-  if (!task_pml4(task) || msg_input_owner() != task->pid || !pixels ||
-      fb_source_span(source_pitch, &source_bytes) != 0 ||
-      !user_buffer_ok(pixels, source_bytes, 0)) {
-    return -1;
-  }
+  if (!task_pml4(task))
+    return -EINVAL;
+  /* Only the process holding the display may hand it a scanout buffer. */
+  if (msg_input_owner() != task->pid)
+    return -EPERM;
+  if (!pixels || fb_source_span(source_pitch, &source_bytes) != 0)
+    return -EINVAL;
+  if (!user_buffer_ok(pixels, source_bytes, 0))
+    return -EFAULT;
 
   return framebuffer_register_user(task->vm->user_pml4, task->pid,
                                    (u64)(uintptr_t)pixels, (u32)source_pitch,
@@ -378,7 +394,7 @@ static long sys_fb_register(const void *pixels, u64 source_pitch) {
 static long sys_fb_unregister(void) {
   struct task *task = task_current();
   if (!task_pml4(task))
-    return -1;
+    return -EINVAL;
   return framebuffer_unregister_user(task->vm->user_pml4, task->pid);
 }
 
@@ -386,18 +402,22 @@ static long sys_fb_present(const void *pixels, u64 source_pitch,
                            const struct fb_rect *user_rects, u64 rect_count) {
   struct task *task = task_current();
   u64 source_bytes;
-  if (!task_pml4(task) || msg_input_owner() != task->pid || !pixels ||
-      !user_rects || rect_count == 0 || rect_count > FB_PRESENT_MAX_RECTS ||
-      fb_source_span(source_pitch, &source_bytes) != 0) {
-    return -1;
-  }
+  if (!task_pml4(task))
+    return -EINVAL;
+  if (msg_input_owner() != task->pid)
+    return -EPERM;
+  if (!pixels || !user_rects)
+    return -EFAULT;
+  if (rect_count == 0 || rect_count > FB_PRESENT_MAX_RECTS ||
+      fb_source_span(source_pitch, &source_bytes) != 0)
+    return -EINVAL;
 
   int registered = framebuffer_user_buffer_registered(
       task->vm->user_pml4, task->pid, (u64)(uintptr_t)pixels, (u32)source_pitch,
       source_bytes);
   if ((!registered && !user_buffer_ok(pixels, source_bytes, 0)) ||
       !user_buffer_ok(user_rects, rect_count * sizeof(*user_rects), 0)) {
-    return -1;
+    return -EFAULT;
   }
 
   /* Snapshot metadata before APs start. They never dereference the caller's
@@ -449,22 +469,22 @@ static int user_buffer_ok(const void *pointer, u64 bytes, int writable) {
  * With MAP_FIXED, `addr` must be page-aligned and entirely unmapped. */
 static long sys_mmap(u64 addr, long len, int prot, int flags) {
   if (len <= 0)
-    return -1;
+    return -EINVAL;
 
   struct task *t = task_current();
   if (!task_pml4(t))
-    return -1;
+    return -EINVAL;
 
   u64 pte_flags = prot_to_pte(prot);
   if (!pte_flags)
-    return -1;
+    return -EINVAL;
 
   u64 bytes = ((u64)len + 4095) & ~4095ULL;
   if (bytes < (u64)len)
-    return -1;
+    return -EINVAL;
 
   u64 base = uvm_reserve(t->vm, addr, bytes, pte_flags, (flags & MAP_FIXED) != 0);
-  return base ? (long)base : -1;
+  return base ? (long)base : -ENOMEM;
 }
 
 /* mprotect(addr, len, prot).
@@ -475,21 +495,21 @@ static long sys_mmap(u64 addr, long len, int prot, int flags) {
  * it all-or-nothing. */
 static long sys_mprotect(u64 addr, long len, int prot) {
   if (len <= 0 || (addr & 4095))
-    return -1;
+    return -EINVAL;
 
   struct task *t = task_current();
   if (!task_pml4(t))
-    return -1;
+    return -EINVAL;
 
   u64 pte_flags = prot_to_pte(prot);
   if (!pte_flags)
-    return -1;
+    return -EINVAL;
 
   u64 bytes = ((u64)len + 4095) & ~4095ULL;
   if (bytes < (u64)len)
-    return -1;
+    return -EINVAL;
   if (framebuffer_registered_range_overlaps(t->vm->user_pml4, addr, bytes))
-    return -1;
+    return -EBUSY;
 
   return uvm_protect(t->vm, addr, bytes, pte_flags);
 }
@@ -500,22 +520,23 @@ static long sys_mprotect(u64 addr, long len, int prot) {
  * , so this reports success as long as the range itself is legal. */
 static long sys_munmap(u64 addr, long len) {
   if (len <= 0 || (addr & 4095))
-    return -1;
+    return -EINVAL;
 
   struct task *t = task_current();
   if (!task_pml4(t))
-    return -1;
+    return -EINVAL;
 
   u64 bytes = ((u64)len + 4095) & ~4095ULL;
   if (bytes < (u64)len)
-    return -1;
+    return -EINVAL;
 
   return (long)uvm_release(t->vm, addr, bytes);
 }
 
 static long sys_kbd_poll(int *pressed, u16 *key) {
-  if (!pressed || !key)
-    return -1;
+  if (!pressed || !key || !user_buffer_ok(pressed, sizeof(*pressed), 1) ||
+      !user_buffer_ok(key, sizeof(*key), 1))
+    return -EFAULT;
   return keyboard_poll(pressed, key);
 }
 
@@ -604,7 +625,7 @@ static int caller_tty(void) {
 
 static long sys_write(long fd, const void *buf, long n) {
   if (!buf || n < 0 || !user_buffer_ok(buf, (u64)n, 0))
-    return -1;
+    return -EFAULT;
 
   if (fd == 1 || fd == 2) {
     tty_write_ch(caller_tty(), (const char *)buf, (usize)n);
@@ -619,7 +640,7 @@ static long sys_write(long fd, const void *buf, long n) {
   struct task *t = task_current();
   if (!t || fd < 3 || fd >= TASK_MAX_FDS || !task_fd_file(t, fd) ||
       task_fd_is_dir(t, fd))
-    return -1;
+    return -EBADF;
 
   return (long)vfs_write(task_fd_file(t, fd), buf, (usize)n);
 }
@@ -630,11 +651,11 @@ static long sys_write(long fd, const void *buf, long n) {
 
 static long sys_exec(const char *path, char *const argv[]) {
   if (!path)
-    return -1;
+    return -EFAULT;
 
   char resolved[TASK_CWD_MAX];
   if (resolve_path(path, resolved, sizeof(resolved)) != 0)
-    return -1;
+    return -ENAMETOOLONG;
 
   return process_exec(resolved, argv);
 }
@@ -644,18 +665,18 @@ static long sys_exec(const char *path, char *const argv[]) {
  * the user types more commands. */
 static long sys_spawn(const char *path, char *const argv[]) {
   if (!path)
-    return -1;
+    return -EFAULT;
 
   char resolved[TASK_CWD_MAX];
   if (resolve_path(path, resolved, sizeof(resolved)) != 0)
-    return -1;
+    return -ENAMETOOLONG;
 
   return process_spawn_async(resolved, argv);
 }
 
 static long sys_kill(long pid, int signal) {
   if (pid < 1)
-    return -1;
+    return -EINVAL;
   return process_kill(pid, signal);
 }
 
@@ -671,14 +692,14 @@ static long sys_yield(void) {
 }
 
 static long sys_msg_get(struct msg *out) {
-  if (!out)
-    return -1;
+  if (!out || !user_buffer_ok(out, sizeof(*out), 1))
+    return -EFAULT;
   return msg_get(out) ? 1 : 0;
 }
 
 static long sys_msg_peek(struct msg *out) {
-  if (!out)
-    return -1;
+  if (!out || !user_buffer_ok(out, sizeof(*out), 1))
+    return -EFAULT;
   return msg_peek(out) ? 1 : 0;
 }
 
@@ -693,8 +714,10 @@ static long sys_mouse_pos(int32_t *x, int32_t *y, u8 *buttons) {
 }
 
 static long sys_con_write(const char *buf, long n) {
-  if (!buf || n < 0)
-    return -1;
+  if (!buf)
+    return -EFAULT;
+  if (n < 0)
+    return -EINVAL;
   tty_write_ch(caller_tty(), buf, (usize)n);
   return n;
 }
@@ -723,7 +746,7 @@ static long sys_sleep_ticks(long n) {
 
 static long sys_get_pid(void) {
   struct task *t = task_current();
-  return t ? t->pid : -1;
+  return t ? t->pid : -ESRCH;
 }
 
 static int audio_caller_pid(void) {
@@ -802,16 +825,16 @@ static long sys_audio_resume(void) {
 
 static long sys_ipc_send(long target_pid, const struct ipc_msg *m) {
   if (!m)
-    return -1;
+    return -EFAULT;
   struct task *t = task_current();
   if (!t)
-    return -1;
+    return -ESRCH;
   return ipc_send((int)target_pid, m, t->pid);
 }
 
 static long sys_ipc_recv(struct ipc_msg *out) {
   if (!out)
-    return -1;
+    return -EFAULT;
   return ipc_recv(out) ? 1 : 0;
 }
 
@@ -820,23 +843,25 @@ static long sys_ipc_recv(struct ipc_msg *out) {
  * target VA via the target task's bump allocator. */
 static long sys_shmem_share(long target_pid, u64 in_va, long npages,
                             u64 *out_target_va) {
-  if (!out_target_va || target_pid <= 0 || npages <= 0)
-    return -1;
+  if (!out_target_va)
+    return -EFAULT;
+  if (target_pid <= 0 || npages <= 0)
+    return -EINVAL;
   if (npages > MAX_SHMEM_PAGES)
-    return -1;
+    return -EINVAL;
   if (in_va & 0xFFFULL)
-    return -1;
+    return -EINVAL;
 
   struct task *me = task_current();
   if (!task_pml4(me))
-    return -1;
+    return -EINVAL;
 
   struct task *target = task_find((int)target_pid);
   if (!task_pml4(target))
-    return -1;
+    return -ESRCH;
   /* Validate the result slot before creating mappings or changing accounting. */
   if (!user_buffer_ok(out_target_va, sizeof(*out_target_va), 1))
-    return -1;
+    return -EFAULT;
   if (target->vm->shmem_next_va == 0)
     target->vm->shmem_next_va = 0x0000000080000000ULL; /* defensive */
 
@@ -848,10 +873,10 @@ static long sys_shmem_share(long target_pid, u64 in_va, long npages,
   for (long i = 0; i < npages; i++) {
     u64 phys = vmm_translate_in(me->vm->user_pml4, in_va + (u64)i * 4096);
     if (!phys)
-      return -1;
+      return -EFAULT;
     if (vmm_map_in(target->vm->user_pml4, target_va + (u64)i * 4096, phys,
                    flags) != 0) {
-      return -1;
+      return -ENOMEM;
     }
   }
 
@@ -878,17 +903,17 @@ static long sys_shmem_share(long target_pid, u64 in_va, long npages,
  * have to track exactly which pages survived. */
 static long sys_shmem_unshare(long target_pid, u64 va, long npages) {
   if (target_pid <= 0 || npages <= 0 || npages > MAX_SHMEM_PAGES)
-    return -1;
+    return -EINVAL;
   if (va & 0xFFFULL)
-    return -1;
+    return -EINVAL;
 
   struct task *me = task_current();
   if (!task_pml4(me))
-    return -1;
+    return -EINVAL;
 
   struct task *target = task_find((int)target_pid);
   if (!task_pml4(target))
-    return -1;
+    return -ESRCH;
 
   /* Confine the range to the shmem arena, where sys_shmem_share places
    * every mapping it makes.
@@ -900,7 +925,7 @@ static long sys_shmem_unshare(long target_pid, u64 va, long npages) {
    * process walk, not just this target's view of it. */
   u64 bytes = (u64)npages * 4096;
   if (va < USER_SHMEM_BASE || !uvm_range_ok(va, bytes))
-    return -1;
+    return -EINVAL;
 
   /* Only pages carrying VMM_SHARED arrived through a share, so only those
    * are ours to take away. Without this check any task could hand another
@@ -935,7 +960,7 @@ static long sys_shmem_unshare(long target_pid, u64 va, long npages) {
 static long sys_wm_register(void) {
   struct task *t = task_current();
   if (!t)
-    return -1;
+    return -ESRCH;
   int rc = msg_input_owner_register(t->pid);
   if (rc == 0) {
     tty_set_active(0);
@@ -962,16 +987,16 @@ static long sys_tty_drain(long idx, char *out, long max) {
 static long sys_tty_alloc(void) {
   struct task *t = task_current();
   if (!t || t->pid != msg_input_owner())
-    return -1;
+    return -EPERM;
   return tty_alloc();
 }
 
 static long sys_tty_free(long idx) {
   struct task *t = task_current();
   if (!t || t->pid != msg_input_owner())
-    return -1;
+    return -EPERM;
   if (idx <= TTY_KERNEL || idx >= TTY_MAX)
-    return -1;
+    return -EINVAL;
   tty_release((int)idx);
   return 0;
 }
@@ -979,13 +1004,13 @@ static long sys_tty_free(long idx) {
 static long sys_tty_spawn(const char *path, char *const argv[], long idx) {
   struct task *t = task_current();
   if (!t || t->pid != msg_input_owner())
-    return -1;
+    return -EPERM;
   if (!path)
-    return -1;
+    return -EFAULT;
 
   char resolved[TASK_CWD_MAX];
   if (resolve_path(path, resolved, sizeof(resolved)) != 0)
-    return -1;
+    return -ENAMETOOLONG;
 
   return process_spawn_async_tty(resolved, argv, (int)idx);
 }
@@ -1163,15 +1188,15 @@ static int resolve_path(const char *path, char *out, usize max) {
 static long sys_open(const char *path, int flags) {
   struct task *t = task_current();
   if (!t)
-    return -1;
+    return -ESRCH;
 
   char resolved[TASK_CWD_MAX];
   if (resolve_path(path, resolved, sizeof(resolved)) != 0)
-    return -1;
+    return -ENAMETOOLONG;
 
   struct vfs_file *f = (struct vfs_file *)kmalloc(sizeof(*f));
   if (!f)
-    return -1;
+    return -ENOMEM;
   memset(f, 0, sizeof(*f));
 
   int rc = vfs_open(resolved, f);
@@ -1179,13 +1204,13 @@ static long sys_open(const char *path, int flags) {
     if ((flags & (O_CREAT | O_TRUNC)) != 0) {
       vfs_close(f);
       kfree(f);
-      return -1;
+      return -EISDIR;
     }
     int fd = fd_alloc_for(t, f);
     if (fd < 0) {
       vfs_close(f);
       kfree(f);
-      return -1;
+      return -EMFILE;
     }
     /* Directory fds carry their path so readdir and stat can re-walk it.
      * That path is now a per-slot allocation rather than a fixed 256-byte
@@ -1195,7 +1220,7 @@ static long sys_open(const char *path, int flags) {
       task_fd_clear(slot);
       vfs_close(f);
       kfree(f);
-      return -1;
+      return -ENOMEM;
     }
     slot->type = TASK_FD_DIRECTORY;
     slot->file = f;
@@ -1206,7 +1231,7 @@ static long sys_open(const char *path, int flags) {
   if (rc == 0 && (flags & O_DIRECTORY)) {
     vfs_close(f);
     kfree(f);
-    return -1;
+    return -ENOTDIR;
   }
 
   if (rc != 0 && (flags & O_CREAT)) {
@@ -1218,14 +1243,14 @@ static long sys_open(const char *path, int flags) {
   if (rc != 0) {
     vfs_close(f);
     kfree(f);
-    return -1;
+    return -ENOENT;
   }
 
   int fd = fd_alloc_for(t, f);
   if (fd < 0) {
     vfs_close(f);
     kfree(f);
-    return -1;
+    return -EMFILE;
   }
 
   return fd;
@@ -1234,14 +1259,14 @@ static long sys_open(const char *path, int flags) {
 static long sys_unlink(const char *path) {
   char resolved[TASK_CWD_MAX];
   if (resolve_path(path, resolved, sizeof(resolved)) != 0)
-    return -1;
+    return -ENAMETOOLONG;
   return vfs_unlink(resolved);
 }
 
 static long sys_rmdir(const char *path) {
   char resolved[TASK_CWD_MAX];
   if (resolve_path(path, resolved, sizeof(resolved)) != 0)
-    return -1;
+    return -ENAMETOOLONG;
   return vfs_rmdir(resolved);
 }
 
@@ -1251,21 +1276,21 @@ static long sys_read(int fd, void *buf, usize n) {
   /* Handle standard input (fd 0) */
   if (fd == 0) {
     if (!t || !buf || n <= 0 || !user_buffer_ok(buf, n, 1))
-      return -1;
+      return -EFAULT;
     return sys_tty_read_input((char *)buf, (long)n);
   }
 
   /* Handle normal files (fd >= 3) */
   if (!t || fd < 3 || fd >= TASK_MAX_FDS || !task_fd_file(t, fd) ||
       task_fd_is_dir(t, fd))
-    return -1;
+    return -EBADF;
 
   struct vfs_file *file = task_fd_file(t, fd);
   usize available =
       file->position < file->size ? (usize)(file->size - file->position) : 0;
   usize transfer = n < available ? n : available;
   if (!user_buffer_ok(buf, transfer, 1))
-    return -1;
+    return -EFAULT;
   return (long)vfs_read(file, buf, n);
 }
 
@@ -1302,15 +1327,15 @@ static void linux_stat_from_vfs(const struct vfs_stat *fs,
 
 static long sys_stat_raw(const char *path, struct stat_user *out) {
   if (!path || !out)
-    return -1;
+    return -EFAULT;
 
   char resolved[TASK_CWD_MAX];
   if (resolve_path(path, resolved, sizeof(resolved)) != 0)
-    return -1;
+    return -ENAMETOOLONG;
 
   struct vfs_stat fs;
   if (vfs_stat(resolved, &fs) != 0)
-    return -1;
+    return -ENOENT;
 
   stat_from_vfs(&fs, out);
   return 0;
@@ -1318,18 +1343,18 @@ static long sys_stat_raw(const char *path, struct stat_user *out) {
 
 static long sys_stat(const char *path, struct linux_kstat *out) {
   if (!path || !out)
-    return -1;
+    return -EFAULT;
 
   char resolved[TASK_CWD_MAX];
   if (resolve_path(path, resolved, sizeof(resolved)) != 0)
-    return -1;
+    return -ENAMETOOLONG;
 
   struct vfs_stat fs;
   if (vfs_stat(resolved, &fs) != 0)
-    return -1;
+    return -ENOENT;
 
   if (!user_buffer_ok(out, sizeof(*out), 1))
-    return -1;
+    return -EFAULT;
   linux_stat_from_vfs(&fs, out);
   return 0;
 }
@@ -1339,18 +1364,20 @@ static long sys_stat(const char *path, struct linux_kstat *out) {
  * this fd , and keeps working if the name is unlinked while open. */
 static long sys_fstat_raw(int fd, struct stat_user *out) {
   struct task *t = task_current();
-  if (!t || !out || fd < 3 || fd >= TASK_MAX_FDS || !task_fd_file(t, fd))
-    return -1;
+  if (!out)
+    return -EFAULT;
+  if (!t || fd < 3 || fd >= TASK_MAX_FDS || !task_fd_file(t, fd))
+    return -EBADF;
 
   if (task_fd_is_dir(t, fd)) {
     struct vfs_stat fs;
     if (vfs_stat(task_fd_slot(t, fd)->dir_path, &fs) != 0)
-      return -1;
+      return -ENOENT;
     stat_from_vfs(&fs, out);
   } else {
     struct vfs_stat fs;
     if (vfs_file_stat(task_fd_file(t, fd), &fs) != 0)
-      return -1;
+      return -EIO;
     stat_from_vfs(&fs, out);
   }
   return 0;
@@ -1358,18 +1385,20 @@ static long sys_fstat_raw(int fd, struct stat_user *out) {
 
 static long sys_fstat(int fd, struct linux_kstat *out) {
   struct task *t = task_current();
-  if (!t || !out || fd < 3 || fd >= TASK_MAX_FDS || !task_fd_file(t, fd))
-    return -1;
+  if (!out)
+    return -EFAULT;
+  if (!t || fd < 3 || fd >= TASK_MAX_FDS || !task_fd_file(t, fd))
+    return -EBADF;
   if (!user_buffer_ok(out, sizeof(*out), 1))
-    return -1;
+    return -EFAULT;
 
   struct vfs_stat fs;
   if (task_fd_is_dir(t, fd)) {
     if (vfs_stat(task_fd_slot(t, fd)->dir_path, &fs) != 0)
-      return -1;
+      return -ENOENT;
   } else {
     if (vfs_file_stat(task_fd_file(t, fd), &fs) != 0)
-      return -1;
+      return -EIO;
   }
   linux_stat_from_vfs(&fs, out);
   return 0;
@@ -1379,7 +1408,7 @@ static long sys_lseek(int fd, long off, int whence) {
   struct task *t = task_current();
   if (!t || fd < 3 || fd >= TASK_MAX_FDS || !task_fd_file(t, fd) ||
       task_fd_is_dir(t, fd))
-    return -1;
+    return -EBADF;
   struct vfs_file *f = task_fd_file(t, fd);
   u64 base;
   if (whence == 0)
@@ -1389,31 +1418,31 @@ static long sys_lseek(int fd, long off, int whence) {
   else if (whence == 2)
     base = f->size;
   else
-    return -1;
+    return -EINVAL;
   u64 target;
   if (off < 0) {
     u64 distance = (u64)(-(off + 1)) + 1;
     if (distance > base)
-      return -1;
+      return -EINVAL;
     target = base - distance;
   } else {
     if ((u64)off > UINT64_MAX - base)
-      return -1;
+      return -EINVAL;
     target = base + (u64)off;
   }
   if (vfs_seek(f, target) != 0)
-    return -1;
+    return -EINVAL;
   return (long)target;
 }
 
 static long sys_close(int fd) {
   struct task *t = task_current();
   if (!t || fd < 3 || fd >= TASK_MAX_FDS)
-    return -1;
+    return -EBADF;
 
   struct task_fd *slot = task_fd_slot(t, fd);
   if (!slot)
-    return -1;
+    return -EBADF;
 
   /* Sockets share this fd space, so close() has to release them or every
    * socket a program opens outlives it. */
@@ -1424,7 +1453,7 @@ static long sys_close(int fd) {
   }
 
   if (slot->type != TASK_FD_FILE && slot->type != TASK_FD_DIRECTORY)
-    return -1;
+    return -EBADF;
   if (slot->file) {
     vfs_close(slot->file);
     kfree(slot->file);
@@ -1436,14 +1465,14 @@ static long sys_close(int fd) {
 static long sys_readdir(u32 *index, char *buf, usize n) {
   struct task *t = task_current();
   if (!t || !t->files)
-    return -1;
+    return -ESRCH;
   return vfs_read_dir(t->files->cwd, index, buf, n);
 }
 
 static long sys_readdir_path(const char *path, u32 *index, char *buf, usize n) {
   char resolved[TASK_CWD_MAX];
   if (resolve_path(path, resolved, sizeof(resolved)) != 0)
-    return -1;
+    return -ENAMETOOLONG;
   return vfs_read_dir(resolved, index, buf, n);
 }
 
@@ -1453,11 +1482,18 @@ static usize align_up_size(usize value, usize alignment) {
 
 static long sys_getdents64(int fd, void *user_buf, usize len) {
   struct task *t = task_current();
-  if (!t || fd < 3 || fd >= TASK_MAX_FDS || !task_fd_is_dir(t, fd))
-    return -1;
-  if (!user_buf || len < sizeof(struct linux_dirent64) + 2 ||
-      !user_buffer_ok(user_buf, len, 1))
-    return -1;
+  if (!t || fd < 3 || fd >= TASK_MAX_FDS)
+    return -EBADF;
+  if (!task_fd_is_dir(t, fd))
+    return -ENOTDIR;
+  if (!user_buf)
+    return -EFAULT;
+  /* One entry plus a one-character name and its terminator is the smallest
+   * buffer that can make progress; anything less would spin returning 0. */
+  if (len < sizeof(struct linux_dirent64) + 2)
+    return -EINVAL;
+  if (!user_buffer_ok(user_buf, len, 1))
+    return -EFAULT;
 
   char *out = (char *)user_buf;
   usize written = 0;
@@ -1494,23 +1530,23 @@ static long sys_getdents64(int fd, void *user_buf, usize len) {
 
 static long sys_brk(u64 addr) {
   (void)addr;
-  return -1;
+  return -ENOSYS;
 }
 
 static long sys_readv(int fd, const struct linux_iovec *iov, long iovcnt) {
   if (iovcnt < 0 || iovcnt > 1024)
-    return -1;
+    return -EINVAL;
   if (iovcnt == 0)
     return 0;
   if (!user_buffer_ok(iov, (u64)iovcnt * sizeof(*iov), 0))
-    return -1;
+    return -EFAULT;
 
   long total = 0;
   for (long i = 0; i < iovcnt; i++) {
     if (iov[i].len == 0)
       continue;
     if (iov[i].len > (u64)INT64_MAX)
-      return total ? total : -1;
+      return total ? total : -EINVAL;
     long rc = sys_read(fd, iov[i].base, (usize)iov[i].len);
     if (rc < 0)
       return total ? total : rc;
@@ -1523,18 +1559,18 @@ static long sys_readv(int fd, const struct linux_iovec *iov, long iovcnt) {
 
 static long sys_writev(int fd, const struct linux_iovec *iov, long iovcnt) {
   if (iovcnt < 0 || iovcnt > 1024)
-    return -1;
+    return -EINVAL;
   if (iovcnt == 0)
     return 0;
   if (!user_buffer_ok(iov, (u64)iovcnt * sizeof(*iov), 0))
-    return -1;
+    return -EFAULT;
 
   long total = 0;
   for (long i = 0; i < iovcnt; i++) {
     if (iov[i].len == 0)
       continue;
     if (iov[i].len > (u64)INT64_MAX)
-      return total ? total : -1;
+      return total ? total : -EINVAL;
     long rc = sys_write(fd, iov[i].base, (long)iov[i].len);
     if (rc < 0)
       return total ? total : rc;
@@ -1554,7 +1590,7 @@ static int fd_is_known(struct task *t, int fd) {
 static long sys_fcntl(int fd, int cmd, long arg) {
   struct task *t = task_current();
   if (!fd_is_known(t, fd))
-    return -1;
+    return -EBADF;
 
   switch (cmd) {
   case F_GETFD:
@@ -1565,15 +1601,15 @@ static long sys_fcntl(int fd, int cmd, long arg) {
     return (fd >= 3 && task_fd_is_dir(t, fd)) ? O_DIRECTORY : 0;
   case F_DUPFD:
     (void)arg;
-    return -1;
+    return -ENOSYS;
   default:
-    return -1;
+    return -EINVAL;
   }
 }
 
 static long sys_poll(struct linux_pollfd *fds, long nfds, long timeout_ms) {
   if (nfds < 0 || nfds > 64)
-    return -1;
+    return -EINVAL;
   if (nfds == 0) {
     if (timeout_ms > 0) {
       u64 freq = pit_get_freq();
@@ -1586,7 +1622,7 @@ static long sys_poll(struct linux_pollfd *fds, long nfds, long timeout_ms) {
     return 0;
   }
   if (!user_buffer_ok(fds, (u64)nfds * sizeof(*fds), 1))
-    return -1;
+    return -EFAULT;
 
   struct task *t = task_current();
   long ready = 0;
@@ -1619,13 +1655,13 @@ static long sys_poll(struct linux_pollfd *fds, long nfds, long timeout_ms) {
 static long sys_ioctl(int fd, long request, void *arg) {
   struct task *t = task_current();
   if (!fd_is_known(t, fd))
-    return -1;
+    return -EBADF;
 
   if (request == TIOCGWINSZ) {
     if (fd > 2)
-      return -1;
+      return -ENOTTY;
     if (!user_buffer_ok(arg, sizeof(struct linux_winsize), 1))
-      return -1;
+      return -EFAULT;
     struct linux_winsize *ws = (struct linux_winsize *)arg;
     ws->ws_row = 25;
     ws->ws_col = 80;
@@ -1636,17 +1672,17 @@ static long sys_ioctl(int fd, long request, void *arg) {
 
   if (request == TCGETS) {
     if (fd > 2)
-      return -1;
+      return -ENOTTY;
     if (!user_buffer_ok(arg, 64, 1))
-      return -1;
+      return -EFAULT;
     memset(arg, 0, 64);
     return 0;
   }
 
   if (request == TCSETS || request == TCSETSW || request == TCSETSF)
-    return fd <= 2 ? 0 : -1;
+    return fd <= 2 ? 0 : -ENOTTY;
 
-  return -1;
+  return -ENOTTY;
 }
 
 /* Uptime. This is what CLOCK_MONOTONIC means and all it should ever mean. */
@@ -1685,9 +1721,9 @@ static void realtime_timespec(struct linux_timespec *ts) {
 
 static long sys_clock_gettime(long clock_id, struct linux_timespec *ts) {
   if (!ts || !user_buffer_ok(ts, sizeof(*ts), 1))
-    return -1;
+    return -EFAULT;
   if (clock_id != CLOCK_ID_REALTIME && clock_id != CLOCK_ID_MONOTONIC)
-    return -1;
+    return -EINVAL;
 
   /* These were the same clock until now, which meant CLOCK_REALTIME reported
    * seconds since boot and every program believed it was 1970. */
@@ -1703,7 +1739,7 @@ static long sys_gettimeofday(struct linux_timeval *tv, void *tz) {
   if (!tv)
     return 0;
   if (!user_buffer_ok(tv, sizeof(*tv), 1))
-    return -1;
+    return -EFAULT;
   /* gettimeofday is wall clock by definition, never uptime. */
   struct linux_timespec ts;
   realtime_timespec(&ts);
@@ -1715,11 +1751,11 @@ static long sys_gettimeofday(struct linux_timeval *tv, void *tz) {
 static long sys_nanosleep(const struct linux_timespec *req,
                           struct linux_timespec *rem) {
   if (!req || !user_buffer_ok(req, sizeof(*req), 0))
-    return -1;
+    return -EFAULT;
   if (req->tv_sec < 0 || req->tv_nsec < 0 || req->tv_nsec >= 1000000000LL)
-    return -1;
+    return -EINVAL;
   if (rem && !user_buffer_ok(rem, sizeof(*rem), 1))
-    return -1;
+    return -EFAULT;
 
   u64 freq = pit_get_freq();
   if (!freq)
@@ -1740,20 +1776,20 @@ static long sys_nanosleep(const struct linux_timespec *req,
 static long sys_fstatat(int dirfd, const char *path, struct linux_kstat *out,
                         int flags) {
   if (!out)
-    return -1;
+    return -EFAULT;
   if ((flags & AT_EMPTY_PATH) && path && !path[0] && dirfd >= 0)
     return sys_fstat(dirfd, out);
   if (!path)
-    return -1;
+    return -EFAULT;
   if (dirfd != AT_FDCWD && path[0] != '/')
-    return -1;
+    return -EINVAL;
   return sys_stat(path, out);
 }
 
 static long sys_set_tid_address(u64 clear_tid_addr) {
   (void)clear_tid_addr;
   struct task *t = task_current();
-  return t ? t->pid : -1;
+  return t ? t->pid : -ESRCH;
 }
 
 static long sys_linux_futex(u32 *addr, int op, u32 val,
@@ -1765,14 +1801,14 @@ static long sys_linux_futex(u32 *addr, int op, u32 val,
   case FUTEX_WAKE:
     return sys_futex_wake(addr);
   default:
-    return -1;
+    return -ENOSYS;
   }
 }
 
 static long sys_mkdir(const char *path) {
   char resolved[TASK_CWD_MAX];
   if (resolve_path(path, resolved, sizeof(resolved)) != 0)
-    return -1;
+    return -ENAMETOOLONG;
   return vfs_mkdir(resolved);
 }
 
@@ -1796,15 +1832,15 @@ static long sys_mkdir(const char *path) {
  * the bound is a failure, never a truncation. */
 static int copy_user_string(const char *user, char *out, usize max) {
   if (!user || !max)
-    return -1;
+    return -EFAULT;
   for (usize i = 0; i < max; i++) {
     if (!user_buffer_ok(user + i, 1, 0))
-      return -1;
+      return -EFAULT;
     out[i] = user[i];
     if (!out[i])
       return 0;
   }
-  return -1;
+  return -ENAMETOOLONG;
 }
 
 #define DEV_PREFIX "/dev/"
@@ -1815,40 +1851,57 @@ static long sys_mount(const char *source, const char *target,
    * here parses one. Refusing beats accepting an MS_RDONLY that silently
    * mounts read-write, or an option string that silently does nothing. */
   if (flags || data)
-    return -1;
+    return -EINVAL;
 
   char device[BLOCKDEV_NAME_MAX + sizeof(DEV_PREFIX)];
-  if (copy_user_string(source, device, sizeof(device)) != 0)
-    return -1;
+  long error = copy_user_string(source, device, sizeof(device));
+  if (error)
+    return error;
   const char *name = device;
   if (!strncmp(name, DEV_PREFIX, sizeof(DEV_PREFIX) - 1))
     name += sizeof(DEV_PREFIX) - 1;
 
+  /* Copy the target before resolving it. resolve_path walks the string it is
+   * given, so handing it user memory directly means another thread in the
+   * same process can rewrite the path partway through the walk, and an
+   * unmapped tail faults in the kernel instead of returning an error. */
+  char wanted[TASK_CWD_MAX];
+  error = copy_user_string(target, wanted, sizeof(wanted));
+  if (error)
+    return error;
+
   char resolved[TASK_CWD_MAX];
-  if (resolve_path(target, resolved, sizeof(resolved)) != 0)
-    return -1;
+  if (resolve_path(wanted, resolved, sizeof(resolved)) != 0)
+    return -ENAMETOOLONG;
 
   /* An empty or absent type means "work it out", matching how the boot-time
    * root is chosen. A named type must match a registered one exactly, so a
-   * name too long to be one of those can be refused here rather than copied
-   * into a 256-byte buffer this frame does not need. */
+   * name too long to be one of those is reported as ENODEV , there is no such
+   * filesystem , rather than as a buffer complaint about a name the caller
+   * could never have got right. */
   char type[16];
   type[0] = 0;
-  if (fstype && copy_user_string(fstype, type, sizeof(type)) != 0)
-    return -1;
+  if (fstype) {
+    error = copy_user_string(fstype, type, sizeof(type));
+    if (error)
+      return error == -ENAMETOOLONG ? -ENODEV : error;
+  }
 
+  /* ENOENT, not ENODEV: the caller named a volume that does not exist, which
+   * is the same thing Linux reports for a /dev entry that is not there.
+   * ENODEV stays reserved for a filesystem type we do not have. */
   struct block_device transport;
   if (blockdev_lookup(name, &transport) != 0)
-    return -1;
+    return -ENOENT;
 
   /* transport is a copy on this stack, which is fine only because every
    * backend copies the descriptor during attach rather than retaining the
    * pointer. It borrows the adapter behind .context, which is static. */
   const char *mounted = 0;
-  int result = type[0] ? vfs_attach(resolved, type, &transport)
-                       : vfs_attach_auto(resolved, &transport, &mounted);
+  long result = type[0] ? vfs_attach(resolved, type, &transport)
+                        : vfs_attach_auto(resolved, &transport, &mounted);
   if (result != 0)
-    return -1;
+    return result;
 
   log_write_fmt(FILESYS, LOG_INFO, "mount: %s (%s) at %s", name,
                 type[0] ? type : mounted, resolved);
@@ -1859,18 +1912,24 @@ static long sys_umount(const char *target, u64 flags) {
   /* MNT_FORCE and friends would have to break live handles; vfs_unmount
    * refuses while any are open and there is nothing here to force. */
   if (flags)
-    return -1;
+    return -EINVAL;
+
+  char wanted[TASK_CWD_MAX];
+  long error = copy_user_string(target, wanted, sizeof(wanted));
+  if (error)
+    return error;
 
   char resolved[TASK_CWD_MAX];
-  if (resolve_path(target, resolved, sizeof(resolved)) != 0)
-    return -1;
+  if (resolve_path(wanted, resolved, sizeof(resolved)) != 0)
+    return -ENAMETOOLONG;
 
   /* Unmounting "/" would leave nothing to exec from, and no pivot_root exists
    * to replace it. vfs_unmount would usually refuse anyway because mounts nest
    * under it, but a machine whose only mount is the root is exactly the case
-   * that would succeed and then be unrecoverable. */
+   * that would succeed and then be unrecoverable. EBUSY because the root is
+   * in use by definition, not because the path is wrong. */
   if (!strcmp(resolved, "/"))
-    return -1;
+    return -EBUSY;
 
   long result = vfs_unmount(resolved);
   if (result == 0)
@@ -1883,14 +1942,14 @@ static long sys_umount(const char *target, u64 flags) {
  * back `max` rows can ask again with a bigger buffer. */
 static long sys_blockdev_list(struct blockdev_info *out, long max) {
   if (max <= 0)
-    return -1;
+    return -EINVAL;
   /* Clamp before sizing the buffer check: there can never be more entries
    * than the registry holds, and a huge `max` would overflow the byte count
    * into something user_buffer_ok would wave through. */
   if (max > BLOCKDEV_MAX)
     max = BLOCKDEV_MAX;
   if (!user_buffer_ok(out, (u64)max * sizeof(*out), 1))
-    return -1;
+    return -EFAULT;
 
   long written = 0;
   for (usize i = 0; written < max; i++) {
@@ -1914,40 +1973,56 @@ static int raw_block_device(const char *source, struct block_device *out) {
 }
 static long sys_blockdev_read(const char *source, u64 lba, u64 count, void *out) {
   struct block_device device;
-  if (!out || count == 0 || count > RAW_BLOCK_MAX_SECTORS ||
-      !user_buffer_ok(out, count * BLOCK_SECTOR_SIZE, 1) ||
-      raw_block_device(source, &device) ||
-      block_read(&device, lba, (u32)count, out)) return -1;
-  return (long)count;
+  if (!out)
+    return -EFAULT;
+  if (count == 0 || count > RAW_BLOCK_MAX_SECTORS)
+    return -EINVAL;
+  if (!user_buffer_ok(out, count * BLOCK_SECTOR_SIZE, 1))
+    return -EFAULT;
+  if (raw_block_device(source, &device))
+    return -ENOENT;
+  return block_read(&device, lba, (u32)count, out) ? -EIO : (long)count;
 }
 static long sys_blockdev_write(const char *source, u64 lba, u64 count, const void *in) {
   struct block_device device;
-  if (!in || count == 0 || count > RAW_BLOCK_MAX_SECTORS ||
-      !user_buffer_ok(in, count * BLOCK_SECTOR_SIZE, 0) ||
-      raw_block_device(source, &device) || vfs_device_mounted(device.context) ||
-      block_write(&device, lba, (u32)count, in)) return -1;
-  return (long)count;
+  if (!in)
+    return -EFAULT;
+  if (count == 0 || count > RAW_BLOCK_MAX_SECTORS)
+    return -EINVAL;
+  if (!user_buffer_ok(in, count * BLOCK_SECTOR_SIZE, 0))
+    return -EFAULT;
+  if (raw_block_device(source, &device))
+    return -ENOENT;
+  /* Writing under a live filesystem would corrupt whatever its cache still
+   * intends to flush, so a mounted volume is busy, not invalid. */
+  if (vfs_device_mounted(device.context))
+    return -EBUSY;
+  return block_write(&device, lba, (u32)count, in) ? -EIO : (long)count;
 }
 static long sys_blockdev_flush(const char *source) {
   struct block_device device;
-  return raw_block_device(source, &device) || block_flush(&device) ? -1 : 0;
+  if (raw_block_device(source, &device))
+    return -ENOENT;
+  return block_flush(&device) ? -EIO : 0;
 }
 
 static long sys_chdir(const char *path) {
   struct task *t = task_current();
   if (!t || !t->files || !path)
-    return -1;
+    return -EFAULT;
 
   char resolved[TASK_CWD_MAX];
   if (resolve_path(path, resolved, sizeof(resolved)) != 0)
-    return -1;
+    return -ENAMETOOLONG;
 
   /* Existence check by stat rather than by reading an entry: a directory
    * whose first name is long would not fit in a probe buffer, and an
    * empty directory has no entry to read at all. */
   struct vfs_stat st;
-  if (vfs_stat(resolved, &st) != 0 || st.type != VFS_NODE_DIRECTORY)
-    return -1;
+  if (vfs_stat(resolved, &st) != 0)
+    return -ENOENT;
+  if (st.type != VFS_NODE_DIRECTORY)
+    return -ENOTDIR;
 
   usize i = 0;
   while (i < TASK_CWD_MAX - 1 && resolved[i]) {
@@ -1961,9 +2036,9 @@ static long sys_chdir(const char *path) {
 static long sys_getcwd(char *buf, usize size) {
   struct task *t = task_current();
   if (!t || !t->files || !buf || size == 0)
-    return -1;
+    return -EINVAL;
   if (!user_buffer_ok(buf, size, 1))
-    return -1;
+    return -EFAULT;
 
   usize i = 0;
   while (i + 1 < size && t->files->cwd[i]) {
@@ -1973,16 +2048,22 @@ static long sys_getcwd(char *buf, usize size) {
   buf[i] = 0;
 
   if (t->files->cwd[i])
-    return -1;
+    return -ERANGE;
 
   return (long)(uintptr_t)buf;
 }
 
 static long sys_proc_list(struct proc_info *out, long max) {
-  if (!out || max <= 0)
-    return -1;
+  if (!out)
+    return -EFAULT;
+  if (max <= 0)
+    return -EINVAL;
   if (max > 64)
     max = 64; /* hard cap to bound stack snap below */
+  /* Checked after the clamp and before a single row is written: the loop
+   * below copies straight into the caller's array. */
+  if (!user_buffer_ok(out, (u64)max * sizeof(*out), 1))
+    return -EFAULT;
   struct task_snap snap[64];
   int n = sched_snapshot(snap, (int)max);
   for (int i = 0; i < n; i++) {
@@ -1998,8 +2079,8 @@ static long sys_proc_list(struct proc_info *out, long max) {
 }
 
 static long sys_mem_stats(struct mem_stats *out) {
-  if (!out)
-    return -1;
+  if (!out || !user_buffer_ok(out, sizeof(*out), 1))
+    return -EFAULT;
   out->total_frames = pmm_usable_frames();
   out->used_frames = pmm_used_frames();
   out->frame_size = 4096;
@@ -2012,20 +2093,20 @@ static long sys_mem_stats(struct mem_stats *out) {
  * up front, so the copy underneath the lock only touches present pages. */
 static long sys_net_stats(struct net_stats *out) {
   if (!user_buffer_ok(out, sizeof(*out), 1))
-    return -1;
+    return -EFAULT;
   return netmon_read_stats(out);
 }
 
 static long sys_net_capture(u64 *cursor, struct net_frame *out,
                             long max) {
   if (max <= 0)
-    return -1;
+    return -EINVAL;
   if (max > NETMON_CAPTURE_BATCH)
     max = NETMON_CAPTURE_BATCH;
   if (!user_buffer_ok(cursor, sizeof(*cursor), 1))
-    return -1;
+    return -EFAULT;
   if (!user_buffer_ok(out, (u64)max * sizeof(*out), 1))
-    return -1;
+    return -EFAULT;
   return netmon_read_frames(cursor, out, max);
 }
 
@@ -2066,24 +2147,24 @@ static struct socket *sock_from_fd(struct task *t, int fd) {
 static long sys_socket(int domain, int type, int protocol) {
   struct task *t = task_current();
   if (!t)
-    return -1;
+    return -ESRCH;
   if (domain != AF_INET)
-    return -1;
+    return -EAFNOSUPPORT;
   /* UDP only for now. Reporting failure beats handing back an fd that
    * silently drops everything written to it. */
   if (type != SOCK_DGRAM)
-    return -1;
+    return -EPROTONOSUPPORT;
   if (protocol != 0 && protocol != (int)IPPROTO_UDP)
-    return -1;
+    return -EPROTONOSUPPORT;
 
   struct socket *sock = socket_create(type, IPPROTO_UDP);
   if (!sock)
-    return -1;
+    return -ENOMEM;
 
   int fd = sock_fd_alloc(t, sock);
   if (fd < 0) {
     socket_close(sock);
-    return -1;
+    return -EMFILE;
   }
   return fd;
 }
@@ -2091,22 +2172,26 @@ static long sys_socket(int domain, int type, int protocol) {
 static long sys_bind(int fd, const struct sockaddr_in *addr, u32 addrlen) {
   struct task *t = task_current();
   struct socket *sock = sock_from_fd(t, fd);
-  if (!sock || !addr || addrlen < sizeof(*addr))
-    return -1;
+  if (!sock)
+    return -ENOTSOCK;
+  if (!addr)
+    return -EFAULT;
+  if (addrlen < sizeof(*addr))
+    return -EINVAL;
   if (!user_buffer_ok(addr, sizeof(*addr), 0))
-    return -1;
+    return -EFAULT;
 
   struct sockaddr_in local;
   memcpy(&local, addr, sizeof(local));
   if (local.family != AF_INET)
-    return -1;
+    return -EAFNOSUPPORT;
 
   /* Port 0 means "pick one", which is what a client that only ever sends
    * asks for. Without it the reply has no port to come back to. */
   if (local.port == 0) {
     local.port = socket_alloc_ephemeral_port();
     if (local.port == 0)
-      return -1;
+      return -EADDRINUSE;
   }
 
   return socket_bind(sock, &local);
@@ -2117,15 +2202,19 @@ static long sys_sendto(int fd, const void *buf, usize len, int flags,
   (void)flags;
   struct task *t = task_current();
   struct socket *sock = sock_from_fd(t, fd);
-  if (!sock || !buf || !dest || addrlen < sizeof(*dest))
-    return -1;
+  if (!sock)
+    return -ENOTSOCK;
+  if (!buf || !dest)
+    return -EFAULT;
+  if (addrlen < sizeof(*dest))
+    return -EINVAL;
   if (!user_buffer_ok(buf, len, 0) || !user_buffer_ok(dest, sizeof(*dest), 0))
-    return -1;
+    return -EFAULT;
 
   struct sockaddr_in remote;
   memcpy(&remote, dest, sizeof(remote));
   if (remote.family != AF_INET)
-    return -1;
+    return -EAFNOSUPPORT;
 
   /* An unbound sender still needs a source port for the reply. Binding
    * lazily here is what makes the send-then-receive pattern work. */
@@ -2135,7 +2224,7 @@ static long sys_sendto(int fd, const void *buf, usize len, int flags,
     local.family = AF_INET;
     local.port = socket_alloc_ephemeral_port();
     if (local.port == 0 || socket_bind(sock, &local) != 0)
-      return -1;
+      return -EADDRINUSE;
   }
 
   return socket_sendto(sock, buf, len, &remote);
@@ -2146,14 +2235,16 @@ static long sys_recvfrom(int fd, void *buf, usize len, int flags,
   (void)flags;
   struct task *t = task_current();
   struct socket *sock = sock_from_fd(t, fd);
-  if (!sock || !buf)
-    return -1;
+  if (!sock)
+    return -ENOTSOCK;
+  if (!buf)
+    return -EFAULT;
   if (!user_buffer_ok(buf, len, 1))
-    return -1;
+    return -EFAULT;
   if (src && !user_buffer_ok(src, sizeof(*src), 1))
-    return -1;
+    return -EFAULT;
   if (addrlen && !user_buffer_ok(addrlen, sizeof(*addrlen), 1))
-    return -1;
+    return -EFAULT;
 
   long n = socket_recvfrom(sock, buf, len, src);
   if (n > 0 && addrlen)
@@ -2163,13 +2254,13 @@ static long sys_recvfrom(int fd, void *buf, usize len, int flags,
 
 static long sys_net_ping(struct net_ping *req) {
   if (!user_buffer_ok(req, sizeof(*req), 1))
-    return -1;
+    return -EFAULT;
 
   struct net_ping local;
   memcpy(&local, req, sizeof(local));
 
   if (local.timeout_ms == 0 || local.timeout_ms > 60000u)
-    return -1;
+    return -EINVAL;
 
   u32 rtt_ms = 0;
   long rc =
@@ -2183,22 +2274,22 @@ static long sys_arch_prctl(long code, u64 addr) {
   switch (code) {
   case ARCH_SET_FS:
     if (addr >= USER_VA_MAX)
-      return -1;
+      return -EINVAL;
     return task_set_fs_base(addr);
   case ARCH_GET_FS:
     if (!user_buffer_ok((void *)(uintptr_t)addr, sizeof(u64), 1))
-      return -1;
+      return -EFAULT;
     *(u64 *)(uintptr_t)addr = task_get_fs_base();
     return 0;
   default:
-    return -1;
+    return -EINVAL;
   }
 }
 
 static long sys_thread_create(u64 entry, u64 user_stack, u64 u_arg) {
   struct task *t = task_spawn_thread(entry, user_stack);
   if (!t)
-    return -1;
+    return -EAGAIN;
   t->context->user_arg = u_arg;
   return t->pid;
 }
@@ -2206,7 +2297,7 @@ static long sys_thread_create(u64 entry, u64 user_stack, u64 u_arg) {
 static long sys_thread_exit(void) {
   struct task *t = task_current();
   if (!t || !t->vm || !t->vm->pml4_ref_count)
-    return -1;
+    return -EINVAL;
 
   /* Threads share one PML4, so the last one out frees it. The decrement
    * must be atomic: two threads exiting concurrently would otherwise both
@@ -2232,7 +2323,7 @@ static long sys_thread_exit(void) {
 static long sys_thread_join(long tid) {
   struct task *target = task_find((int)tid);
   if (!target)
-    return -1;
+    return -ESRCH;
 
   if (target->state == TASK_ZOMBIE) {
     return 0;
@@ -2250,22 +2341,22 @@ static long sys_thread_join(long tid) {
 static long sys_futex_wait(u32 *addr, u32 expected) {
   struct task *t = task_current();
   if (!task_pml4(t))
-    return -1;
+    return -EINVAL;
   if (!addr)
-    return -1;
+    return -EFAULT;
 
   if ((u64)addr >= USER_VA_MAX)
-    return -1;
+    return -EFAULT;
 
   /* Futexes key on the physical frame, so two tasks with the same page
    * mapped at different VAs still queue on the same futex. */
   u64 phys = vmm_translate_in(t->vm->user_pml4, (u64)addr);
   if (!phys)
-    return -1;
+    return -EFAULT;
   phys &= VMM_ADDR_MASK;
 
   if (*addr != expected) {
-    return -1;
+    return -EAGAIN;
   }
 
   t->futex_addr = phys;
@@ -2277,13 +2368,13 @@ static long sys_futex_wait(u32 *addr, u32 expected) {
 static long sys_futex_wake(u32 *addr) {
   struct task *me = task_current();
   if (!task_pml4(me))
-    return -1;
+    return -EINVAL;
   if (!addr)
-    return -1;
+    return -EFAULT;
 
   u64 phys = vmm_translate_in(me->vm->user_pml4, (u64)addr);
   if (!phys)
-    return -1;
+    return -EFAULT;
   phys &= VMM_ADDR_MASK;
 
   return task_wake_futex(phys);
