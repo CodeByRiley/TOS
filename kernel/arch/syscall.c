@@ -28,6 +28,7 @@
 #include <display/framebuffer.h>
 #include <display/tty.h>
 #include <drivers/sound/sb16.h>
+#include <drivers/storage/blockdev.h>
 #include <fs/vfs/vfs.h>
 #include <input/keyboard.h>
 #include <input/mouse.h>
@@ -1775,6 +1776,163 @@ static long sys_mkdir(const char *path) {
   return vfs_mkdir(resolved);
 }
 
+/* ---------------- Mounting --------------------------------------------
+ *
+ * mount() and umount() take Linux's numbers and argument order, but a TOS
+ * `source` is a published volume name rather than a device node: the storage
+ * drivers publish what they found (see drivers/storage/blockdev.h) and
+ * SYS_BLKDEV_LIST is how userspace learns the names. A leading "/dev/" is
+ * accepted and stripped so the spelling a Linux tool would use still resolves.
+ *
+ * There is no privilege model yet, so any process can mount and unmount. That
+ * is the same latitude every other filesystem syscall here already grants,
+ * and it is what a uid check should gate first when one exists.
+ */
+
+/* Copy a NUL-terminated user string into kernel storage. Validated one byte
+ * at a time because the terminator, not a caller-supplied length, decides how
+ * far the read goes , checking `max` bytes up front would reject a short
+ * string sitting at the end of a mapping. A string with no terminator inside
+ * the bound is a failure, never a truncation. */
+static int copy_user_string(const char *user, char *out, usize max) {
+  if (!user || !max)
+    return -1;
+  for (usize i = 0; i < max; i++) {
+    if (!user_buffer_ok(user + i, 1, 0))
+      return -1;
+    out[i] = user[i];
+    if (!out[i])
+      return 0;
+  }
+  return -1;
+}
+
+#define DEV_PREFIX "/dev/"
+
+static long sys_mount(const char *source, const char *target,
+                      const char *fstype, u64 flags, const void *data) {
+  /* No mount flag and no option string is honoured yet, and no filesystem
+   * here parses one. Refusing beats accepting an MS_RDONLY that silently
+   * mounts read-write, or an option string that silently does nothing. */
+  if (flags || data)
+    return -1;
+
+  char device[BLOCKDEV_NAME_MAX + sizeof(DEV_PREFIX)];
+  if (copy_user_string(source, device, sizeof(device)) != 0)
+    return -1;
+  const char *name = device;
+  if (!strncmp(name, DEV_PREFIX, sizeof(DEV_PREFIX) - 1))
+    name += sizeof(DEV_PREFIX) - 1;
+
+  char resolved[TASK_CWD_MAX];
+  if (resolve_path(target, resolved, sizeof(resolved)) != 0)
+    return -1;
+
+  /* An empty or absent type means "work it out", matching how the boot-time
+   * root is chosen. A named type must match a registered one exactly, so a
+   * name too long to be one of those can be refused here rather than copied
+   * into a 256-byte buffer this frame does not need. */
+  char type[16];
+  type[0] = 0;
+  if (fstype && copy_user_string(fstype, type, sizeof(type)) != 0)
+    return -1;
+
+  struct block_device transport;
+  if (blockdev_lookup(name, &transport) != 0)
+    return -1;
+
+  /* transport is a copy on this stack, which is fine only because every
+   * backend copies the descriptor during attach rather than retaining the
+   * pointer. It borrows the adapter behind .context, which is static. */
+  const char *mounted = 0;
+  int result = type[0] ? vfs_attach(resolved, type, &transport)
+                       : vfs_attach_auto(resolved, &transport, &mounted);
+  if (result != 0)
+    return -1;
+
+  log_write_fmt(FILESYS, LOG_INFO, "mount: %s (%s) at %s", name,
+                type[0] ? type : mounted, resolved);
+  return 0;
+}
+
+static long sys_umount(const char *target, u64 flags) {
+  /* MNT_FORCE and friends would have to break live handles; vfs_unmount
+   * refuses while any are open and there is nothing here to force. */
+  if (flags)
+    return -1;
+
+  char resolved[TASK_CWD_MAX];
+  if (resolve_path(target, resolved, sizeof(resolved)) != 0)
+    return -1;
+
+  /* Unmounting "/" would leave nothing to exec from, and no pivot_root exists
+   * to replace it. vfs_unmount would usually refuse anyway because mounts nest
+   * under it, but a machine whose only mount is the root is exactly the case
+   * that would succeed and then be unrecoverable. */
+  if (!strcmp(resolved, "/"))
+    return -1;
+
+  long result = vfs_unmount(resolved);
+  if (result == 0)
+    log_write_string("umount: released", resolved, FILESYS, LOG_INFO);
+  return result;
+}
+
+/* Fill `out` with up to `max` published volumes and return how many were
+ * written. The list only grows and entries never move, so a caller that gets
+ * back `max` rows can ask again with a bigger buffer. */
+static long sys_blockdev_list(struct blockdev_info *out, long max) {
+  if (max <= 0)
+    return -1;
+  /* Clamp before sizing the buffer check: there can never be more entries
+   * than the registry holds, and a huge `max` would overflow the byte count
+   * into something user_buffer_ok would wave through. */
+  if (max > BLOCKDEV_MAX)
+    max = BLOCKDEV_MAX;
+  if (!user_buffer_ok(out, (u64)max * sizeof(*out), 1))
+    return -1;
+
+  long written = 0;
+  for (usize i = 0; written < max; i++) {
+    if (blockdev_describe(i, &out[written]) != 0)
+      break;
+    written++;
+  }
+  return written;
+}
+
+/* Raw maintenance I/O is deliberately synchronous and bounded.  A writer
+ * cannot alter a volume whose filesystem cache is currently mounted. */
+#define RAW_BLOCK_MAX_SECTORS 64u
+static int raw_block_device(const char *source, struct block_device *out) {
+  char device[BLOCKDEV_NAME_MAX + sizeof(DEV_PREFIX)];
+  if (!source || copy_user_string(source, device, sizeof(device)) != 0)
+    return -1;
+  const char *name = !strncmp(device, DEV_PREFIX, sizeof(DEV_PREFIX) - 1)
+      ? device + sizeof(DEV_PREFIX) - 1 : device;
+  return blockdev_lookup(name, out);
+}
+static long sys_blockdev_read(const char *source, u64 lba, u64 count, void *out) {
+  struct block_device device;
+  if (!out || count == 0 || count > RAW_BLOCK_MAX_SECTORS ||
+      !user_buffer_ok(out, count * BLOCK_SECTOR_SIZE, 1) ||
+      raw_block_device(source, &device) ||
+      block_read(&device, lba, (u32)count, out)) return -1;
+  return (long)count;
+}
+static long sys_blockdev_write(const char *source, u64 lba, u64 count, const void *in) {
+  struct block_device device;
+  if (!in || count == 0 || count > RAW_BLOCK_MAX_SECTORS ||
+      !user_buffer_ok(in, count * BLOCK_SECTOR_SIZE, 0) ||
+      raw_block_device(source, &device) || vfs_device_mounted(device.context) ||
+      block_write(&device, lba, (u32)count, in)) return -1;
+  return (long)count;
+}
+static long sys_blockdev_flush(const char *source) {
+  struct block_device device;
+  return raw_block_device(source, &device) || block_flush(&device) ? -1 : 0;
+}
+
 static long sys_chdir(const char *path) {
   struct task *t = task_current();
   if (!t || !t->files || !path)
@@ -2384,6 +2542,31 @@ long syscall_dispatch(struct syscall_frame *f) {
     break;
   case SYS_RMDIR:
     ret = sys_rmdir((const char *)(uintptr_t)a1);
+    break;
+  case SYS_MOUNT:
+    ret = sys_mount((const char *)(uintptr_t)a1, (const char *)(uintptr_t)a2,
+                    (const char *)(uintptr_t)a3, (u64)a4,
+                    (const void *)(uintptr_t)a5);
+    break;
+  case SYS_UMOUNT:
+    ret = sys_umount((const char *)(uintptr_t)a1, (u64)a2);
+    break;
+  case SYS_BLKDEV_LIST:
+    ret = sys_blockdev_list((struct blockdev_info *)(uintptr_t)a1, (long)a2);
+    break;
+  case SYS_BLKDEV_READ:
+    ret = sys_blockdev_read((const char *)(uintptr_t)a1, (u64)a2, (u64)a3,
+                            (void *)(uintptr_t)a4);
+    break;
+  case SYS_BLKDEV_WRITE:
+    ret = sys_blockdev_write((const char *)(uintptr_t)a1, (u64)a2, (u64)a3,
+                             (const void *)(uintptr_t)a4);
+    break;
+  case SYS_BLKDEV_FLUSH:
+    ret = sys_blockdev_flush((const char *)(uintptr_t)a1);
+    break;
+  case SYS_FS_SYNC:
+    ret = vfs_sync_all();
     break;
   case SYS_MKDIR:
     ret = sys_mkdir((const char *)(uintptr_t)a1);

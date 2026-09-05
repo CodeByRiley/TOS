@@ -45,6 +45,29 @@ struct mem_stats {
   uint64_t frame_size;
 };
 
+/* Block volumes published by the storage drivers, as reported by
+ * SYS_BLKDEV_LIST and named by SYS_MOUNT's `source`. Names are transport
+ * plus unit ("ahci0", "usb1"), and a partition appends "p" plus its number
+ * ("ahci0p1"). Sectors are always BLOCK_SECTOR_SIZE bytes, which is reported
+ * rather than assumed so a future 4Kn disk can say so. */
+#define BLOCKDEV_NAME_MAX 16
+
+/* A disk carrying a partition table is PARTITIONED and holds no filesystem of
+ * its own: mount its slices instead. It is still listed, because formatting or
+ * repartitioning it means addressing the whole disk. */
+#define BLOCKDEV_WRITABLE    0x1u
+#define BLOCKDEV_REMOVABLE   0x2u
+#define BLOCKDEV_PARTITION   0x4u
+#define BLOCKDEV_PARTITIONED 0x8u
+
+struct blockdev_info {
+  uint64_t sectors;
+  uint64_t start_lba; /* Offset into the parent disk; 0 for a whole disk. */
+  uint32_t sector_size;
+  uint32_t flags;
+  char name[BLOCKDEV_NAME_MAX];
+};
+
 #define NET_FRAME_BYTES 128
 #define NET_CAPTURE_BATCH 16
 #define NET_DIR_RX 0
@@ -146,6 +169,9 @@ _Static_assert(sizeof(struct proc_info) == 40, "proc_info ABI");
 _Static_assert(offsetof(struct proc_info, pid) == 8, "proc_info.pid ABI");
 _Static_assert(offsetof(struct proc_info, name) == 20, "proc_info.name ABI");
 _Static_assert(sizeof(struct mem_stats) == 24, "mem_stats ABI");
+_Static_assert(sizeof(struct blockdev_info) == 40, "blockdev_info ABI");
+_Static_assert(offsetof(struct blockdev_info, name) == 24,
+               "blockdev_info.name ABI");
 _Static_assert(sizeof(struct net_frame) == 160, "net_frame ABI");
 _Static_assert(offsetof(struct net_frame, data) == 32, "net_frame.data ABI");
 _Static_assert(sizeof(struct net_stats) == 80, "net_stats ABI");

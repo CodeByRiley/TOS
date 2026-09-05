@@ -211,6 +211,23 @@ long mem_stats(struct mem_stats *out) {
     return syscall1(SYS_MEM_STATS, (sysarg_t)(uintptr_t)out);
 }
 
+/* Storage */
+long blockdev_list(struct blockdev_info *out, long max) {
+    return syscall2(SYS_BLKDEV_LIST, (sysarg_t)(uintptr_t)out, (sysarg_t)max);
+}
+long blockdev_read(const char *source, uint64_t lba, uint32_t sectors, void *out) {
+    return syscall4(SYS_BLKDEV_READ, (sysarg_t)(uintptr_t)source, lba, sectors,
+                    (sysarg_t)(uintptr_t)out);
+}
+long blockdev_write(const char *source, uint64_t lba, uint32_t sectors, const void *in) {
+    return syscall4(SYS_BLKDEV_WRITE, (sysarg_t)(uintptr_t)source, lba, sectors,
+                    (sysarg_t)(uintptr_t)in);
+}
+long blockdev_flush(const char *source) {
+    return syscall1(SYS_BLKDEV_FLUSH, (sysarg_t)(uintptr_t)source);
+}
+long fs_sync(void) { return syscall0(SYS_FS_SYNC); }
+
 long net_stats(struct net_stats *out) {
     return syscall1(SYS_NET_STATS, (sysarg_t)(uintptr_t)out);
 }

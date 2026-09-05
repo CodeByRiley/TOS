@@ -3,6 +3,7 @@
 #define KERNEL_VFS_H
 #include <stddef.h>
 #include <stdint.h>
+#include <drivers/storage/block.h>
 
 #define VFS_PATH_MAX 260
 #define VFS_NAME_MAX 255
@@ -73,6 +74,9 @@ struct vfs_superblock {
     void *private_data;
     struct vfs_inode *root, *inodes;
     unsigned open_files;
+    /* Raw maintenance I/O uses this stable transport identity to refuse
+     * writes below a mounted filesystem. */
+    void *device_context;
 };
 struct vfs_file {
     const struct vfs_mount *mount;
@@ -102,8 +106,11 @@ int vfs_mount_image(const char *mountpoint, const char *filesystem,
 int vfs_mount_auto(const char *mountpoint, void *image, size_t size,
                    const char **mounted_type);
 int vfs_attach(const char *mountpoint, const char *filesystem, void *context);
+int vfs_attach_auto(const char *mountpoint, void *context,
+                    const char **mounted_type);
 int vfs_unmount(const char *mountpoint);
 int vfs_sync_all(void);
+int vfs_device_mounted(const void *context);
 int vfs_file_sync(struct vfs_file *file);
 int vfs_open(const char *path, struct vfs_file *file);
 int vfs_create(const char *path, struct vfs_file *file);

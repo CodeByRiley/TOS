@@ -90,8 +90,8 @@ MUSL_LINK     := libc/link_tos_musl.sh
 MUSL_LINKER_SCRIPT := lib/user.ld
 MUSL_LIBC     := $(MUSL_DIR)/lib/libc.a
 MUSL_BINS     := cat plist hello ls pkill gfx btop uidemo deskelf notepad tree \
-                 shutdown reboot fdchild mmaptest audiotest \
-                 stress stress_peer mtest vmtest muse sh winman netmon ping udpecho
+                 mount lsdisk shutdown reboot fdchild mmaptest audiotest \
+                 diskinfo sync wipe mkfs stress stress_peer mtest vmtest muse sh winman netmon ping udpecho
 MUSL_BIN_ELFS := $(foreach b,$(MUSL_BINS),bin/$(b)/$(b).elf)
 
 # Winman is intentionally a multi-source program. Its modules share one

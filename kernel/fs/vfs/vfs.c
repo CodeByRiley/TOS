@@ -99,6 +99,8 @@ static int mount_type(const char *path, const struct vfs_filesystem *type,
         return -1;
     struct vfs_superblock *super = &mount->super;
     super->filesystem = type;
+    if (attach)
+        super->device_context = ((const struct block_device *)source)->context;
     int result = attach ? type->attach(super, source) : type->mount(super, source, size);
     if (result || !super->root || super->root->type != VFS_NODE_DIRECTORY) {
         release_super(super);
@@ -123,6 +125,23 @@ int vfs_mount_auto(const char *path, void *image, size_t size, const char **type
     if (type) *type = 0;
     for (size_t i = 0; i < VFS_MAX_FILESYSTEMS; i++) {
         if (filesystems[i] && !mount_type(path, filesystems[i], image, size, 0)) {
+            if (type) *type = filesystems[i]->name;
+            return 0;
+        }
+    }
+    return -1;
+}
+
+/* The attach counterpart of vfs_mount_auto: offer a transport to each
+ * registered filesystem in registration order and keep the first that claims
+ * it. Order therefore belongs to whoever registers, so the discriminating
+ * formats must register first , ext2 validates a superblock, while FAT accepts
+ * anything carrying a plausible BPB. */
+int vfs_attach_auto(const char *path, void *context, const char **type) {
+    VFS_GUARD();
+    if (type) *type = 0;
+    for (size_t i = 0; i < VFS_MAX_FILESYSTEMS; i++) {
+        if (filesystems[i] && !mount_type(path, filesystems[i], context, 0, 1)) {
             if (type) *type = filesystems[i]->name;
             return 0;
         }
@@ -166,6 +185,15 @@ int vfs_sync_all(void) {
             result = -1;
     }
     return result;
+}
+
+int vfs_device_mounted(const void *context) {
+    VFS_GUARD();
+    if (!context) return 0;
+    for (size_t i = 0; i < VFS_MAX_MOUNTS; i++)
+        if (mounts[i].super.filesystem && mounts[i].super.device_context == context)
+            return 1;
+    return 0;
 }
 
 int vfs_file_sync(struct vfs_file *file) {

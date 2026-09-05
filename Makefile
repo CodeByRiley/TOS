@@ -420,9 +420,12 @@ holyd-win:
 	@echo "  ./holyd.exe samples/gui.hd"
 
 .PHONY: test-qemu-heavy test-heavy
-test-qemu-heavy: build-x86_64
+# The ext2 image is a real prerequisite, not just a host-test artefact: the
+# mount test needs a second volume in a format the FAT root is not.
+test-qemu-heavy: build-x86_64 $(HOST_TEST_DIR)/ext2-base.img
 	wsl bash -lc "cd \$$(wslpath '$(CURDIR)') && \
 		python3 tests/smp_async_spawn_test.py --cpus 4 --timeout 90 && \
+		python3 tests/mount_syscall_test.py --timeout 180 && \
 		python3 tests/system_stress_test.py --cpus 4 --timeout 240 && \
 		python3 tests/window_lifecycle_test.py --timeout 120 && \
 		python3 tests/muse_liveness_test.py --timeout 90 && \

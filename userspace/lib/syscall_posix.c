@@ -28,6 +28,23 @@ long lseek(int fd, long off, int whence) {
 long chdir(const char *path) {
     return syscall1(SYS_CHDIR, (sysarg_t)(uintptr_t)path);
 }
+/* Mounting. musl declares these, so like the rest of this file they exist
+ * only for the hand-rolled libc; a musl binary reaches the same syscalls
+ * through musl's own wrappers. See lib/syscall.h for what TOS accepts. */
+int mount(const char *source, const char *target, const char *filesystemtype,
+          unsigned long mountflags, const void *data) {
+    /* Five arguments, sent through the six-argument trampoline: there is no
+     * syscall5, and the kernel never reads the sixth slot for this call. */
+    return (int)syscall6(SYS_MOUNT, (sysarg_t)(uintptr_t)source,
+                         (sysarg_t)(uintptr_t)target,
+                         (sysarg_t)(uintptr_t)filesystemtype,
+                         (sysarg_t)mountflags, (sysarg_t)(uintptr_t)data, 0);
+}
+int umount2(const char *target, int flags) {
+    return (int)syscall2(SYS_UMOUNT, (sysarg_t)(uintptr_t)target,
+                         (sysarg_t)flags);
+}
+int umount(const char *target) { return umount2(target, 0); }
 char *getcwd(char *buf, size_t size) {
     long rc = syscall2(SYS_GETCWD, (sysarg_t)(uintptr_t)buf, (sysarg_t)size);
     return rc < 0 ? 0 : buf;

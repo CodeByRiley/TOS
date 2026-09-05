@@ -143,6 +143,40 @@ long mkdir_path(const char *path);
 long rmdir_path(const char *path);
 long yield(void);
 
+/* ---------------- Mounting ---------------------------------------------
+ *
+ * blockdev_list fills `out` with up to `max` volumes the storage drivers
+ * published and returns how many it wrote, or -1. A full buffer may mean
+ * there are more, so retry with a bigger one. The .name is what mount()
+ * wants as its source.
+ *
+ * mount() and umount() are musl's prototypes at Linux's syscall numbers, so
+ * a musl-linked binary calls musl's wrappers and lands in the same place.
+ * Two TOS-specific rules apply either way:
+ *
+ *   - `source` is a published volume name ("ahci0"), not a device node. A
+ *     "/dev/" prefix is accepted and ignored. There is no loop device, so a
+ *     file cannot be a source.
+ *   - `filesystemtype` may be NULL or "" to probe for the format, while
+ *     `mountflags` must be 0 and `data` NULL: no flag or mount option is
+ *     honoured yet, and accepting one silently would be a lie.
+ *
+ * Neither call needs a privilege the caller might lack, because there is no
+ * privilege model to check yet. */
+long blockdev_list(struct blockdev_info *out, long max);
+/* Raw I/O is for maintenance tools. A request holds at most 64 512-byte
+ * sectors, and writes to mounted volumes are rejected by the kernel. */
+long blockdev_read(const char *source, uint64_t lba, uint32_t sectors, void *out);
+long blockdev_write(const char *source, uint64_t lba, uint32_t sectors, const void *in);
+long blockdev_flush(const char *source);
+long fs_sync(void);
+#ifndef TOS_USE_MUSL
+int mount(const char *source, const char *target, const char *filesystemtype,
+          unsigned long mountflags, const void *data);
+int umount(const char *target);
+int umount2(const char *target, int flags);
+#endif
+
 /* Raw metadata straight from the kernel. POSIX stat()/fstat() in
  * <sys/stat.h> wrap these. */
 long stat_raw(const char *path, struct stat_user *out);
