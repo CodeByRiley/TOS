@@ -146,12 +146,69 @@ static long iterate(struct vfs_inode *dir, uint32_t *index, struct vfs_dirent *o
     return ops->iterate(dir, index, out);
 }
 
+/* The backend owns the normal directory cookie. Once it reaches EOF, reserve
+ * the high bit for a short VFS-only pass that adds direct child mountpoints.
+ * Backends in TOS have bounded directories, so none can reach 2^31 entries.
+ * This makes a mounted /mnt/ahci1p1 visible in `ls /mnt` even though it is a
+ * namespace overlay, not a directory entry written into the parent disk. */
+#define VFS_READDIR_MOUNT_PHASE 0x80000000u
+
+static int backing_has_child(struct vfs_inode *dir, const char *name) {
+    struct vfs_inode *inode = 0;
+    int exists = dir && dir->operations && dir->operations->lookup &&
+                 !dir->operations->lookup(dir, name, &inode);
+    vfs_inode_put(inode);
+    return exists;
+}
+
+static long virtual_mount_entry(const struct vfs_path *path, uint32_t *index,
+                                struct vfs_dirent *out) {
+    uint32_t mount_index = *index & ~VFS_READDIR_MOUNT_PHASE;
+    while (vfs_mount_child(path->name, &mount_index, out) > 0) {
+        /* A real entry at the mountpoint has already been yielded by the
+         * backend. It is still a mountpoint, but must not be listed twice. */
+        if (!backing_has_child(path->entry->inode, out->name)) {
+            *index = VFS_READDIR_MOUNT_PHASE | mount_index;
+            return 1;
+        }
+    }
+    *index = VFS_READDIR_MOUNT_PHASE | mount_index;
+    return 0;
+}
+
+static long read_dir_one_locked(const struct vfs_path *path, uint32_t *index,
+                                struct vfs_dirent *out) {
+    if (*index & VFS_READDIR_MOUNT_PHASE)
+        return virtual_mount_entry(path, index, out);
+
+    long result = iterate(path->entry->inode, index, out);
+    if (result > 0) {
+        /* A mount hides an entry of the same name, including an unusual file
+         * used as a mountpoint, so report the mounted root as a directory. */
+        if (vfs_mount_child_named(path->name, out->name))
+            out->type = VFS_NODE_DIRECTORY;
+        return result;
+    }
+    if (result == 0) {
+        /* Preserve a backend-only EOF cookie when this directory has no
+         * mount overlay. Existing callers then observe exactly the same
+         * cookie sequence they did before mountpoint enumeration existed. */
+        uint32_t backend_eof = *index;
+        *index = VFS_READDIR_MOUNT_PHASE;
+        result = virtual_mount_entry(path, index, out);
+        if (result == 0)
+            *index = backend_eof;
+        return result;
+    }
+    return result;
+}
+
 long vfs_read_dir_one(const char *path, uint32_t *index, struct vfs_dirent *out) {
     VFS_GUARD();
     struct vfs_path found;
     if (!index || !out || vfs_lookup(path, &found)) return -1;
     uint32_t before = *index;
-    long result = iterate(found.entry->inode, index, out);
+    long result = read_dir_one_locked(&found, index, out);
     if (result < 0) *index = before;
     vfs_path_put(&found);
     return result;
@@ -166,7 +223,7 @@ long vfs_read_dir(const char *path, uint32_t *index, char *buffer, size_t length
     for (;;) {
         uint32_t before = *index;
         struct vfs_dirent entry;
-        long status = iterate(found.entry->inode, index, &entry);
+        long status = read_dir_one_locked(&found, index, &entry);
         if (status <= 0) {
             if (status < 0) *index = before;
             result = status < 0 && !written ? -1 : (long)written;

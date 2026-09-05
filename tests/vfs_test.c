@@ -23,6 +23,11 @@ void kfree(void *memory) {
 static void expect(int condition, const char *message) {
     if (!condition) { printf("FAIL: %s\n", message); failed = 1; }
 }
+static int packed_has(const char *entries, long bytes, const char *name) {
+    for (long at = 0; at < bytes; at += (long)strlen(entries + at) + 1)
+        if (!strcmp(entries + at, name)) return 1;
+    return 0;
+}
 
 static struct vfs_inode *get_inode(struct vfs_superblock *super, uint64_t number) {
     return vfs_inode_get(super, number, number == 3 ? VFS_NODE_FILE : VFS_NODE_DIRECTORY,
@@ -117,6 +122,12 @@ int main(void) {
            file.node == other.node, "inode identity is shared across names");
     expect(vfs_read(&file, data, 2) == 2 && other.position == 0,
            "independent opens retain independent cursors");
+    uint32_t mounts_index = 0;
+    char mount_names[32];
+    long mount_bytes = vfs_read_dir("/", &mounts_index, mount_names,
+                                    sizeof(mount_names));
+    expect(mount_bytes > 0 && packed_has(mount_names, mount_bytes, "mnt/"),
+           "directory listings include direct child mountpoints");
     expect(vfs_unmount("/") < 0 && vfs_unmount("/mnt") == 0,
            "open root is busy but unused child can unmount");
     vfs_close(&file);

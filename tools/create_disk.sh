@@ -172,7 +172,7 @@ dd if=/dev/zero of="$IMG" bs=1M count="$DISK_SIZE_MIB" status=none
 if [[ "$ROOTFS_TYPE" == "ext2" ]]; then
 	staging="$(mktemp -d)"
 	trap 'rm -rf -- "$staging"' EXIT
-	mkdir -p "$staging/bin" "$staging/usr/bin" "$staging/usr/local/bin"
+	mkdir -p "$staging/bin" "$staging/mnt" "$staging/usr/bin" "$staging/usr/local/bin"
 	for entry in "${payloads[@]}"; do
 		host_path="${entry%%::*}"
 		destination="${entry##*::}"
@@ -215,7 +215,7 @@ ensure_fat_parent_dirs() {
 # Keep the standard executable hierarchy present even when a directory has
 # no packaged files yet. /usr/local/bin is intentionally reserved for tools
 # installed after the base image is built.
-for fat_dir in bin usr usr/bin usr/local usr/local/bin; do
+for fat_dir in bin mnt usr usr/bin usr/local usr/local/bin; do
 	if ! mdir -i "$IMG" "::${fat_dir}" >/dev/null 2>&1; then
 		mmd -i "$IMG" "::${fat_dir}"
 	fi

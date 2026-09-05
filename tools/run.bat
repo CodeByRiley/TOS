@@ -16,17 +16,25 @@ echo [DEBUG] UEFI_CODE=[%UEFI_CODE%]
 echo [DEBUG] UEFI_VARS=[%UEFI_VARS%]
 
 if not exist "%UEFI_CODE%" (
-    echo UEFI firmware not found: [%UEFI_CODE%]
+    echo [Error] UEFI firmware not found: [%UEFI_CODE%]
     popd
     endlocal
     exit /b 1
 )
 
 if not exist "%UEFI_VARS_SRC%" (
-    echo UEFI variables template not found: [%UEFI_VARS_SRC%]
+    echo [Error] UEFI variables template not found: [%UEFI_VARS_SRC%]
     popd
     endlocal
     exit /b 1
+)
+
+if exist "%UEFI_VARS%" (
+	echo [Debug] Deleting stale UEFI vars
+	del /F /Q "%UEFI_VARS%"
+)
+if not exist "%UEFI_VARS%" (
+    copy /Y "%UEFI_VARS_SRC%" "%UEFI_VARS%" >nul
 )
 
 if not exist "%UEFI_VARS%" (
@@ -36,7 +44,7 @@ if not exist "%UEFI_VARS%" (
 echo [DEBUG] key=[%KEY%] value=[%VALUE%]
 
 if "%VALUE%"=="" (
-    echo Missing value for argument: [%KEY%]
+    echo [Error] Missing value for argument: [%KEY%]
     popd
     endlocal
     exit /b 1
@@ -45,7 +53,7 @@ if "%VALUE%"=="" (
 if /i "%KEY%"=="FS" (
     set "FS=%VALUE%"
 ) else (
-    echo Invalid argument: [%KEY%]
+    echo [Error] Invalid argument: [%KEY%]
     popd
     endlocal
     exit /b 1
@@ -57,14 +65,14 @@ if /i "%FS%"=="fat32" (
 ) else if /i "%FS%"=="ext2" (
     set "DISK=build/disk-ext2.img"
 ) else (
-    echo Invalid filesystem: [%FS%]
+    echo [Error] Invalid filesystem: [%FS%]
     popd
     endlocal
     exit /b 1
 )
 
 if not exist "%DISK%" (
-    echo Disk image not found: [%DISK%]
+    echo [Error] Disk image not found: [%DISK%]
     popd
     endlocal
     exit /b 1
@@ -81,6 +89,8 @@ qemu-system-x86_64 ^
     -cdrom dist/x86_64/kernel.iso ^
     -drive id=disk,file="%DISK%",if=none,format=raw ^
     -device ide-hd,drive=disk,bus=ide.0 ^
+    -drive id=data-disk,file="./build/data.img",if=none,format=raw ^
+    -device ide-hd,drive=data-disk,bus=ide.1 ^
     -boot d ^
     -accel tcg,thread=multi,tb-size=128 ^
     -cpu max ^

@@ -26,6 +26,12 @@ struct vfs_path {
 int vfs_path_length(const char *path, size_t *length);
 struct vfs_mount *vfs_find_mount(const char *path);
 int vfs_mount_contains(const char *path);
+/* Namespace entries contributed by mounts that sit directly below parent.
+ * `index` is a VFS-owned enumeration cookie, independent of a backend's
+ * directory cookie. */
+int vfs_mount_child(const char *parent, uint32_t *index,
+                    struct vfs_dirent *out);
+int vfs_mount_child_named(const char *parent, const char *name);
 int vfs_lookup(const char *path, struct vfs_path *out);
 int vfs_lookup_parent(const char *path, struct vfs_path *parent,
                       char name[VFS_NAME_MAX + 1], int *trailing_slash);

@@ -55,6 +55,60 @@ int vfs_mount_contains(const char *path) {
     return 0;
 }
 
+/* Copy the component of `mounted` immediately below `parent`. This excludes
+ * the mount itself and descendants: /mnt/a is a child of /mnt, while
+ * /mnt/a/file is not. */
+static int mount_child_name(const char *parent, const char *mounted,
+                            char name[VFS_NAME_MAX + 1]) {
+    const char *child;
+    if (!strcmp(parent, "/")) {
+        child = mounted + 1;
+    } else {
+        size_t length = strlen(parent);
+        if (strncmp(mounted, parent, length) || mounted[length] != '/')
+            return 0;
+        child = mounted + length + 1;
+    }
+    size_t length = strlen(child);
+    if (!length || length > VFS_NAME_MAX || strchr(child, '/'))
+        return 0;
+    memcpy(name, child, length + 1);
+    return 1;
+}
+
+int vfs_mount_child(const char *parent, uint32_t *index,
+                    struct vfs_dirent *out) {
+    vfs_assert_locked();
+    if (!parent || !index || !out) return 0;
+    uint32_t seen = 0;
+    for (size_t i = 0; i < VFS_MAX_MOUNTS; i++) {
+        char name[VFS_NAME_MAX + 1];
+        if (!mounts[i].super.filesystem ||
+            !mount_child_name(parent, mounts[i].path, name))
+            continue;
+        if (seen++ != *index) continue;
+        *index = seen;
+        memset(out, 0, sizeof(*out));
+        out->type = VFS_NODE_DIRECTORY;
+        strcpy(out->name, name);
+        return 1;
+    }
+    return 0;
+}
+
+int vfs_mount_child_named(const char *parent, const char *name) {
+    vfs_assert_locked();
+    if (!parent || !name) return 0;
+    for (size_t i = 0; i < VFS_MAX_MOUNTS; i++) {
+        char child[VFS_NAME_MAX + 1];
+        if (mounts[i].super.filesystem &&
+            mount_child_name(parent, mounts[i].path, child) &&
+            !strcmp(child, name))
+            return 1;
+    }
+    return 0;
+}
+
 /* Normalize slashes but reject dot components in mount names. */
 static int mount_name(const char *path, char out[VFS_PATH_MAX]) {
     size_t length;
